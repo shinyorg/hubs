@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/.Solution/">
+    <File Path=".github\workflows\build.yml" />
+    <File Path="AGENTS.md" />
+    <File Path="Build.slnf" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+    <File Path="nuget.config" />
+    <File Path="PLAN.md" />
+    <File Path="README.md" />
+    <File Path="version.json" />
+  </Folder>
+  <Project Path="samples/TicTacToe/TicTacToe.csproj" />
+  <Project Path="src/Shiny.SwitchboardR/Shiny.SwitchboardR.csproj" />
+  <Project Path="src/Shiny.SwitchboardR.Client/Shiny.SwitchboardR.Client.csproj" />
+  <Project Path="src/Shiny.SwitchboardR.Host/Shiny.SwitchboardR.Host.csproj" />
+  <Project Path="tests/Shiny.SwitchboardR.Tests/Shiny.SwitchboardR.Tests.csproj" />
+</Solution>

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:TicTacToe.Pages"
+             x:Class="TicTacToe.Pages.GamePage"
+             x:DataType="local:GameViewModel"
+             Title="{Binding Role}">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Padding="16" RowSpacing="16">
+
+        <!-- players -->
+        <Grid ColumnDefinitions="*,Auto,*">
+            <VerticalStackLayout Spacing="6" HorizontalOptions="Center">
+                <Border Style="{StaticResource AvatarBorder}"
+                        Stroke="{StaticResource XColor}"
+                        StrokeThickness="{Binding IsXTurn, Converter={StaticResource TurnStrokeConverter}}">
+                    <Grid>
+                        <Label Text="X" Style="{StaticResource AvatarFallback}" TextColor="{StaticResource XColor}" />
+                        <Image Source="{Binding XAvatar}" Aspect="AspectFill" />
+                    </Grid>
+                </Border>
+                <Label Text="{Binding XName}" HorizontalOptions="Center" FontAttributes="Bold" />
+            </VerticalStackLayout>
+
+            <Label Grid.Column="1"
+                   Text="{Binding Score}"
+                   VerticalOptions="Center"
+                   FontSize="16" />
+
+            <VerticalStackLayout Grid.Column="2" Spacing="6" HorizontalOptions="Center">
+                <Border Style="{StaticResource AvatarBorder}"
+                        Stroke="{StaticResource OColor}"
+                        StrokeThickness="{Binding IsOTurn, Converter={StaticResource TurnStrokeConverter}}">
+                    <Grid>
+                        <Label Text="O" Style="{StaticResource AvatarFallback}" TextColor="{StaticResource OColor}" />
+                        <Image Source="{Binding OAvatar}" Aspect="AspectFill" />
+                    </Grid>
+                </Border>
+                <Label Text="{Binding OName}" HorizontalOptions="Center" FontAttributes="Bold" />
+            </VerticalStackLayout>
+        </Grid>
+
+        <VerticalStackLayout Grid.Row="1" Spacing="2">
+            <Label Text="{Binding Status}"
+                   FontSize="22"
+                   HorizontalOptions="Center" />
+            <Label Text="{Binding Transport}"
+                   FontSize="13"
+                   HorizontalOptions="Center"
+                   TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+        </VerticalStackLayout>
+
+        <!-- board -->
+        <Grid Grid.Row="2"
+              x:Name="Board"
+              RowDefinitions="*,*,*"
+              ColumnDefinitions="*,*,*"
+              RowSpacing="8"
+              ColumnSpacing="8"
+              VerticalOptions="Center"
+              BindableLayout.ItemsSource="{Binding Cells}">
+            <BindableLayout.ItemTemplate>
+                <DataTemplate x:DataType="local:CellViewModel">
+                    <Button Grid.Row="{Binding Row}"
+                            Grid.Column="{Binding Column}"
+                            Text="{Binding Text}"
+                            Style="{StaticResource CellButton}"
+                            BackgroundColor="{Binding IsWinning, Converter={StaticResource WinningCellConverter}}"
+                            TextColor="{Binding Text, Converter={StaticResource MarkColorConverter}}"
+                            Command="{Binding PlayCommand, Source={RelativeSource AncestorType={x:Type local:GameViewModel}}, x:DataType=local:GameViewModel}"
+                            CommandParameter="{Binding .}" />
+                </DataTemplate>
+            </BindableLayout.ItemTemplate>
+        </Grid>
+
+        <!-- emotes / toasts -->
+        <Grid Grid.Row="3">
+            <HorizontalStackLayout HorizontalOptions="Center"
+                                   Spacing="8"
+                                   BindableLayout.ItemsSource="{Binding Emotes}">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                        <Button Text="{Binding .}"
+                                Style="{StaticResource EmoteButton}"
+                                Command="{Binding SendEmoteCommand, Source={RelativeSource AncestorType={x:Type local:GameViewModel}}, x:DataType=local:GameViewModel}"
+                                CommandParameter="{Binding .}" />
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </HorizontalStackLayout>
+
+            <Border IsVisible="{Binding Emote, Converter={StaticResource IsNotNullConverter}}"
+                    Style="{StaticResource Toast}">
+                <Label Text="{Binding Emote}" TextColor="White" HorizontalTextAlignment="Center" />
+            </Border>
+        </Grid>
+
+        <VerticalStackLayout Grid.Row="4" Spacing="8">
+            <Button Text="Rematch"
+                    Command="{Binding RematchCommand}"
+                    IsVisible="{Binding CanRematch}" />
+            <Button Text="Remove spectators"
+                    Command="{Binding KickSpectatorsCommand}"
+                    Style="{StaticResource SecondaryButton}"
+                    IsVisible="{Binding IsHost}" />
+        </VerticalStackLayout>
+    </Grid>
+</ContentPage>

@@ -1,0 +1,32 @@
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        <BleHubsVersion>1.0.0-alpha-0006</BleHubsVersion>
+        <HttpServerVersion>2.1.0-beta.3</HttpServerVersion>
+        <ShinyVersion>5.9.0-beta-0015</ShinyVersion>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94"/>
+        <PackageVersion Include="Shiny.BluetoothLE.Hubs" Version="$(BleHubsVersion)"/>
+        <PackageVersion Include="Shiny.BluetoothLE.Hubs.Host" Version="$(BleHubsVersion)"/>
+        <PackageVersion Include="Shiny.BluetoothLE.Hubs.Client" Version="$(BleHubsVersion)"/>
+        <PackageVersion Include="Shiny.Net.HttpServer" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.Net.HttpServer.Switchboard" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.Net.HttpServer.Switchboard.Client" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.Net.HttpServer.Discovery" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.Net.HttpServer.Testing" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.BluetoothLE" Version="$(ShinyVersion)"/>
+        <PackageVersion Include="Shiny.BluetoothLE.Hosting" Version="$(ShinyVersion)"/>
+        <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
+        <PackageVersion Include="Shiny.Maui.Shell" Version="7.0.1"/>
+        <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10"/>
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10"/>
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.10"/>
+        <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
+        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1"/>
+        <PackageVersion Include="xunit.v3" Version="3.2.2"/>
+        <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5"/>
+    </ItemGroup>
+</Project>

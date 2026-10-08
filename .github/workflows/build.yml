@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - v*
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      id-token: write   # required for NuGet trusted publishing (OIDC)
+      contents: read
+
+    # macOS so the Tic Tac Toe sample's iOS head compiles as well (Xcode only exists here).
+    # The libraries themselves are plain net10.0.
+    runs-on: xcode-27
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+      with:
+          fetch-depth: 0   # Nerdbank.GitVersioning needs the history
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+          dotnet-version: '10.0.400'
+          workloads: maui-ios, maui-android
+
+    - name: Build
+      run: dotnet build Build.slnf /restore -m -property:Configuration=Release -property:PublicRelease=true
+
+    - name: Test
+      run: dotnet test tests/Shiny.SwitchboardR.Tests -property:Configuration=Release
+
+    # compile check only - catches generator or API changes that break a real consumer
+    - name: Build Sample
+      run: |
+        dotnet build samples/TicTacToe -f net10.0-android
+        dotnet build samples/TicTacToe -f net10.0-ios
+
+    - name: Publish Artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: nugets
+        path: ${{ github.workspace }}/artifacts
+        retention-days: 5
+
+    - name: NuGet Login (OIDC)
+      id: nuget-login
+      if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/preview' || startsWith(github.ref, 'refs/heads/v')) }}
+      uses: NuGet/login@v1
+      with:
+        user: aritchie
+
+    - name: Publish NuGets
+      if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/preview' || startsWith(github.ref, 'refs/heads/v')) }}
+      run: dotnet nuget push "**/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate

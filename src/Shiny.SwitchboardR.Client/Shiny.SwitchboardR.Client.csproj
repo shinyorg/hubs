@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.SwitchboardR</RootNamespace>
+        <Description>Shiny.SwitchboardR client - finds hub hosts over Bluetooth LE and mDNS and connects to them over whichever is available, behind the same generated proxy</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.SwitchboardR\Shiny.SwitchboardR.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE.Hubs.Client" />
+        <PackageReference Include="Shiny.Net.HttpServer.Switchboard.Client" />
+        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
+        <InternalsVisibleTo Include="Shiny.SwitchboardR.Tests" />
+    </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "Shiny.SwitchboardR.slnx",
+    "projects": [
+      "src/Shiny.SwitchboardR/Shiny.SwitchboardR.csproj",
+      "src/Shiny.SwitchboardR.Host/Shiny.SwitchboardR.Host.csproj",
+      "src/Shiny.SwitchboardR.Client/Shiny.SwitchboardR.Client.csproj"
+    ]
+  }
+}

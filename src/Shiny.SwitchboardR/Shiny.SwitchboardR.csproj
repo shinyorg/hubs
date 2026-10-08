@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.SwitchboardR</RootNamespace>
+        <Description>Shiny.SwitchboardR - Shiny.BluetoothLE.Hubs over Wi-Fi as well as Bluetooth LE. Shared wire protocol for the host and client packages.</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="Shiny.BluetoothLE.Hubs" />
+        <InternalsVisibleTo Include="Shiny.SwitchboardR.Host" />
+        <InternalsVisibleTo Include="Shiny.SwitchboardR.Client" />
+        <InternalsVisibleTo Include="Shiny.SwitchboardR.Tests" />
+    </ItemGroup>
+</Project>

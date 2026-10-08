@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.SwitchboardR</RootNamespace>
+        <Description>Shiny.SwitchboardR host - serves your Shiny.BluetoothLE.Hubs hubs over Wi-Fi (Shiny.Net.HttpServer.Switchboard) beside BLE, and advertises them over mDNS</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.SwitchboardR\Shiny.SwitchboardR.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE.Hubs.Host" />
+        <PackageReference Include="Shiny.Net.HttpServer.Switchboard" />
+        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
+        <InternalsVisibleTo Include="Shiny.SwitchboardR.Tests" />
+    </ItemGroup>
+
+    <!--
+        HubBoard<THub> is dispatched by a hand-registered SwitchboardDescriptor (hub.* methods into the generated BLE hub
+        dispatcher), so the Switchboard generator has nothing to do here - and it reports generic switchboards as an error.
+    -->
+    <Target Name="RemoveSwitchboardGenerator" BeforeTargets="CoreCompile">
+        <ItemGroup>
+            <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Shiny.Net.HttpServer.Switchboard.SourceGenerators'" />
+        </ItemGroup>
+    </Target>
+</Project>
