@@ -12,9 +12,10 @@ namespace Sample;
 public static class MauiProgram
 {
     /// <summary>
-    /// Every Universal Hubs sample host advertises this service - clients only see devices advertising it
+    /// Every hub (game and chat) is a characteristic in this one BLE service - the only UUID a host advertises and the one
+    /// clients scan for. The library has a default; the sample's own keeps other apps' hosts out of its lists.
     /// </summary>
-    public const string GameServiceUuid = "37625845-7287-4de0-92f8-0b8a25e755ec";
+    public const string ServiceUuid = "37625845-7287-4de0-92f8-0b8a25e755ec";
 
     /// <summary>
     /// The write+notify characteristic that carries the GameHub over BLE - and names its Switchboard over Wi-Fi
@@ -27,9 +28,9 @@ public static class MauiProgram
     public const string GameMdnsServiceType = "_unigame._tcp";
 
     /// <summary>
-    /// The always-on chat has its own service, so the game's join list never shows someone who is only chatting
+    /// The always-on chat. It has its own mDNS service type, so over Wi-Fi the game's join list never shows someone who is
+    /// only chatting. Over BLE it shares the service - a scan can't tell which hubs a host is running.
     /// </summary>
-    public const string ChatServiceUuid = "37625850-7287-4de0-92f8-0b8a25e755ec";
     public const string ChatHubCharacteristicUuid = "37625851-7287-4de0-92f8-0b8a25e755ec";
     public const string ChatMdnsServiceType = "_unichat._tcp";
 
@@ -62,6 +63,7 @@ public static class MauiProgram
 
         // ---- host: a universal server - GameHub served over BLE and HTTP at once (adds the BLE hosting stack too) ----
         builder.Services.AddUniversalServer(server => server
+            .ServiceUuid(ServiceUuid)   // the one BLE service every hub lives in - clients use the same one
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
                 ft.MaxUploadSize = 512 * 1024;
@@ -74,12 +76,12 @@ public static class MauiProgram
             })
             // "Share on the internet" in the chat: a public HTTPS address with no account (pinggy). Started from a button.
             .HttpServer(http => http.AddQuickTunnel())
-            .AddHub<GameHub>(GameServiceUuid, GameHubCharacteristicUuid, GameMdnsServiceType, o =>
+            .AddHub<GameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
             {
                 o.MaxClients = 6; // 1 opponent + spectators, counted across both transports
                 o.ValidateClient = info => String.IsNullOrWhiteSpace(info.Name) ? "A player name is required" : null;
             })   // started when the player taps Host
-            .AddHub<ChatHub>(ChatServiceUuid, ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
+            .AddHub<ChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
             {
                 o.MaxClients = 20;
                 o.AllowTunnel = true;   // the only hub reachable through the tunnel
@@ -88,8 +90,8 @@ public static class MauiProgram
         );
 
         // ---- client: discovers hosts over BLE and mDNS, connects over whichever works (adds the BLE stack too) ----
-        builder.Services.AddUniversalHubClient<IGameHub>(GameServiceUuid, GameHubCharacteristicUuid, GameMdnsServiceType);
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatServiceUuid, ChatHubCharacteristicUuid, ChatMdnsServiceType);
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
 
         builder.Services.AddNotifications();
         builder.Services.AddSingleton<ChatService>();

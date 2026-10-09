@@ -21,7 +21,6 @@ public static class UniversalHubClientExtensions
     /// </summary>
     public static IServiceCollection AddUniversalHubClient<TContract>(
         this IServiceCollection services,
-        string serviceUuid,
         string characteristicUuid,
         string mdnsServiceType,
         Action<UniversalHubClientOptions>? configure = null
@@ -29,7 +28,7 @@ public static class UniversalHubClientExtensions
     {
         UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
 
-        return services.AddUniversalHubClient<TContract>(serviceUuid, characteristicUuid, o =>
+        return services.AddUniversalHubClient<TContract>(characteristicUuid, o =>
         {
             o.ServiceType = mdnsServiceType;
             configure?.Invoke(o);
@@ -39,21 +38,16 @@ public static class UniversalHubClientExtensions
 
     public static IServiceCollection AddUniversalHubClient<TContract>(
         this IServiceCollection services,
-        string serviceUuid,
         string characteristicUuid,
         Action<UniversalHubClientOptions>? configure = null
     ) where TContract : class
     {
-#if ANDROID || IOS || MACCATALYST
-        // the platform BLE central stack - a no-op when the app already added it. On Apple, call AddBluetoothLE(config)
-        // before this to use your own AppleBleConfiguration.
-        services.AddBluetoothLE();
-#endif
-        services.AddBleHubClient<TContract>(serviceUuid, characteristicUuid);
-        services.AddHttpServerLocator();
-
         var options = new UniversalHubClientOptions();
         configure?.Invoke(options);
+
+        // blehubs adds the platform BLE stack (with iOS's background alerts off) on Android, iOS and Mac Catalyst
+        services.AddBleHubClient<TContract>(characteristicUuid, o => o.ServiceUuid = options.ServiceUuid);
+        services.AddHttpServerLocator();
 
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
             sp.GetRequiredService<IBleHubClient<TContract>>(),

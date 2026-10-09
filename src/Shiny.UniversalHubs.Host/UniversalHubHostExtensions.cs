@@ -12,9 +12,9 @@ public static class UniversalHubHostExtensions
 {
     /// <summary>
     /// Serves hubs over Wi-Fi on this HttpServer, beside BLE. Add each hub with <see cref="UniversalHubHostBuilder.AddHub{THub}"/>
-    /// after registering it with AddBleHub. Start and stop hosting with <see cref="IUniversalHubHost"/>.
+    /// after adding it to blehubs' AddBleHubServer. Start and stop hosting with <see cref="IUniversalHubHost"/>.
     /// <code>
-    /// services.AddBleHub&lt;GameHub&gt;(serviceUuid, characteristicUuid);
+    /// services.AddBleHubServer(ble => ble.AddHub&lt;GameHub&gt;(characteristicUuid));
     /// services.AddShinyHttpServer(http =>
     /// {
     ///     http.Options.Address = IPAddress.Any;   // reachable from other devices
@@ -77,7 +77,7 @@ public sealed class UniversalHubHostBuilder
 
     /// <summary>
     /// Serves <typeparamref name="THub"/> over Wi-Fi at <c>{BasePath}/{characteristicUuid}</c>. The hub must also be registered
-    /// with AddBleHub - its characteristic UUID, options (MaxClients, ValidateClient) and clients are shared with BLE.
+    /// with AddBleHubServer - its characteristic UUID, options (MaxClients, ValidateClient) and clients are shared with BLE.
     /// </summary>
     /// <param name="mdnsServiceType">
     /// The mDNS service type this hub is advertised under - clients of this hub browse for the same one. Null uses

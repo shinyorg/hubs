@@ -17,7 +17,6 @@ namespace Shiny.UniversalHubs.Tests;
 /// </summary>
 public class UniversalHubTests : IAsyncLifetime
 {
-    const string ServiceUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
     const string CharacteristicUuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     const string OtherCharacteristicUuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
     const string MdnsServiceType = "_switchtest._tcp";
@@ -67,8 +66,8 @@ public class UniversalHubTests : IAsyncLifetime
                     o.HostId = "host-1";
                     o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
                 })
-                .AddHub<TestHub>(ServiceUuid, CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
-                .AddHub<OtherHub>(ServiceUuid, OtherCharacteristicUuid, MdnsServiceType, o => o.AllowTunnel = true);
+                .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
+                .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.AllowTunnel = true);
         });
 
         return TestHttpServer.For(builder.Build());
@@ -94,7 +93,7 @@ public class UniversalHubTests : IAsyncLifetime
         server ??= this.app;
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<TContract>(ServiceUuid, characteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
             {
                 o.HttpMessageHandlerFactory = () => server.Server.CreateInMemoryHandler();
                 o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
@@ -230,17 +229,52 @@ public class UniversalHubTests : IAsyncLifetime
     public void BadServiceTypesAreRejected(string serviceType)
     {
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(
-            s => s.AddHub<TestHub>(ServiceUuid, CharacteristicUuid, serviceType)
+            s => s.AddHub<TestHub>(CharacteristicUuid, serviceType)
         ));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(ServiceUuid, CharacteristicUuid, serviceType));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, serviceType));
+    }
+
+
+    [Fact]
+    public void HubClientsUseTheirServiceUuid()
+    {
+        // hubs are characteristics in a single BLE service - two advertised 128-bit UUIDs overflow the advertisement
+        const string custom = "11111111-2222-3333-4444-555555555555";
+        using var sp = new ServiceCollection()
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.ServiceUuid = custom)
+            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.ServiceUuid = custom)
+            .BuildServiceProvider();
+
+        var test = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<ITestHub>>();
+        var other = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<IOtherHub>>();
+        Assert.Equal(custom, test.ServiceUuid);
+        Assert.Equal(custom, other.ServiceUuid);
+        Assert.NotEqual(test.CharacteristicUuid, other.CharacteristicUuid);
+    }
+
+
+    [Fact]
+    public void UniversalServerHostsEveryHubUnderItsServiceUuid()
+    {
+        const string custom = "11111111-2222-3333-4444-555555555555";
+        using var sp = new ServiceCollection()
+            .AddUniversalServer(s => s
+                .ServiceUuid(custom)
+                .Protocol(o => o.RequestTimeout = TimeSpan.FromSeconds(7))
+                .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)
+                .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType))
+            .BuildServiceProvider();
+
+        Assert.Equal(custom, sp.GetRequiredService<BleHubHostOptions>().ServiceUuid);
+        Assert.Equal(TimeSpan.FromSeconds(7), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
     }
 
 
     [Fact]
     public void UniversalServerIsRegisteredOnce()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(ServiceUuid, CharacteristicUuid, MdnsServiceType));
-        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(ServiceUuid, CharacteristicUuid, MdnsServiceType)));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType));
+        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)));
     }
 
 
@@ -367,7 +401,7 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void UniversalServerBindsTheNetworkWhenItCreatesTheServer()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(ServiceUuid, CharacteristicUuid, MdnsServiceType));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType));
         var options = (HttpServerOptions)services.Single(x => x.ServiceType == typeof(HttpServerOptions)).ImplementationInstance!;
 
         Assert.Equal(IPAddress.Any, options.Address);
@@ -627,6 +661,15 @@ public class UniversalHubTests : IAsyncLifetime
             File.Delete(local);
             File.Delete(back);
         }
+    }
+
+
+    [Fact]
+    public void TransportHttpClientHasNoOverallTimeout()
+    {
+        // the line's event stream is open for the whole connection - HttpClient's default 100s would cut it
+        using var http = SwitchboardTransport.CreateHttpClient(new UniversalHubClientOptions());
+        Assert.Equal(Timeout.InfiniteTimeSpan, http.Timeout);
     }
 
 

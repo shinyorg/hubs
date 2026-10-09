@@ -1,7 +1,7 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <BleHubsVersion>1.0.0</BleHubsVersion>
+        <BleHubsVersion>1.1.0</BleHubsVersion>
         <HttpServerVersion>2.1.0</HttpServerVersion>
         <ShinyVersion>5.9.0</ShinyVersion>
         <!-- not on nuget.org yet: built from ~/Desktop/dev/actors. Bump to the published version once it ships. -->

@@ -57,7 +57,7 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
 
 /// <summary>
 /// Base class for a hub served over BLE and Wi-Fi. <typeparamref name="TContract"/> is the [BleHubClient] interface.
-/// Register it with AddBleHub and <see cref="UniversalHubHostBuilder.AddHub{THub}"/> exactly like a BleHub - this only adds
+/// Register it with AddUniversalServer (or AddBleHubServer and <see cref="UniversalHubHostBuilder.AddHub{THub}"/>) exactly like a BleHub - this only adds
 /// <see cref="Connection"/> and lifecycle hooks that say which transport the client is on.
 /// </summary>
 public abstract class UniversalHub<TContract> : BleHub<TContract> where TContract : class

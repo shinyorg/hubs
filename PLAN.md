@@ -118,10 +118,11 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
 - **Host:** `AddUniversalServer(server => ...)` is one call:
   - `.Ble(BleHubHostOptions)`, `.Http(UniversalHubHostOptions)` and `.HttpServer(ShinyHttpServerBuilder)` set up the two
     sides.
-  - `.AddHub<THub>(serviceUuid, characteristicUuid, mdnsServiceType, BleHubOptions)` adds each hub, with the mDNS
-    service type it's advertised under.
+  - `.AddHub<THub>(characteristicUuid, mdnsServiceType, BleHubOptions)` adds each hub, with the mDNS service type it's
+    advertised under. Over BLE every hub is a characteristic in one service, `.ServiceUuid(...)` (blehubs'
+    `DefaultServiceUuid` unless set). `.Protocol(...)` sets blehubs' protocol limits.
   - `server.Endpoint` is the base path, `/hubs` by default.
-- **What it wires:** `AddBleHub` and `ConfigureBleHubHost` on the BLE side, and on the HTTP side
+- **What it wires:** blehubs' `AddBleHubServer` on the BLE side (every hub, `.Ble` as its `Host`), and on the HTTP side
   `AddShinyHttpServer(autoStart: false)`, `AddUniversalHubs` (with `BasePath` set) and `AddHub(mdnsServiceType)`.
 - **HttpServer address:** a server it creates binds `IPAddress.Any` on port 0. One already registered with
   `AddShinyHttpServer` keeps its own address and port.
@@ -133,13 +134,16 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   advertisement per group. The TXT keys are unchanged, so the wire version is the same.
 - **Endpoint over the wire:** the endpoint is a base path rather than a per-hub path, so it travels in the existing TXT
   `path` key and needs no wire change.
-- **Client:** `AddUniversalHubClient<TContract>(serviceUuid, characteristicUuid, mdnsServiceType)` is
-  `AddUniversalHubClient` with the service type set.
-- **BLE stacks:** the host and client packages target `net10.0`, `-android`, `-ios` and `-maccatalyst`
-  (`PlatformTargetFrameworks` in Directory.Build.props). On the platform targets:
-  - `AddUniversalServer` calls `AddBluetoothLeHosting()`, and `AddUniversalHubClient` calls `AddBluetoothLE()`.
+- **Client:** `AddUniversalHubClient<TContract>(characteristicUuid, mdnsServiceType, configure)` is
+  `AddUniversalHubClient` with the service type set. `UniversalHubClientOptions.ServiceUuid` goes to blehubs'
+  `AddBleHubClient`.
+- **BLE stacks:** blehubs registers them (its host and client packages multi-target too). On Android, iOS and Mac
+  Catalyst, `AddBleHubServer` calls `AddBluetoothLeHosting()` and `AddBleHubClient` calls `AddBluetoothLE()`.
   - Both are idempotent in Shiny.
-  - On Apple, a custom `AppleBleConfiguration` has to be registered first, because Shiny uses `TryAdd` for it.
+  - On Apple, blehubs' client registers an `AppleBleConfiguration` with iOS's background alerts off. A custom one has to
+    be registered first, because Shiny uses `TryAdd` for it.
+  - This repo's packages still target `net10.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`), so
+    the platform blehubs assets flow through.
 - **Plain `net10.0`:** it has no Shiny BLE stack, so the app (or a test) registers one. Unit tests run on `net10.0` and
   can't see these calls; the sample is what exercises them.
 
@@ -189,6 +193,8 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - `name`
   - `path` (the base path)
   - `hubs` (characteristic UUIDs, comma separated, at most about 6)
+- **BLE** advertises one service UUID per host (`server.ServiceUuid`, blehubs' default unless set) whatever hubs are running, so a
+  BLE result says "a hub host", not which hubs. A client joining a stopped hub is refused at the handshake.
 - **The client** merges BLE scan results and mDNS results by name, because Apple hosts can't put a host id in a BLE
   advertisement. `hostId` comes from TXT and from the handshake reply. mDNS hosts are filtered by `hubs` containing the
   contract's characteristic UUID and by `proto`.
@@ -205,6 +211,7 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
 | Transport choice | At connect. `Prefer` Wi-Fi by default, falling back to the other. A refusal isn't retried. No migration mid-session |
 | Start/stop | `IUniversalHubHost` starts and stops both transports, for every hub or one hub (`StartHub<THub>`). A transport that can't start is skipped if the other starts |
 | Tunnels | Each hub opts in (`AllowTunnel`). A gate returns 404 for the others. The tunnel provider is the app's choice |
+| BLE service UUID (2026-10-09) | One for every hub (`server.ServiceUuid`, blehubs' default unless set); hubs are characteristics. Two 128-bit UUIDs overflow a 31-byte advertisement: Android refuses to advertise, iOS hides the second in an overflow area Android can't see. The cost: a BLE scan can't tell which hubs a host runs |
 
 ## 6. Status
 
@@ -242,6 +249,22 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
 - **2026-10-09**: Renamed from SwitchboardR to **Shiny.UniversalHubs**: packages, namespaces and types
   (`IUniversalHubHost`, `IUniversalHubClient<T>`, `UniversalHubProtocol`, `UniversalHub<T>`, `AddUniversalHubs`).
   The wire is unchanged (service type, reserved methods, TXT keys and routes), so `Version` stays 2.
+- **2026-10-09**: One BLE service UUID for every hub. `AddHub` and `AddUniversalHubClient` no longer take a service
+  UUID: the server sets it once (`.ServiceUuid(...)`), clients in their options, and both default to blehubs'. Fixes the first device run: with the always-on chat and the
+  game on separate services, an Android host couldn't advertise the game over BLE (and lost the chat's advertisement
+  too), and Android clients couldn't see an iOS host.
+  - `UniversalHubClient` passes through blehubs' new `ClientName`, `HostRenamed` and `Rename`. Over Wi-Fi, `Rename`
+    throws NotSupportedException: the Switchboard transport doesn't carry renames yet (§8).
+  - Built on blehubs 1.1's one-call registration: `AddUniversalServer` calls `AddBleHubServer` (with `.ServiceUuid`
+    and `.Protocol` passed through), and `AddUniversalHubClient` calls `AddBleHubClient`. blehubs now registers the
+    platform BLE stacks, so this repo no longer does. On Apple its client turns iOS's background alerts off
+    (`NotifyOnConnection` / `NotifyOnDisconnection` / `NotifyOnNotification`). Hubs are foreground only. An app's own
+    configuration, registered first, still wins.
+  - `SwitchboardTransport`'s HttpClient has no overall timeout. The default 100s cut the line's event stream every
+    100 seconds.
+  - Sample: a joining device no longer reads pushes with its last role (it showed its own avatar for the host), and the
+    avatar cache is cleared per join.
+  - Consumes blehubs `1.1.0` from nuget.org. 65 tests; the sample builds for Android, iOS and macOS.
 
 ## 7. Verifying on hardware
 
@@ -249,6 +272,8 @@ You need two physical devices. Run the sample on both and check:
 - **Wi-Fi only:** host and join on the same network. The join list shows 📶 and the game says "Connected over Wi-Fi".
 - **Bluetooth only:** airplane mode on with Bluetooth re-enabled. Shows 🔵. Pushes and avatars work.
 - **Both:** the host appears once with both badges. Toggling "Prefer Bluetooth" changes the transport.
+- **BLE while the chat runs:** host a game on Android, then on iOS, and join each from the other phone over Bluetooth.
+  The host's game screen says "Hosting over Wi-Fi and Bluetooth" and the chat stays reachable over BLE.
 - **Isolated Wi-Fi** (guest network with client isolation): the host should fall back to BLE.
 - **Mixed:** one player on Wi-Fi and a spectator on BLE. Both see every move.
 - **Host stop:** reaches the client's Disconnected as `ServerShutdown` with the message, on both transports.
@@ -273,3 +298,4 @@ You need two physical devices. Run the sample on both and check:
 - A browser spectator page talking to the hub Switchboard directly
 - Upload and download progress events on the host for Wi-Fi files
 - Wi-Fi hosting on devices with no BLE hosting stack (Windows)
+- Client and host renames over Wi-Fi (blehubs `IBleHubConnection.Rename`, `IBleHubHost.Rename` / `HostRenamed`)

@@ -36,7 +36,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
         this.events = events;
         this.filesUri = filesUri;
         this.logger = loggerFactory?.CreateLogger<SwitchboardTransport>();
-        this.http = options.HttpMessageHandlerFactory is { } factory ? new HttpClient(factory()) : new HttpClient();
+        this.http = CreateHttpClient(options);
 
         var builder = new SwitchboardLineBuilder().WithUrl(hubUri, o => o.HttpClient = this.http);
         if (options.AutomaticReconnect)
@@ -61,6 +61,18 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
             this.events.Closed(ToHubDisconnect(e.Reason, e.Message));
             _ = Task.Run(this.DisposeAsync);
         };
+    }
+
+
+    /// <summary>
+    /// The line's event stream stays open for the whole connection, so no overall timeout - HttpClient's default 100
+    /// seconds would cut it (and any slow file transfer) off. Calls and transfers time out through their cancellation tokens.
+    /// </summary>
+    internal static HttpClient CreateHttpClient(UniversalHubClientOptions options)
+    {
+        var http = options.HttpMessageHandlerFactory is { } factory ? new HttpClient(factory()) : new HttpClient();
+        http.Timeout = Timeout.InfiniteTimeSpan;
+        return http;
     }
 
 

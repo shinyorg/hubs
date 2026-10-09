@@ -14,10 +14,8 @@ namespace Sample.MacOS;
 public static class MauiProgram
 {
     // the same hubs as the phone app - see samples/Sample/MauiProgram.cs
-    const string GameServiceUuid = "37625845-7287-4de0-92f8-0b8a25e755ec";
     const string GameHubCharacteristicUuid = "37625846-7287-4de0-92f8-0b8a25e755ec";
     const string GameMdnsServiceType = "_unigame._tcp";
-    const string ChatServiceUuid = "37625850-7287-4de0-92f8-0b8a25e755ec";
     const string ChatHubCharacteristicUuid = "37625851-7287-4de0-92f8-0b8a25e755ec";
     const string ChatMdnsServiceType = "_unichat._tcp";
 
@@ -45,8 +43,8 @@ public static class MauiProgram
         Json.AddContext(ChatJsonContext.Default);
 
         // Wi-Fi only on the Mac: hosts are found over mDNS, or reached at an address someone shared
-        builder.Services.AddUniversalHubClient<IGameHub>(GameServiceUuid, GameHubCharacteristicUuid, GameMdnsServiceType);
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatServiceUuid, ChatHubCharacteristicUuid, ChatMdnsServiceType);
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType);
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType);
         builder.Services.AddSingleton<MacClient>();
 
         // maui-labs' Editor leaves its NSTextView at a zero frame with no minimum height, so an empty one (ChatView's

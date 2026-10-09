@@ -35,8 +35,8 @@ and mDNS.
 
 ## blehubs version
 
-`BleHubsVersion` in `Directory.Packages.props` sets the `Shiny.BluetoothLE.Hubs*` packages. The transport seams first
-shipped in `1.0.0-alpha-0006`, so don't go below it. When the seams change, publish blehubs first, then bump the version
+`BleHubsVersion` in `Directory.Packages.props` sets the `Shiny.BluetoothLE.Hubs*` packages. The single service UUID and
+one-call registration (`AddBleHubServer` / `AddBleHubClient` options) shipped in `1.1.0`, so don't go below it. When the seams change, publish blehubs first, then bump the version
 here. Don't add a local package source.
 
 ## Verifying on hardware

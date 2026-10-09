@@ -81,6 +81,11 @@ public sealed record HubConnectOptions(
 public class UniversalHubClientOptions
 {
     /// <summary>
+    /// The BLE service the host serves its hubs under - must match the host's (AddUniversalServer's ServiceUuid)
+    /// </summary>
+    public string ServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
+
+    /// <summary>
     /// The mDNS service type to browse - must match the host's
     /// </summary>
     public string ServiceType { get; set; } = UniversalHubProtocol.ServiceType;

@@ -11,13 +11,13 @@ public static class UniversalServerExtensions
     /// <summary>
     /// Registers a universal server: its hubs are served over BLE (GATT) and HTTP (Switchboard, advertised over mDNS) at
     /// once, and each hub shares its clients, groups, MaxClients and ValidateClient across both. Start and stop it with
-    /// <see cref="IUniversalHubHost"/>. On Android, iOS and Mac Catalyst it adds the BLE hosting stack (AddBluetoothLeHosting)
-    /// too; on plain .NET, register an IBleHostingManager yourself.
+    /// <see cref="IUniversalHubHost"/>. The BLE side is blehubs' AddBleHubServer, which adds the BLE hosting stack on
+    /// Android, iOS and Mac Catalyst; on plain .NET, register an IBleHostingManager yourself.
     /// <code>
     /// services.AddUniversalServer(server => server
     ///     .Ble(o => o.EnableFileTransfers(filesDir))
     ///     .Http(o => o.AuthorizeFile = req => req.FileName.StartsWith("avatar-"))
-    ///     .AddHub&lt;GameHub&gt;(ServiceUuid, CharacteristicUuid, "_unigame._tcp", o => o.MaxClients = 6));
+    ///     .AddHub&lt;GameHub&gt;(CharacteristicUuid, "_unigame._tcp", o => o.MaxClients = 6));
     /// </code>
     /// </summary>
     /// <param name="configure">BLE and HTTP setup, and the hubs to serve</param>
@@ -40,15 +40,17 @@ public static class UniversalServerExtensions
         if (String.IsNullOrWhiteSpace(server.Endpoint))
             throw new InvalidOperationException("A universal server needs an endpoint");
 
-#if ANDROID || IOS || MACCATALYST
-        // the platform BLE peripheral stack - a no-op when the app already added it
-        services.AddBluetoothLeHosting();
-#endif
-        foreach (var c in server.BleActions)
-            services.ConfigureBleHubHost(c);
-
-        foreach (var hub in server.Hubs)
-            hub.AddBle(services);
+        services.AddBleHubServer(ble =>
+        {
+            if (server.BleServiceUuid != null)
+                ble.ServiceUuid(server.BleServiceUuid);
+            foreach (var c in server.BleActions)
+                ble.Host(c);
+            foreach (var c in server.ProtocolActions)
+                ble.Protocol(c);
+            foreach (var hub in server.Hubs)
+                hub.AddBle(ble);
+        });
 
         var serverExisted = services.Any(x => x.ServiceType == typeof(HttpServerOptions));
         services.AddShinyHttpServer(http =>
@@ -84,7 +86,9 @@ public sealed class UniversalServerBuilder
 {
     internal UniversalServerBuilder() { }
 
+    internal string? BleServiceUuid { get; private set; }
     internal List<Action<BleHubHostOptions>> BleActions { get; } = new();
+    internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
     internal List<Action<UniversalHubHostOptions>> HttpActions { get; } = new();
     internal List<Action<ShinyHttpServerBuilder>> HttpServerActions { get; } = new();
     internal List<UniversalHubRegistration> Hubs { get; } = new();
@@ -96,9 +100,25 @@ public sealed class UniversalServerBuilder
     public string Endpoint { get; set; } = UniversalHubProtocol.DefaultBasePath;
 
     /// <summary>
+    /// The one BLE service every hub is a characteristic in - blehubs' default unless set. Clients must use the same one
+    /// (UniversalHubClientOptions.ServiceUuid in AddUniversalHubClient).
+    /// </summary>
+    public UniversalServerBuilder ServiceUuid(string serviceUuid)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceUuid);
+        this.BleServiceUuid = serviceUuid;
+        return this;
+    }
+
+    /// <summary>
     /// BLE hosting: LocalName (also the mDNS instance name), file transfers (used by HTTP too), the client sweep
     /// </summary>
     public UniversalServerBuilder Ble(Action<BleHubHostOptions> configure) => Add(this, this.BleActions, configure);
+
+    /// <summary>
+    /// blehubs protocol limits (payload size, timeouts) - app-wide
+    /// </summary>
+    public UniversalServerBuilder Protocol(Action<BleHubProtocolOptions> configure) => Add(this, this.ProtocolActions, configure);
 
     /// <summary>
     /// HTTP hosting: HostId, Advertise, ManageHttpServer, AuthorizeFile. Each hub's mDNS service type comes from AddHub
@@ -115,7 +135,6 @@ public sealed class UniversalServerBuilder
     /// <summary>
     /// Serves <typeparamref name="THub"/> - a <see cref="UniversalHub{TContract}"/> - over BLE and HTTP
     /// </summary>
-    /// <param name="serviceUuid">The BLE service UUID - hubs may share one</param>
     /// <param name="characteristicUuid">The BLE characteristic UUID - one per hub. Also names the hub over HTTP.</param>
     /// <param name="mdnsServiceType">
     /// The mDNS service type this hub is advertised under, eg. <c>_unigame._tcp</c>. Its clients browse for the same one
@@ -125,7 +144,6 @@ public sealed class UniversalServerBuilder
     /// This hub's rules: MaxClients (counted across both transports), ValidateClient, and AllowTunnel
     /// </param>
     public UniversalServerBuilder AddHub<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THub>(
-        string serviceUuid,
         string characteristicUuid,
         string mdnsServiceType,
         Action<UniversalHubOptions>? configure = null
@@ -140,7 +158,7 @@ public sealed class UniversalServerBuilder
 
         this.Hubs.Add(new UniversalHubRegistration(
             typeof(THub),
-            services => services.AddBleHub<THub>(serviceUuid, characteristicUuid, o =>
+            ble => ble.AddHub<THub>(characteristicUuid, o =>
             {
                 o.MaxClients = options.MaxClients;
                 o.ValidateClient = options.ValidateClient;
@@ -176,7 +194,7 @@ public sealed class UniversalHubOptions : BleHubOptions
 
 internal sealed record UniversalHubRegistration(
     Type HubType,
-    Action<IServiceCollection> AddBle,
+    Action<BleHubServerBuilder> AddBle,
     Action<UniversalHubHostBuilder> AddHttp
 );
 

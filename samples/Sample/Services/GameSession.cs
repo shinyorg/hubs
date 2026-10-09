@@ -41,22 +41,6 @@ public class GameSession
         this.client = client;
         this.actors = actors;
         this.logger = logger;
-
-        // pushes from the host arrive as plain .NET events on the generated proxy
-        client.Hub.StateChanged += state =>
-        {
-            this.State = state;
-            this.StateChanged?.Invoke(this, state);
-        };
-        client.Hub.Emote += (from, emoji) => this.EmoteReceived?.Invoke(this, (from, emoji));
-        client.Disconnected += (_, reason) =>
-        {
-            if (!this.IsHost && this.IsActive)
-            {
-                this.IsActive = false;
-                this.Ended?.Invoke(this, reason.Description);
-            }
-        };
     }
 
 
@@ -155,10 +139,64 @@ public class GameSession
     }
 
 
+    // ---------- client pushes ----------
+
+    /// <summary>
+    /// Starts relaying pushes from the host - call from the game page's OnAppearing
+    /// </summary>
+    public void Attach()
+    {
+        this.Detach(); // guard against a double attach
+        this.client.Hub.StateChanged += this.OnHubStateChanged;
+        this.client.Hub.Emote += this.OnHubEmote;
+        this.client.Disconnected += this.OnClientDisconnected;
+    }
+
+
+    /// <summary>
+    /// Stops relaying pushes from the host - call from the game page's OnDisappearing
+    /// </summary>
+    public void Detach()
+    {
+        this.client.Hub.StateChanged -= this.OnHubStateChanged;
+        this.client.Hub.Emote -= this.OnHubEmote;
+        this.client.Disconnected -= this.OnClientDisconnected;
+    }
+
+
+    // pushes from the host arrive as plain .NET events on the generated proxy
+    void OnHubStateChanged(GameState state)
+    {
+        this.State = state;
+        this.StateChanged?.Invoke(this, state);
+    }
+
+    void OnHubEmote(string from, string emoji) => this.EmoteReceived?.Invoke(this, (from, emoji));
+
+    void OnClientDisconnected(object? sender, HubDisconnect reason)
+    {
+        if (!this.IsHost && this.IsActive)
+        {
+            this.IsActive = false;
+            this.Ended?.Invoke(this, reason.Description);
+        }
+    }
+
+
     // ---------- client ----------
 
     public async Task JoinHost(HubHostInfo hostInfo, string playerName, string? avatarPath, bool preferBluetooth)
     {
+        // pushes arrive before Join returns - they must not be read as this device's last role (a past host would look
+        // up the remote host's avatar in its own files)
+        this.IsHost = false;
+        this.MyMark = Mark.None;
+        this.State = null;
+
+        // every host serves its avatar as avatar-host.jpg - don't show the last host's
+        if (Directory.Exists(ClientCacheDirectory))
+            Directory.Delete(ClientCacheDirectory, true);
+
         await this.client.Connect(hostInfo, new HubConnectOptions(playerName, AppInfo.Current.VersionString)
         {
             Prefer = preferBluetooth ? HubTransports.Ble : HubTransports.Http

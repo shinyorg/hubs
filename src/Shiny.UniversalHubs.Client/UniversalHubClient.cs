@@ -270,6 +270,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
     public BleHubClientStatus Status => this.inner.Status;
     public BleHubHostInfo? Host => this.inner.Host;
     public string? HostName => this.inner.HostName;
+    public string? ClientName => this.inner.ClientName;
     public bool CanTransferFiles => this.inner.CanTransferFiles;
 
     public event EventHandler<BleHubStatusChangedEventArgs>? StatusChanged
@@ -290,12 +291,21 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         remove => this.inner.Disconnected -= value;
     }
 
+    public event EventHandler<string?>? HostRenamed
+    {
+        add => this.inner.HostRenamed += value;
+        remove => this.inner.HostRenamed -= value;
+    }
+
     public IObservable<BleHubHostInfo> Discover() => this.inner.Discover();
 
     public Task Connect(BleHubHostInfo host, BleHubConnectOptions? options = null, CancellationToken cancellationToken = default)
         => this.inner.Connect(host, options, cancellationToken);
 
     public Task Disconnect() => this.inner.Disconnect();
+
+    // over Wi-Fi this is refused (NotSupportedException) until the Switchboard transport carries renames
+    public Task Rename(string? name, CancellationToken cancellationToken = default) => this.inner.Rename(name, cancellationToken);
 
     public Task<L2CapTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.UploadFile(localFilePath, remoteFileName, progress, cancellationToken);

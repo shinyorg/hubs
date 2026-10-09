@@ -56,9 +56,5 @@
                     Command="{Binding ChatCommand}"
                     Style="{StaticResource SecondaryButton}" />
         </VerticalStackLayout>
-
-        <ActivityIndicator Grid.Row="1"
-                           IsRunning="{Binding IsBusy}"
-                           IsVisible="{Binding IsBusy}" />
     </Grid>
 </ContentPage>

@@ -23,12 +23,18 @@ along with the mDNS service type it's advertised under:
 
 ```csharp
 services.AddUniversalServer(server => server
+    .ServiceUuid(ServiceUuid)                                                    // optional - the one BLE service; clients use the same
     .Ble(o => o.EnableFileTransfers(filesDir))                                   // BleHubHostOptions - L2CAP and HTTP both use it
     .Http(o => o.AuthorizeFile = req => req.FileName.StartsWith("avatar-"))     // UniversalHubHostOptions
     .HttpServer(http => http.Options.Port = 8080)                                // optional - the HttpServer itself
-    .AddHub<GameHub>(ServiceUuid, CharacteristicUuid, "_mygame._tcp", o => o.MaxClients = 6)   // MaxClients/ValidateClient cover both transports
+    .AddHub<GameHub>(CharacteristicUuid, "_mygame._tcp", o => o.MaxClients = 6)   // MaxClients/ValidateClient cover both transports
 );
 ```
+
+- **One BLE service:** every hub is a characteristic inside one service: `server.ServiceUuid(...)`, or blehubs'
+  `BleHubProtocolOptions.DefaultServiceUuid` unless you set your own. Clients set the same one in their options. That's the only UUID a host advertises, because two 128-bit UUIDs don't fit in a
+  BLE advertisement. A BLE scan therefore can't tell which hubs a host is running: joining one that's stopped is refused
+  at the handshake. mDNS has no such limit, since each advertisement lists its running hubs.
 
 - **mDNS service type** (`_mygame._tcp`): set per hub. It's what the hub is advertised under and what its clients browse
   for. Hubs that share a type share one advertisement; each distinct type gets its own. iOS hosts list every type in
@@ -37,15 +43,16 @@ services.AddUniversalServer(server => server
   and files at `{Endpoint}/files`. mDNS advertises it, so clients need no setting.
 - **The HttpServer** binds every interface on a free port, and mDNS tells clients which port. If you already registered
   the server with `AddShinyHttpServer`, its address and port are left alone.
-- **BLE stack:** on Android, iOS and Mac Catalyst, `AddUniversalServer` adds the BLE hosting stack
-  (`AddBluetoothLeHosting`) for you, and the client registrations add `AddBluetoothLE`. Calling them yourself as well is
-  harmless. On Apple, call `AddBluetoothLE(appleConfig)` *before* the client registration if you need your own
-  `AppleBleConfiguration`, because the first registration wins. On plain `net10.0` (Linux, tests), register an
+- **BLE stack:** on Android, iOS and Mac Catalyst, blehubs adds the platform BLE stacks for you: `AddBluetoothLeHosting`
+  for the server and `AddBluetoothLE` for clients. Calling them yourself as well is harmless. On Apple, the client's
+  `AppleBleConfiguration` turns off iOS's background alerts (`NotifyOnConnection`, `NotifyOnDisconnection`,
+  `NotifyOnNotification`), because hubs are used in the foreground. Call `AddBluetoothLE(appleConfig)` *before* the client
+  registration to use your own, because the first registration wins. On plain `net10.0` (Linux, tests), register an
   `IBleHostingManager` / `IBleManager` yourself.
 - **Registration rules:** `AddUniversalServer` can only be called once and needs at least one hub. It doesn't start
   anything; `IUniversalHubHost` starts and stops both transports.
-- **Lower-level API:** `AddBleHub` + `AddShinyHttpServer(http => http.AddUniversalHubs().AddHub<THub>())` still works,
-  and it's what the universal server calls.
+- **Lower-level API:** blehubs' `AddBleHubServer` + `AddShinyHttpServer(http => http.AddUniversalHubs().AddHub<THub>())`
+  still works, and it's what the universal server calls.
 
 ```csharp
 public class Lobby(IUniversalHubHost host)
@@ -152,7 +159,8 @@ means the same thing on both transports, and the host and the client see the sam
 ## Client
 
 ```csharp
-services.AddUniversalHubClient<IGameHub>(ServiceUuid, CharacteristicUuid, "_mygame._tcp");   // the hub's service type
+services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp",        // the hub's mDNS service type
+    o => o.ServiceUuid = ServiceUuid);                                           // the host's BLE service, if it set one
 ```
 
 ```csharp

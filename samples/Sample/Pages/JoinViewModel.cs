@@ -12,14 +12,12 @@ namespace Sample.Pages;
 public partial class JoinViewModel(
     ShellServices shell,
     IUniversalHubClient<IGameHub> client,
-    GameSession session,
     PlayerSettings settings
 ) : ObservableObject, IPageLifecycleAware
 {
     IDisposable? scan;
 
     public ObservableCollection<HostItem> Hosts { get; } = new();
-    [ObservableProperty] public partial bool IsConnecting { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "Looking for games nearby and on this network...";
     [ObservableProperty] public partial bool PreferBluetooth { get; set; } = settings.PreferBluetooth;
 
@@ -67,30 +65,7 @@ public partial class JoinViewModel(
 
 
     [RelayCommand]
-    async Task Connect(HostItem item)
-    {
-        if (this.IsConnecting)
-            return;
-
-        this.OnDisappearing();
-        this.IsConnecting = true;
-        this.Status = $"Joining {item.Name}...";
-        try
-        {
-            await session.JoinHost(item.Info, settings.Name, settings.AvatarPath, this.PreferBluetooth);
-            await shell.Navigator.NavigateToGame();
-        }
-        catch (Exception ex)
-        {
-            await shell.Dialogs.Alert("Could not join", ex.Message);
-            this.Status = "Looking for games nearby and on this network...";
-            this.OnAppearing();
-        }
-        finally
-        {
-            this.IsConnecting = false;
-        }
-    }
+    Task Connect(HostItem item) => shell.Navigator.NavigateToGame(item.Info);
 }
 
 
