@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+        A macOS (AppKit) client for the Universal Hubs sample, on .NET MAUI's AppKit backend from dotnet/maui-labs.
+        Client only: it messages people's chats and joins their games over Wi-Fi (mDNS) or a shared tunnel address.
+        It links the hub contracts from the phone app, so it speaks exactly the same hubs.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0-macos</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <UseMaui>true</UseMaui>
+        <SingleProject>true</SingleProject>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>Sample.MacOS</RootNamespace>
+        <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+
+        <ApplicationTitle>Universal Hubs</ApplicationTitle>
+        <ApplicationId>org.shiny.universalhubs.sample.macos</ApplicationId>
+        <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+        <ApplicationVersion>1</ApplicationVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="..\Sample\Hub\IChatHub.cs" Link="Shared\IChatHub.cs" />
+        <Compile Include="..\Sample\Hub\IGameHub.cs" Link="Shared\IGameHub.cs" />
+        <Compile Include="..\Sample\Game\GameModels.cs" Link="Shared\GameModels.cs" />
+        <MauiIcon Include="..\Sample\Resources\AppIcon\appicon.png" ForegroundFile="..\Sample\Resources\AppIcon\appiconfg.png" />
+        <MauiFont Include="..\Sample\Resources\Fonts\*" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Maui.Controls" />
+        <PackageReference Include="Microsoft.Maui.Platforms.MacOS" />
+        <PackageReference Include="Microsoft.Maui.Platforms.MacOS.Essentials" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+        <PackageReference Include="Shiny.Maui.Controls" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+    </ItemGroup>
+</Project>

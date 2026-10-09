@@ -5,14 +5,17 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Authors>Allan Ritchie</Authors>
         <Owners>aritchie;shinylib</Owners>
-        <Product>Shiny.SwitchboardR</Product>
+        <Product>Shiny.UniversalHubs</Product>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageProjectUrl>https://shinylib.net</PackageProjectUrl>
         <PackageIcon>icon.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageTags>ble bluetooth wifi mdns hub signalr switchboard ios android maui</PackageTags>
-        <RepositoryUrl>https://github.com/shinyorg/switchboardr</RepositoryUrl>
+        <RepositoryUrl>https://github.com/shinyorg/universalhubs</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
+
+        <!-- the platforms with a Shiny BLE stack - the packages register it there; plain net10.0 brings its own -->
+        <PlatformTargetFrameworks>net10.0;net10.0-android;net10.0-ios;net10.0-maccatalyst</PlatformTargetFrameworks>
 
         <CI Condition="'$(GITHUB_ACTIONS)' == 'true'">true</CI>
         <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>

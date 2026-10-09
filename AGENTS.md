@@ -1,6 +1,6 @@
-# Shiny.SwitchboardR — Working Notes
+# Shiny.UniversalHubs — Working Notes
 
-SwitchboardR serves **Shiny.BluetoothLE.Hubs** hubs over Wi-Fi as well as BLE, using **Shiny.Net.HttpServer.Switchboard**
+UniversalHubs serves **Shiny.BluetoothLE.Hubs** hubs over Wi-Fi as well as BLE, using **Shiny.Net.HttpServer.Switchboard**
 and mDNS.
 
 - **Related repos:**
@@ -11,11 +11,11 @@ and mDNS.
 
 ## Layout
 
-- `src/Shiny.SwitchboardR`: the shared wire protocol (`SwitchboardRProtocol`, `HubJson`).
-- `src/Shiny.SwitchboardR.Host`: the hub Switchboard, `ISwitchboardRHost`, file routes and mDNS.
-- `src/Shiny.SwitchboardR.Client`: `ISwitchboardRClient<T>`, discovery and `SwitchboardTransport`.
-- `tests/Shiny.SwitchboardR.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport.
-- `samples/TicTacToe`: MAUI, iOS and Android.
+- `src/Shiny.UniversalHubs`: the shared wire protocol (`UniversalHubProtocol`, `HubJson`).
+- `src/Shiny.UniversalHubs.Host`: the hub Switchboard, `IUniversalHubHost`, file routes and mDNS.
+- `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, discovery and `SwitchboardTransport`.
+- `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport.
+- `samples/Sample`: MAUI, iOS and Android.
 
 ## Rules
 
@@ -24,12 +24,12 @@ and mDNS.
   - client: `BleHubClient.ConnectExternal`
 
   If a feature needs hub behavior, add it to blehubs (with tests there) and consume the new version.
-- **The wire is versioned.** `SwitchboardRProtocol.Version` covers the reserved method names, envelopes, handshake
+- **The wire is versioned.** `UniversalHubProtocol.Version` covers the reserved method names, envelopes, handshake
   records, TXT keys and file routes. A breaking change bumps it, and the handshake refuses mismatches.
-- **AOT/trim safe:** no reflection. JSON goes through the source-generated `SwitchboardRJsonContext` or `JsonElement`.
+- **AOT/trim safe:** no reflection. JSON goes through the source-generated `UniversalHubJsonContext` or `JsonElement`.
 - **The Switchboard source generator is removed from the host project on purpose** (see its csproj). `HubBoard<THub>` is
   dispatched by a hand-registered `SwitchboardDescriptor`.
-- **Every behavior change** gets a test in `tests/Shiny.SwitchboardR.Tests`, plus updates to README.md and PLAN.md.
+- **Every behavior change** gets a test in `tests/Shiny.UniversalHubs.Tests`, plus updates to README.md and PLAN.md.
 - Run the tests a few times (`--no-build` loop) before calling a timing-sensitive change done. Use `WaitFor` polling,
   never fixed sleeps.
 

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.UniversalHubs</RootNamespace>
+        <Description>Shiny.UniversalHubs client - finds hub hosts over Bluetooth LE and mDNS and connects to them over whichever is available, behind the same generated proxy</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE" />
+        <PackageReference Include="Shiny.BluetoothLE.Hubs.Client" />
+        <PackageReference Include="Shiny.Net.HttpServer.Switchboard.Client" />
+        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+    </ItemGroup>
+</Project>
