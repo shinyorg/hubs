@@ -6,6 +6,7 @@ namespace Sample.Services;
 /// <summary>
 /// Feeds ChatView from ChatService - a session is one conversation
 /// </summary>
+[Singleton]
 public class ChatSessionProvider(ChatService chat) : IChatSessionProvider
 {
     public Task<IChatSession> CreateSessionAsync(string[] userIds, CancellationToken cancellationToken = default)
@@ -118,7 +119,7 @@ sealed class ConversationSession : IChatSession
 
     public Task MarkReadAsync(string[] messageIds, CancellationToken ct = default)
     {
-        MainThread.BeginInvokeOnMainThread(() => this.conversation.Unread = 0);
+        this.conversation.Unread = 0;
         return Task.CompletedTask;
     }
 

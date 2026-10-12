@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.Extensions.Logging;
 using Shiny.Actors;
 using Shiny.BluetoothLE.Hubs;
+using Shiny.Infrastructure;
 using Shiny.Net.HttpServer.Ssh;
 using Shiny.Notifications;
 using Shiny.UniversalHubs;
@@ -17,6 +18,7 @@ namespace Sample.Services;
 /// Visitor: messages someone else's chat through the generated IChatHub proxy - found nearby, on the network, or by the
 /// tunnel address its owner shared.
 /// </summary>
+[Singleton]
 public class ChatService
 {
     const string InstallIdProperty = "installId";
@@ -29,6 +31,7 @@ public class ChatService
     readonly INotificationManager notifications;
     readonly PlayerSettings settings;
     readonly QuickTunnel tunnel;
+    readonly IMainThread mainThread;
     readonly ILogger<ChatService> logger;
     Conversation? remote;
     int nextNotificationId = 1000;
@@ -43,6 +46,7 @@ public class ChatService
         INotificationManager notifications,
         PlayerSettings settings,
         QuickTunnel tunnel,
+        IMainThread mainThread,
         ILogger<ChatService> logger
     )
     {
@@ -54,6 +58,7 @@ public class ChatService
         this.notifications = notifications;
         this.settings = settings;
         this.tunnel = tunnel;
+        this.mainThread = mainThread;
         this.logger = logger;
 
         // the owner's answers arrive as pushes on the proxy
@@ -65,7 +70,7 @@ public class ChatService
         client.Disconnected += (_, disconnect) =>
         {
             if (this.remote is { } conversation)
-                MainThread.BeginInvokeOnMainThread(() => conversation.SetOffline(disconnect));
+                this.mainThread.BeginInvokeOnMainThread(() => conversation.SetOffline(disconnect));
         };
     }
 
@@ -162,7 +167,7 @@ public class ChatService
 
         var name = connection.Client.Name ?? "Visitor";
         await this.actors.Get<IConversationActor>(id).Open(name, isVisiting: false);
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await this.mainThread.InvokeOnMainThreadAsync(() =>
         {
             var conversation = this.Find(id);
             if (conversation == null)
@@ -189,7 +194,7 @@ public class ChatService
     public void OnVisitorDisconnected(HubConnection connection, HubDisconnect disconnect)
     {
         if (connection.Properties.TryGetValue("conversation", out var id))
-            MainThread.BeginInvokeOnMainThread(() => this.Find((string)id)?.SetOffline(disconnect));
+            this.mainThread.BeginInvokeOnMainThread(() => this.Find((string)id)?.SetOffline(disconnect));
     }
 
 
@@ -258,7 +263,7 @@ public class ChatService
         if (await this.History(conversation).Add(line) == null)
             return;
 
-        MainThread.BeginInvokeOnMainThread(() =>
+        this.mainThread.BeginInvokeOnMainThread(() =>
         {
             conversation.LastText = line.Text;
             if (fromPeer && this.Viewing != conversation.Id)

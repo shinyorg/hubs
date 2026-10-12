@@ -2,6 +2,7 @@ using Microsoft.Maui.Graphics.Platform;
 
 namespace Sample.Services;
 
+[Singleton]
 public class PlayerSettings
 {
     /// <summary>

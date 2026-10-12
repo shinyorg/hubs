@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <!--
-        A macOS (AppKit) client for the Universal Hubs sample, on .NET MAUI's AppKit backend from dotnet/maui-labs.
-        Client only: it messages people's chats and joins their games over Wi-Fi (mDNS) or a shared tunnel address.
-        It links the hub contracts from the phone app, so it speaks exactly the same hubs.
+        A macOS (AppKit) host and client for the Universal Hubs sample, on .NET MAUI's AppKit backend from dotnet/maui-labs.
+        Like the phone app it hosts its chat and games over BLE and Wi-Fi, and joins anyone else's. It is the phone app:
+        the XAML app, shell, pages, hubs, game and services are all linked - only startup is its own.
     -->
     <PropertyGroup>
         <TargetFramework>net10.0-macos</TargetFramework>
@@ -13,6 +13,7 @@
         <IsPackable>false</IsPackable>
         <RootNamespace>Sample.MacOS</RootNamespace>
         <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+        <MauiXamlInflator>SourceGen</MauiXamlInflator>
 
         <ApplicationTitle>Universal Hubs</ApplicationTitle>
         <ApplicationId>org.shiny.universalhubs.sample.macos</ApplicationId>
@@ -21,9 +22,16 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <Compile Include="..\Sample\Hub\IChatHub.cs" Link="Shared\IChatHub.cs" />
-        <Compile Include="..\Sample\Hub\IGameHub.cs" Link="Shared\IGameHub.cs" />
-        <Compile Include="..\Sample\Game\GameModels.cs" Link="Shared\GameModels.cs" />
+        <MauiXaml Include="..\Sample\App.xaml" Link="App.xaml" />
+        <MauiXaml Include="..\Sample\AppShell.xaml" Link="AppShell.xaml" />
+        <MauiXaml Include="..\Sample\Pages\*.xaml" Link="Pages\%(Filename)%(Extension)" />
+        <MauiXaml Include="..\Sample\Resources\Styles\*.xaml" Link="Resources\Styles\%(Filename)%(Extension)" />
+        <Compile Include="..\Sample\App.xaml.cs" Link="App.xaml.cs" />
+        <Compile Include="..\Sample\AppShell.xaml.cs" Link="AppShell.xaml.cs" />
+        <Compile Include="..\Sample\Pages\*.cs" Link="Pages\%(Filename)%(Extension)" />
+        <Compile Include="..\Sample\Hub\*.cs" Link="Shared\Hub\%(Filename)%(Extension)" />
+        <Compile Include="..\Sample\Game\*.cs" Link="Shared\Game\%(Filename)%(Extension)" />
+        <Compile Include="..\Sample\Services\*.cs" Link="Shared\Services\%(Filename)%(Extension)" />
         <MauiIcon Include="..\Sample\Resources\AppIcon\appicon.png" ForegroundFile="..\Sample\Resources\AppIcon\appiconfg.png" />
         <MauiFont Include="..\Sample\Resources\Fonts\*" />
     </ItemGroup>
@@ -35,9 +43,19 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
         <PackageReference Include="Microsoft.Extensions.Logging.Console" />
         <PackageReference Include="Shiny.Maui.Controls" />
+        <PackageReference Include="Shiny.Maui.Shell" />
+        <PackageReference Include="CommunityToolkit.Mvvm" />
+        <!-- Shiny's macOS builds: the BLE stacks and notifications that blehubs only registers itself on phones -->
+        <PackageReference Include="Shiny.Hosting.Maui" />
+        <PackageReference Include="Shiny.BluetoothLE" />
+        <PackageReference Include="Shiny.BluetoothLE.Hosting" />
+        <PackageReference Include="Shiny.Notifications" />
+        <PackageReference Include="Shiny.Actors" />
+        <PackageReference Include="Shiny.Net.HttpServer.Ssh" />
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
     </ItemGroup>
 </Project>

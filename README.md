@@ -216,8 +216,11 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
   - Each conversation is a `ConversationActor` kept on disk. New messages arrive on its actor stream and in Shiny.Maui.Controls' `ChatView`.
   - Incoming messages raise Shiny.Notifications local notifications.
   - "Share on the internet" starts a quick tunnel. Only `ChatHub` allows it.
-- **`samples/Sample.MacOS`:** a macOS (AppKit) client on .NET MAUI's AppKit backend from dotnet/maui-labs. It links
-  the hub contracts, finds people and games over mDNS (or a shared address), and chats and plays over HTTP.
+- **`samples/Sample.MacOS`:** the same app for macOS (AppKit), on .NET MAUI's AppKit backend from dotnet/maui-labs.
+  - It links the whole phone app (XAML app, Shell, pages, hubs, game and services), so it is the same full host and
+    client. It hosts its chat and games over BLE and Wi-Fi, and joins anyone else's. Only its startup is its own.
+  - blehubs doesn't register BLE stacks on macOS, so the app registers Shiny's macOS builds itself (`AddBluetoothLE`,
+    `AddBluetoothLeHosting`). It starts Shiny with `UseShiny()`, like the phones.
 
 ```
 dotnet build samples/Sample -f net10.0-android -t:Run

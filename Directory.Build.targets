@@ -7,4 +7,11 @@
         <None Include="$(MSBuildThisFileDirectory)nuget.png" Pack="true" PackagePath="icon.png" Visible="false" />
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
     </ItemGroup>
+
+    <!-- NBGV always appends +<commit> to the informational version; strip it (see PublicRelease in Directory.Build.props) -->
+    <Target Name="StripCommitFromInformationalVersion" AfterTargets="GetBuildVersion">
+        <PropertyGroup>
+            <AssemblyInformationalVersion>$(AssemblyInformationalVersion.Split('+')[0])</AssemblyInformationalVersion>
+        </PropertyGroup>
+    </Target>
 </Project>

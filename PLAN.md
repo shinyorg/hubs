@@ -265,6 +265,17 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - Sample: a joining device no longer reads pushes with its last role (it showed its own avatar for the host), and the
     avatar cache is cleared per join.
   - Consumes blehubs `1.1.0` from nuget.org. 65 tests; the sample builds for Android, iOS and macOS.
+- **2026-10-10**: The macOS sample is a full host and client.
+  - It links the whole phone app: the XAML app, Shiny Shell, pages, view models, hubs, game and services. Only its
+    startup (`MauiProgram`, app delegate) is its own.
+  - It registers Shiny's macOS BLE stacks itself, since blehubs only does that on Android, iOS and Mac Catalyst.
+  - The shared chat services marshal to the main thread through Shiny.Maui.Shell's `IMainThread`. MAUI's `MainThread`
+    throws on the AppKit backend, and Shell `7.0.2` adds a macOS implementation. `ChatSessionProvider` doesn't marshal
+    at all, because ChatView takes care of that.
+  - Consumes blehubs `1.2.0` and httpserver `2.1.1`. With them a device no longer lists itself: blehubs' `Discover()`
+    skips its own advertisement (service UUID + advertised name), and the mDNS locator skips publications made on the same
+    `IMdnsManager`, which the host's advertisers and the client's locator share. blehubs also asks for ATT MTU 517 on
+    every new BLE connection. No universalhubs code changed.
 
 ## 7. Verifying on hardware
 
@@ -289,8 +300,12 @@ You need two physical devices. Run the sample on both and check:
 - **Tunnel:**
   - "Share on the internet" shows a public URL. A device on cellular can open it through "Address someone shared".
   - Through that URL the game route answers 404.
-- **Mac client:** `samples/Sample.MacOS` lists the phones' chats and games over mDNS, can chat with them, and can
-  join a game.
+- **Mac host and client:** `samples/Sample.MacOS`
+  - It hosts its chat over BLE and Wi-Fi as soon as it opens. Phones list it under "Message someone".
+  - "Host a game" on the Mac shows up in the phones' join list, and a phone can join it over either transport.
+  - It lists and joins the phones' games and chats, over Bluetooth or Wi-Fi.
+  - Run it from Finder, `open` or `-t:Run`, not by executing the binary from a terminal. macOS charges the Bluetooth
+    permission to the terminal, whose Info.plist has no `NSBluetoothAlwaysUsageDescription`, and kills the app.
 
 ## 8. Future
 

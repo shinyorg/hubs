@@ -13,6 +13,7 @@ namespace Sample.Services;
 /// Wi-Fi clients alike); a client plays through the generated IGameHub proxy, over Wi-Fi or BLE. Every hosted game is its
 /// own actor, so a new game never inherits the last one's state.
 /// </summary>
+[Singleton]
 public class GameSession
 {
     public const string HostAvatarFile = "avatar-host.jpg";

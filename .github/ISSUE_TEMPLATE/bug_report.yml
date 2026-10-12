@@ -1,0 +1,87 @@
+name: Bug Report
+description: You have found something wrong with Shiny.UniversalHubs
+title: "[Bug]: "
+labels: [bug, unverified]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for filing an issue. Please file against the latest version of Shiny.UniversalHubs from NuGet.
+        If you have questions, please post them in GitHub discussions.
+        Problems usually depend on BOTH devices and the network between them - please tell us which device was the host, which was the client, and whether they connected over Wi-Fi or BLE.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component/Nuget
+      description: The package you are filing against
+      options:
+        - Protocol (Shiny.UniversalHubs)
+        - Host (Shiny.UniversalHubs.Host)
+        - Client (Shiny.UniversalHubs.Client)
+        - Sample
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      description: How the client reached the host
+      options:
+        - Wi-Fi (Switchboard / mDNS)
+        - Bluetooth LE
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: operatingsystems
+    attributes:
+      label: What operating system(s) are affected?
+      description: You may select more than one
+      options:
+      - label: iOS
+      - label: Mac Catalyst
+      - label: macOS
+      - label: Android
+      - label: Other
+  - type: textarea
+    validations:
+      required: true
+    attributes:
+      label: Devices and OS versions
+      description: Which device was the host and which was the client (model + OS version for each), and the network they shared
+      placeholder: |
+        Host: Pixel 8, Android 15
+        Client: iPhone 15, iOS 18.2
+        Network: same home Wi-Fi
+  - type: textarea
+    validations:
+      required: true
+    attributes:
+      label: Steps To Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Actual Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: exception
+    attributes:
+      label: Exception or Log output
+      description: Please copy and paste any relevant log output (host and client)
+  - type: textarea
+    id: codesample
+    attributes:
+      label: Code Sample
+      description: Please include a github repo with your reproducible sample - the hub contract, hub and client code
