@@ -15,6 +15,7 @@ and mDNS.
 - `src/Shiny.UniversalHubs.Host`: the hub Switchboard, `IUniversalHubHost`, file routes and mDNS.
 - `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, discovery and `SwitchboardTransport`.
 - `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport.
+- `skills/shiny-universal-hubs`: the published Claude Code skill.
 - `samples/Sample`: MAUI, iOS and Android.
 - `samples/Sample.MacOS`: the same app on macOS (maui-labs AppKit). It links all of `samples/Sample` (App, AppShell,
   Pages, Hub, Game, Services), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny.Maui.Shell's
@@ -40,11 +41,24 @@ A change is not "done" until these are in sync:
 1. **README.md** (repo root): reflect new or changed behavior. It is also the NuGet package readme.
 2. **PLAN.md**: update the design sections, the decisions and the status when behavior or a decision changes.
 3. **Tests**: every behavior change gets a test in `tests/Shiny.UniversalHubs.Tests` (see below).
-4. **Skill** (once `skills/` exists): the agent-facing "how to generate correct code" doc. It syncs to `shinyorg/skills`
-   (plugin `shiny`) through `.github/workflows/sync-skills.yml` on pushes to main/v* that touch `skills/**`.
-5. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight): there is no UniversalHubs section yet. When one
-   is added, follow the blehubs layout (feature pages, `release-notes.mdx`, `src/sidebar-topics.mjs`,
-   `src/data/libraryCatalog.ts`) and run `npm run build` there, because MDX errors only surface at build time.
+4. **Skill** (`skills/shiny-universal-hubs/SKILL.md` + `reference/api-reference.md`): the agent-facing "how to
+   generate correct code" doc. Update the trigger keyword list when a new public API is introduced. Hub behavior
+   belongs in blehubs' `shiny-ble-hubs` skill; this one points at it. The skill syncs to `shinyorg/skills` (plugin
+   `shiny`) through `.github/workflows/sync-skills.yml` on pushes to main/v* that touch `skills/**`. The docs site
+   lists it in `src/content/docs/foundation/ai-skills.mdx` and `src/components/AiSkill.astro`.
+5. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight, rendered to https://shinylib.net/universalhubs/):
+   - **Feature pages**: `src/content/docs/universalhubs/*.mdx`:
+     - `index` (Getting Started, setup, platforms, things to know)
+     - `hosting` (`AddUniversalServer`, `UniversalHub<T>`, start/stop, tunnels, disconnect reasons)
+     - `client` (discovery, transport choice, resume, `FromUrl`, files)
+     - `how-it-works` (wire protocol, mDNS TXT, file routes)
+   - **Release notes**: `src/content/docs/universalhubs/release-notes.mdx`, using `<RN>` the same way blehubs does.
+     Use `### <version> - TBD` for unreleased work.
+   - **Menu**: the **Universal Hubs** node in `src/sidebar-topics.mjs`, right after BluetoothLE Hubs.
+   - **Homepage catalog**: the `Universal Hubs` entry in `src/data/libraryCatalog.ts`. Its `label` must match the
+     sidebar.
+   - Hub behavior is documented on the blehubs pages; link to them rather than repeating it.
+   - Run `npm run build` in the docs repo after changes, because MDX errors only surface at build time.
 
 **Never write a release note for a sample-app fix.** Release notes describe the shipped library. Changes confined to
 `samples/` get no note.

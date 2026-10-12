@@ -49,6 +49,10 @@ public static class MauiProgram
 
         builder.Services.AddShinyActors(actors => actors.UseFileStorage(Path.Combine(FileSystem.AppDataDirectory, "actors")));
 
+        // blehubs only registers the BLE stacks on Android, iOS and Mac Catalyst: register Shiny's macOS builds here
+        builder.Services.AddBluetoothLE();
+        builder.Services.AddBluetoothLeHosting();
+
         // ---- host: the same universal server as the phone app ----
         builder.Services.AddUniversalServer(server => server
             .ServiceUuid(ServiceUuid)
