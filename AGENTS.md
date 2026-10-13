@@ -88,9 +88,10 @@ PLAN.md §7.
   **A version never carries the git commit hash**: no `-g<hash>` package suffix and no `+<hash>` metadata. Keep it
   that way.
 - **Package icon**: `nuget.png` packs as `icon.png` (`Directory.Build.targets`), the same logo as blehubs.
-- **CI**: `.github/workflows/build.yml` runs on macOS. It builds `Build.slnf` (Release, which packs to `artifacts/`),
-  runs the tests, and compile-checks the sample for Android, iOS and macOS. It publishes to NuGet through OIDC on
-  pushes to `preview` / `v*`. Every package in `Directory.Packages.props` must be on nuget.org, or CI restore fails.
+- **CI**: `.github/workflows/build.yml` runs on macOS. It builds `Build.slnf` (the libraries and tests, Release, which
+  packs to `artifacts/`) and runs the tests. **The samples are not built in CI**, so build them locally after API
+  changes. It publishes to NuGet through OIDC on pushes to `preview` / `v*`. Every package the libraries and tests use
+  must be on nuget.org, or CI restore fails.
 - **Skill sync**: `.github/workflows/sync-skills.yml` opens a PR against `shinyorg/skills` on branch
   `update-skills-universal-hubs`. It needs the `SKILLS_REPO_TOKEN` secret.
 

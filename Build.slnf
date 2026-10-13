@@ -4,7 +4,8 @@
     "projects": [
       "src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj",
       "src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj",
-      "src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj"
+      "src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj",
+      "tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj"
     ]
   }
 }
