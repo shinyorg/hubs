@@ -90,7 +90,7 @@ PLAN.md §7.
 - **Package icon**: `nuget.png` packs as `icon.png` (`Directory.Build.targets`), the same logo as blehubs.
 - **CI**: `.github/workflows/build.yml` runs on macOS. It builds `Build.slnf` (the libraries and tests, Release, which
   packs to `artifacts/`) and runs the tests. **The samples are not built in CI**, so build them locally after API
-  changes. It publishes to NuGet through OIDC on pushes to `preview` / `v*`. Every package the libraries and tests use
+  changes. It publishes to NuGet through OIDC on pushes and manual runs (`workflow_dispatch`) on `preview` / `v*`. Every package the libraries and tests use
   must be on nuget.org, or CI restore fails.
 - **Skill sync**: `.github/workflows/sync-skills.yml` opens a PR against `shinyorg/skills` on branch
   `update-skills-universal-hubs`. It needs the `SKILLS_REPO_TOKEN` secret.
