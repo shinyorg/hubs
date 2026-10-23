@@ -94,6 +94,11 @@ internal interface IHubBinding
     /// Hangs up on every client of this hub, telling each one why
     /// </summary>
     Task HangUpAll(HubDisconnect disconnect);
+
+    /// <summary>
+    /// A Wi-Fi client opened its media channel. False when the client is no longer connected.
+    /// </summary>
+    bool OpenMedia(string connectionId, IBleHubMediaChannel channel);
 }
 
 
@@ -105,13 +110,15 @@ internal sealed class HubBinding<THub> : IHubBinding where THub : class
     readonly IServiceProvider services;
     readonly UniversalHubHost host;
     readonly FileTokens fileTokens;
+    readonly MediaTokens mediaTokens;
     readonly ILogger logger;
     readonly Lazy<IBleHubTransportEndpoint> endpoint;
     readonly Lazy<IOperator<HubBoard<THub>>> board;
 
 
-    public HubBinding(IServiceProvider services, UniversalHubHost host, FileTokens fileTokens, string? serviceType, bool allowTunnel, ILoggerFactory? loggerFactory = null)
+    public HubBinding(IServiceProvider services, UniversalHubHost host, FileTokens fileTokens, MediaTokens mediaTokens, string? serviceType, bool allowTunnel, ILoggerFactory? loggerFactory = null)
     {
+        this.mediaTokens = mediaTokens;
         this.services = services;
         this.ServiceType = serviceType;
         this.AllowTunnel = allowTunnel;
@@ -122,7 +129,11 @@ internal sealed class HubBinding<THub> : IHubBinding where THub : class
         this.endpoint = new(() =>
         {
             var context = services.GetRequiredService<IHubContext<THub>>();
-            context.ClientDisconnected += (_, e) => fileTokens.Remove(e.Client.Id);
+            context.ClientDisconnected += (_, e) =>
+            {
+                fileTokens.Remove(e.Client.Id);
+                mediaTokens.Remove(e.Client.Id);
+            };
             return context.TransportEndpoint;
         });
         this.board = new(() => services.GetRequiredService<IOperator<HubBoard<THub>>>());
@@ -143,6 +154,9 @@ internal sealed class HubBinding<THub> : IHubBinding where THub : class
 
 
     public Task HangUpAll(HubDisconnect disconnect) => this.board.Value.Lines.HangUpAllAsync(HubJson.HangUpMessage(disconnect), allowReconnect: false);
+
+
+    public bool OpenMedia(string connectionId, IBleHubMediaChannel channel) => this.Endpoint.MediaChannelOpened(connectionId, channel);
 
 
     public void LineGone(string lineId, HubDisconnect disconnect) => this.Endpoint.Disconnected(HubConnection.HttpPrefix + lineId, disconnect);
@@ -183,12 +197,19 @@ internal sealed class HubBinding<THub> : IHubBinding where THub : class
         if (rejection == null && this.host.FilesEnabled)
             fileToken = this.fileTokens.Issue(connectionId, () => this.Endpoint.FindClient(connectionId));
 
+        string? mediaToken = null;
+        var mediaMax = this.host.MediaMaxPacketSize;
+        if (rejection == null && mediaMax != null)
+            mediaToken = this.mediaTokens.Issue(connectionId, this);
+
         await call.ReturnAsync(HubJson.Serialize(new HubHandshakeReply(
             rejection == null,
             rejection,
             this.host.HostName,
             this.host.HostId,
-            fileToken
+            fileToken,
+            mediaToken,
+            mediaToken == null ? null : mediaMax
         )));
     }
 

@@ -32,6 +32,7 @@
         <Compile Include="..\Sample\Hub\*.cs" Link="Shared\Hub\%(Filename)%(Extension)" />
         <Compile Include="..\Sample\Game\*.cs" Link="Shared\Game\%(Filename)%(Extension)" />
         <Compile Include="..\Sample\Services\*.cs" Link="Shared\Services\%(Filename)%(Extension)" />
+        <Compile Include="..\Sample\Calls\*.cs" Link="Shared\Calls\%(Filename)%(Extension)" />
         <MauiIcon Include="..\Sample\Resources\AppIcon\appicon.png" ForegroundFile="..\Sample\Resources\AppIcon\appiconfg.png" />
         <MauiFont Include="..\Sample\Resources\Fonts\*" />
     </ItemGroup>
@@ -43,6 +44,8 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
         <PackageReference Include="Microsoft.Extensions.Logging.Console" />
         <PackageReference Include="Shiny.Maui.Controls" />
+        <PackageReference Include="Shiny.Maui.Controls.Camera" />
+        <PackageReference Include="Shiny.Audio" />
         <PackageReference Include="Shiny.Maui.Shell" />
         <PackageReference Include="CommunityToolkit.Mvvm" />
         <!-- Shiny's macOS builds: the BLE stacks and notifications that blehubs only registers itself on phones -->

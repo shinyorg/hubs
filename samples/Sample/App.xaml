@@ -43,6 +43,16 @@
                 <Setter Property="HeightRequest" Value="100" />
             </Style>
 
+            <Style x:Key="CallButton" TargetType="Button">
+                <Setter Property="FontSize" Value="26" />
+                <Setter Property="WidthRequest" Value="68" />
+                <Setter Property="HeightRequest" Value="68" />
+                <Setter Property="CornerRadius" Value="34" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="TextColor" Value="White" />
+                <Setter Property="BackgroundColor" Value="#55FFFFFF" />
+            </Style>
+
             <Style x:Key="EmoteButton" TargetType="Button">
                 <Setter Property="FontSize" Value="24" />
                 <Setter Property="BackgroundColor" Value="Transparent" />

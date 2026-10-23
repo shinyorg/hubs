@@ -20,14 +20,21 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
     readonly HttpClient http;
     readonly SwitchboardLine line;
     readonly Uri filesUri;
+    readonly Uri mediaUri;
+    readonly UniversalHubClientOptions options;
     readonly ILogger? logger;
+    readonly SemaphoreSlim mediaGate = new(1, 1);
     string? fileToken;
+    string? mediaToken;
+    int mediaMaxPacketSize;
+    ClientMediaChannel? media;
     volatile bool closing;
 
 
     public SwitchboardTransport(
         Uri hubUri,
         Uri filesUri,
+        Uri mediaUri,
         IBleHubClientTransportEvents events,
         UniversalHubClientOptions options,
         ILoggerFactory? loggerFactory
@@ -35,6 +42,8 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
     {
         this.events = events;
         this.filesUri = filesUri;
+        this.mediaUri = ClientMediaChannel.ToWebSocketUri(mediaUri);
+        this.options = options;
         this.logger = loggerFactory?.CreateLogger<SwitchboardTransport>();
         this.http = CreateHttpClient(options);
 
@@ -90,6 +99,8 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
 
         var reply = HubJson.ReadHandshakeReply(envelope);
         this.fileToken = reply.FileToken;
+        this.mediaToken = reply.MediaToken;
+        this.mediaMaxPacketSize = reply.MediaMaxPacketSize ?? 0;
         this.HostId = reply.HostId;
 
         if (!reply.Accepted)
@@ -126,6 +137,39 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
         );
         await foreach (var envelope in items.ConfigureAwait(false))
             yield return HubJson.ReadItem(envelope);
+    }
+
+
+    public bool CanOpenMediaChannel => this.mediaToken != null && this.mediaMaxPacketSize > 0 && !this.closing;
+
+
+    /// <summary>
+    /// The media WebSocket, opened once per connection and closed with it
+    /// </summary>
+    public async Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
+    {
+        if (!this.CanOpenMediaChannel)
+            throw new NotSupportedException("The host has no media channels");
+
+        await this.mediaGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (this.media is { IsOpen: true } open)
+                return open;
+
+            this.media = await ClientMediaChannel.Connect(
+                this.mediaUri,
+                this.mediaToken!,
+                this.mediaMaxPacketSize,
+                this.options.HttpMessageHandlerFactory,
+                cancellationToken
+            ).ConfigureAwait(false);
+            return this.media;
+        }
+        finally
+        {
+            this.mediaGate.Release();
+        }
     }
 
 
@@ -173,6 +217,9 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
 
     async Task DisposeAsync()
     {
+        if (this.media is { } media)
+            await media.DisposeAsync().ConfigureAwait(false);
+
         try
         {
             await this.line.DisposeAsync().ConfigureAwait(false);

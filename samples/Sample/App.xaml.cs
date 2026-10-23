@@ -6,7 +6,8 @@ public partial class App : Application
 {
     readonly ChatService chat;
 
-    public App(ChatService chat)
+    // CallService is created with the app, so it hears every incoming call
+    public App(ChatService chat, CallService calls)
     {
         this.chat = chat;
         this.InitializeComponent();

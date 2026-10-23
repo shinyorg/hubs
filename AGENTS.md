@@ -16,9 +16,10 @@ and mDNS.
 - `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, discovery and `SwitchboardTransport`.
 - `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport.
 - `skills/shiny-universal-hubs`: the published Claude Code skill.
-- `samples/Sample`: MAUI, iOS and Android.
+- `samples/Sample`: MAUI, iOS and Android. `samples/Sample/Calls` is the FaceTime-style call: app code over media
+  channels, Shiny.Audio's `IAudioDuplex` and the camera's `VideoEncoder` / `RemoteVideoView`, not a package.
 - `samples/Sample.MacOS`: the same app on macOS (maui-labs AppKit). It links all of `samples/Sample` (App, AppShell,
-  Pages, Hub, Game, Services), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny.Maui.Shell's
+  Pages, Hub, Game, Services, Calls), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny.Maui.Shell's
   `IMainThread`). Only `MauiProgram` and the app delegate are Mac-only.
 
 ## Rules

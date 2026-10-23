@@ -58,6 +58,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The microphone carries your voice on calls</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera shows you on video calls</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Pick a photo to use as your player avatar</string>
 	<key>XSAppIconAssets</key>

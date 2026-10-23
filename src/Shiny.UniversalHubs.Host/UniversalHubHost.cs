@@ -65,6 +65,7 @@ internal sealed class UniversalHubHost(
     BleHubHostOptions bleOptions,
     UniversalHubHostOptions options,
     FileTokens fileTokens,
+    MediaTokens mediaTokens,
     ILogger<UniversalHubHost>? logger = null
 ) : IUniversalHubHost
 {
@@ -75,6 +76,11 @@ internal sealed class UniversalHubHost(
 
     public bool IsHttpRunning => this.Hubs.Any(x => x.IsHttpRunning);
     public bool FilesEnabled => bleOptions.FileTransfers != null;
+
+    /// <summary>
+    /// The media channels' packet limit, null when they're off (BleHubHostOptions.EnableMediaChannels)
+    /// </summary>
+    public int? MediaMaxPacketSize => bleOptions.MediaChannels?.MaxPacketSize;
     public string? HostName => bleOptions.LocalName;
     public string HostId => options.HostId;
 
@@ -242,6 +248,7 @@ internal sealed class UniversalHubHost(
         if (!this.IsHttpRunning)
         {
             fileTokens.Clear();
+            mediaTokens.Clear();
             if (this.startedServer)
             {
                 this.startedServer = false;

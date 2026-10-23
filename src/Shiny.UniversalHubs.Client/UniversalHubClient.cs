@@ -199,13 +199,14 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             var root = baseUri.ToString().TrimEnd('/');
             var hubUri = new Uri($"{root}/{this.client.CharacteristicUuid.ToLowerInvariant()}");
             var filesUri = new Uri($"{root}/files");
+            var mediaUri = new Uri($"{root}/media");
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(this.options.HttpConnectTimeout);
             try
             {
                 await this.client.ConnectExternal(
-                    events => new SwitchboardTransport(hubUri, filesUri, events, this.options, this.loggerFactory),
+                    events => new SwitchboardTransport(hubUri, filesUri, mediaUri, events, this.options, this.loggerFactory),
                     options.ToBle(),
                     timeout.Token
                 ).ConfigureAwait(false);
@@ -306,6 +307,10 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     // over Wi-Fi this is refused (NotSupportedException) until the Switchboard transport carries renames
     public Task Rename(string? name, CancellationToken cancellationToken = default) => this.inner.Rename(name, cancellationToken);
+
+    public bool CanOpenMediaChannel => this.inner.CanOpenMediaChannel;
+
+    public Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken = default) => this.inner.OpenMediaChannel(cancellationToken);
 
     public Task<L2CapTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.UploadFile(localFilePath, remoteFileName, progress, cancellationToken);

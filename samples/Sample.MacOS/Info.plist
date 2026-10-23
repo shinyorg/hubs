@@ -16,6 +16,10 @@
 		<string>_unigame._tcp</string>
 		<string>_unichat._tcp</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The microphone carries your voice on calls</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera shows you on video calls</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>The local network is used to host and join games and chats over Wi-Fi</string>
 </dict>

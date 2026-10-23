@@ -102,6 +102,14 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - Status codes: 400 traversal or bad name, 401 token, 403 refused, 404 missing or files off, 409 exists, 411 no length,
     413 too big.
 
+- **Media channels.** A WebSocket, not Switchboard: `GET {BasePath}/media` with `X-Hub-Media-Token` set to the
+  handshake reply's `mediaToken`. One binary message is one packet, at most `mediaMaxPacketSize` bytes. Both reply
+  fields are null when the host has no media channels (`BleHubHostOptions.EnableMediaChannels`). The channel reaches the
+  hub through `IBleHubTransportEndpoint.MediaChannelOpened`, like an L2CAP one. Status codes: 401 token, 404 no media
+  channels (or tunnelled to a hub that doesn't allow it), 400 not an upgrade. The sample's calls (§9) are its first user.
+  - The fields are optional, so `Version` stays 2: an older client ignores them, and an older host's reply means "no
+    media channels".
+
 ### 3.1 `UniversalHub<TContract>`
 
 - Lives in `Shiny.UniversalHubs.Host` and derives from `BleHub<TContract>`. The blehubs generator walks base types and skips
@@ -211,6 +219,10 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
 | Transport choice | At connect. `Prefer` Wi-Fi by default, falling back to the other. A refusal isn't retried. No migration mid-session |
 | Start/stop | `IUniversalHubHost` starts and stops both transports, for every hub or one hub (`StartHub<THub>`). A transport that can't start is skipped if the other starts |
 | Tunnels | Each hub opts in (`AllowTunnel`). A gate returns 404 for the others. The tunnel provider is the app's choice |
+| Calls (2026-10-23) | Ride a *media channel* beside the hub (blehubs L2CAP over BLE, a WebSocket over Wi-Fi), not hub methods, so contracts don't change and hub logic stays in blehubs. Signalling travels in the same pipe. The host relays client-to-client calls |
+| Call codecs (2026-10-23) | Both: H.264 (hardware) when both sides have it, JPEG frames otherwise. No common codec answers with audio rather than refusing. PCM16 over Wi-Fi, IMA ADPCM over BLE |
+| Call pacing (2026-10-23) | Latest-wins video with key-frame recovery, audio first and capped at 200 ms queued: a slow link costs frames, never latency |
+| Where calls live (2026-10-23) | The libraries gain capabilities (media channels, duplex voice, live video encode and view). The call itself is sample code, not a package |
 | BLE service UUID (2026-10-09) | One for every hub (`server.ServiceUuid`, blehubs' default unless set); hubs are characteristics. Two 128-bit UUIDs overflow a 31-byte advertisement: Android refuses to advertise, iOS hides the second in an overflow area Android can't see. The cost: a BLE scan can't tell which hubs a host runs |
 
 ## 6. Status
@@ -277,6 +289,22 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
     `IMdnsManager`, which the host's advertisers and the client's locator share. blehubs also asks for ATT MTU 517 on
     every new BLE connection. No universalhubs code changed.
 
+- **2026-10-23**: Media channels over Wi-Fi (§3, §9), for live audio and video.
+  - Host: the `{BasePath}/media` WebSocket route. Client: `SwitchboardTransport.OpenMediaChannel`. The handshake reply
+    gained `mediaToken` / `mediaMaxPacketSize`. `UniversalHubClient` passes blehubs' `CanOpenMediaChannel` /
+    `OpenMediaChannel` through.
+  - Built against locally packed upstream work, none of it published yet:
+    - blehubs `1.4.0`: media channels (`BleHubsVersion` is bumped to it).
+    - For the sample only: Shiny.Audio `3.0.0` beta (`IAudioDuplex`) and Shiny.Maui.Controls.Camera `2.1.0` beta
+      (`VideoEncoder`, `RemoteVideoView`).
+    Publish them, then set their versions in `Directory.Packages.props`. CI can't restore until blehubs 1.4.0 is on
+    nuget.org.
+  - Tests: Wi-Fi media channels end to end (both directions, ordering, 200 KB packets, the size limit, reopening, closing
+    on disconnect and on host dispose, tokens, a host without media channels).
+  - Sample: FaceTime-style calls (`samples/Sample/Calls`). 📞 / 📹 in a chat call the other person; the call screen rings,
+    then shows them full screen with your camera in the corner.
+  - **Not yet verified:** real devices, real radios, echo cancellation, H.264 encode/decode. See §7.
+
 ## 7. Verifying on hardware
 
 You need two physical devices. Run the sample on both and check:
@@ -300,6 +328,14 @@ You need two physical devices. Run the sample on both and check:
 - **Tunnel:**
   - "Share on the internet" shows a public URL. A device on cellular can open it through "Address someone shared".
   - Through that URL the game route answers 404.
+- **Calls** (chat → 📞 / 📹):
+  - Over Wi-Fi, both directions (visitor calls owner, owner calls visitor). Video is smooth, and the status shows
+    H.264 between two iPhones or two Androids, and between an iPhone and an Android.
+  - With Wi-Fi off (Bluetooth only): voice is clear, video is a small, slow picture, and the status says Bluetooth.
+  - Speakerphone: no echo on the other side. Toggle the speaker, mute and camera.
+  - Walk out of range mid-call: the call ends as "Connection lost" on both sides.
+  - Call someone already on a call: Busy. Don't answer: "No answer" after 45 s.
+  - Rotate the phone during a video call: the other side stays upright, and the front camera is mirrored.
 - **Mac host and client:** `samples/Sample.MacOS`
   - It hosts its chat over BLE and Wi-Fi as soon as it opens. Phones list it under "Message someone".
   - "Host a game" on the Mac shows up in the phones' join list, and a phone can join it over either transport.
@@ -314,3 +350,136 @@ You need two physical devices. Run the sample on both and check:
 - Upload and download progress events on the host for Wi-Fi files
 - Wi-Fi hosting on devices with no BLE hosting stack (Windows)
 - Client and host renames over Wi-Fi (blehubs `IBleHubConnection.Rename`, `IBleHubHost.Rename` / `HostRenamed`)
+
+## 9. Calls: audio and video, like FaceTime (2026-10-23)
+
+**Goal:** the libraries can carry a 1:1 live call, audio only or audio and video, over Wi-Fi and BLE. The call itself
+is app code: `samples/Sample/Calls`. No new packages: each library gained what a call needs, and the sample puts them
+together.
+
+### 9.1 What each library gained
+
+| Library | Addition |
+|---|---|
+| blehubs (`Shiny.BluetoothLE.Hubs*` `1.4.0`) | Media channels: an ordered, bidirectional packet pipe per hub connection on its own L2CAP PSM, plus transport seams so Wi-Fi can carry it |
+| this repo (`Shiny.UniversalHubs.Host` / `.Client`) | Media channels over Wi-Fi: a WebSocket at `{BasePath}/media`, gated by a token from the handshake reply, reported through the blehubs seams |
+| Shiny.Audio (`3.0.0` beta) | `IAudioDuplex`: mic capture and live PCM playback on one voice-processing session, so echo cancellation removes what the speaker plays |
+| Shiny.Maui.Controls.Camera (`2.1.0` beta) | `VideoEncoder` (a `FrameAnalyzer` that emits JPEG or H.264 frames from a `CameraView`) and `RemoteVideoView` (renders received frames) |
+
+The sample's `Calls` folder has the call protocol, signalling, host relay, IMA ADPCM, the send scheduler and the device
+adapters. Audio and video reach the call logic through small interfaces (`ICallAudio`, `ICallVideoSource`,
+`ICallVideoSink`), so the logic itself doesn't depend on MAUI.
+
+### 9.2 Upstream contracts
+
+**blehubs (`1.4.0`): media channels** (built; blehubs' PLAN.md §6b is the detail)
+- `IBleHubMediaChannel : IAsyncDisposable` (in `Shiny.BluetoothLE.Hubs`): `ConnectionId` (host side; null on the client),
+  `MaxPacketSize`, `IsOpen`, `ValueTask Send(ReadOnlyMemory<byte> packet, CancellationToken)` (serialized; packets arrive
+  whole and in order or the channel closes; oversize throws `ArgumentException`), `IAsyncEnumerable<ReadOnlyMemory<byte>>
+  Receive(CancellationToken)` (one reader; completes on close), `Task Completion`.
+- Host: `BleHubHostOptions.EnableMediaChannels(maxPacketSize = 128 KB, secure = false)` (read back as
+  `BleHubHostOptions.MediaChannels`) opens a second L2CAP PSM at start. `HandshakeAck` gained `MediaChannelPsm`,
+  `MediaChannelSecure`, `MediaToken` and `MediaMaxPacketSize` (optional, so blehubs' protocol stays 1).
+  `IHubContext<THub>.MediaChannelOpened` (`BleHubMediaChannelEventArgs(Client, Channel)`) and
+  `GetMediaChannel(connectionId)`. A client's channel closes when it disconnects or the hub stops; a new one replaces the old.
+- Client: `IBleHubConnection.CanOpenMediaChannel` and `OpenMediaChannel(CancellationToken)` (returns the open one if there
+  is one). They're on `IBleHubConnection`, next to `CanTransferFiles`, because blehubs has no non-generic `IBleHubClient`.
+- Seams: `IBleHubClientTransport.CanOpenMediaChannel` / `OpenMediaChannel` (default: false / NotSupported), and
+  `IBleHubTransportEndpoint.MediaChannelOpened(connectionId, channel)` (returns false when the client is unknown).
+- L2CAP framing: `[u32 LE length][bytes]` in writes of at most 4 KB. The client's first frame is the token; the host
+  answers `[0x01]` or closes.
+
+**Shiny.Audio (`3.0.0` beta): full-duplex voice** (built for iOS, Mac Catalyst, macOS and Android; not Windows)
+- `IAudioDuplex.RequestAccess()`, `StartAsync(AudioDuplexOptions?, ct) → IAudioDuplexSession`.
+- `AudioDuplexOptions`: `SampleRate` (8000 or 16000; 16000 by default), `Processing` (`VoiceChat` by default),
+  `Speakerphone` (true), `FrameDuration` (20 ms), `PlaybackLatency` (target jitter buffer, 60 ms), `MaxPlaybackLatency`
+  (200 ms; older audio is dropped).
+- `IAudioDuplexSession`: `SampleRate`, `ChannelReader<ReadOnlyMemory<byte>> Captured` (PCM16 mono, one frame per item),
+  `void Play(ReadOnlySpan<byte> pcm16)` (thread-safe; gaps play as silence), `TimeSpan Buffered`, `bool Speakerphone`
+  (settable), `InputLevelChanged`, `StopAsync()`.
+- Apple: AVAudioSession `PlayAndRecord` / `VoiceChat` and one AVAudioEngine with voice processing on its input node,
+  playing through an AVAudioPlayerNode. Android: `AudioRecord` (VOICE_COMMUNICATION) + streaming `AudioTrack`
+  (USAGE_VOICE_COMMUNICATION) on one audio session with `MODE_IN_COMMUNICATION`. Windows isn't registered: AudioGraph
+  has no shared echo-cancelled capture-and-render path.
+  The jitter buffer is shared managed code and unit-tested. An overflow trims back to `PlaybackLatency`, not to the
+  maximum, so a burst doesn't leave the call 200 ms behind. A connected headset wins over `Speakerphone`. Android apps
+  need `MODIFY_AUDIO_SETTINGS`.
+
+**Shiny.Controls.Camera (`2.1.0` beta): live video**
+- Shared: `enum VideoCodec { Jpeg, H264 }` and `record EncodedVideoFrame(Codec, Data, Width, Height, Rotation, IsMirrored,
+  IsKeyFrame, Timestamp)`. H.264 is Annex B, and every key frame carries its SPS/PPS, so any key frame can start
+  decoding.
+- `VideoEncoder : FrameAnalyzer`: `Codec`, `MaxDimension` (640), `FrameRate` (15), `Bitrate` (H.264, 800 kbps),
+  `JpegQuality` (0.6), `KeyFrameInterval` (2 s), `RequestKeyFrame()`, `static IsSupported(VideoCodec)`, and
+  `event Action<EncodedVideoFrame> FrameEncoded`, raised on the encoder thread, not the UI thread. It rate-limits in
+  `WantsFrame()`, and its settings can change while it's running.
+- `RemoteVideoView : View`: `Render(EncodedVideoFrame)` (thread-safe; a delta frame before the first key frame is
+  dropped), `Clear()`, `Aspect`, `static CanDecode(VideoCodec)`, and `event KeyFrameNeeded` (the decoder lost sync).
+- H.264 on iOS, Mac Catalyst, macOS (VideoToolbox) and Android (MediaCodec). JPEG everywhere.
+
+### 9.3 The sample's call protocol (`CallProtocol.Version` = 1)
+
+Packets on the media channel, little-endian: `[version u8][type u8][callId 16 bytes]` then the body.
+
+| Type | Body |
+|---|---|
+| `0x01 Invite` | `to` (string, empty = the host), `from` (string, filled in by the host), `fromName`, `wantsVideo`, video codecs (bitmask), audio codecs (bitmask) |
+| `0x02 Accept` | `video` (bool), chosen video codec, chosen audio codec |
+| `0x03 Decline` | reason (`Busy`, `Declined`, `Unsupported`, `Unreachable`), message |
+| `0x04 HangUp` | reason, message |
+| `0x05 Ringing` | – (the callee's device is ringing) |
+| `0x10 Audio` | `seq u16`, codec, `timestamp u32` (ms), payload |
+| `0x11 Video` | `seq u16`, codec, flags (key, mirrored), rotation/90, `width u16`, `height u16`, `timestamp u32`, payload |
+| `0x12 KeyFrameRequest` | – |
+| `0x13 MediaState` | `muted`, `cameraOn` |
+
+- Strings are `[u16 length][UTF-8]`. An unknown type is ignored, and another version is declined as `Unsupported`.
+- **Routing (host):** `CallRouter` watches `MediaChannelOpened` for each hub that has calls on. An invite to `""` is
+  for the host's own `IHubCalls`. An invite to a connection id is forwarded to that client's channel, with `from` set to
+  the caller's connection id (a client can't spoof it). The router keeps `callId → (leg A, leg B)` and forwards every
+  later packet of that call to the other leg. An unknown target gets `Decline(Unreachable)`. Either leg's channel
+  closing ends the call for the other with `HangUp(Dropped)`.
+- **Negotiation:** the invite lists what the caller can encode *and* decode. The callee chooses
+  `HubCallsOptions.PreferredVideoCodec` when both have it, otherwise H.264, then JPEG. With no codec in common (or
+  `Accept(video: false)`) the call is answered with audio only, both ways, rather than refused. Audio: PCM16 over Wi-Fi,
+  IMA ADPCM over BLE (each block carries its own decoder state, so a lost packet costs only itself). The profile is the
+  slowest link's: the host sets it to BLE in a relayed invite when either leg is BLE, and the callee's accept carries it
+  back to the caller.
+- **Profiles (`CallQuality`):**
+
+  | | Wi-Fi | BLE |
+  |---|---|---|
+  | Video | 640 px, 15 fps, H.264 800 kbps / JPEG 0.6 | 160 px, 3 fps, H.264 64 kbps / JPEG 0.4 |
+  | Audio | PCM16 16 kHz (32 KB/s) | IMA ADPCM 8 kHz (4 KB/s) |
+
+- **Pacing:** one sender loop per channel. Audio and signalling go first. Video is latest-wins: a frame waiting to be
+  sent is replaced by a newer one, and after a dropped delta frame nothing is sent until the next key frame (the encoder
+  is asked for one). Audio older than `MaxPlaybackLatency` is dropped on receive.
+- **Timeouts:** ringing ends after 45 s (`HubCallsOptions.RingTimeout`), as `Missed` on both sides.
+- **One call at a time** per device: placing a second throws, and a second caller hears `Busy`. A host relaying calls
+  between clients is still free for its own.
+- **Wi-Fi media channel:** `GET {BasePath}/media` as a WebSocket upgrade with `X-Hub-Media-Token`. The handshake reply
+  gained `mediaToken` and `mediaMaxPacketSize` (optional, so `UniversalHubProtocol.Version` stays 2). One binary message
+  is one packet, without per-message deflate. Tunnels: the route is open when any hub allows tunnels, and the token's hub
+  must allow them too. On devices the client's WebSocket uses its own sockets, because the platform HTTP handlers
+  (NSUrlSession, Android) can't upgrade.
+
+### 9.4 The sample's call API (`samples/Sample/Calls`)
+
+```csharp
+server.Ble(o => o.EnableMediaChannels());
+services.AddHubCalls(calls => calls
+    .Host<ChatHub>()          // takes calls on this host's ChatHub, calls its clients, relays between them
+    .Client<IChatHub>());     // calls through this app's IChatHub client (a media channel opens on every connect)
+services.AddHubCallsMaui();   // IAudioDuplex audio, CameraView / RemoteVideoView video, IHubCalls at startup
+
+IHubCalls calls;                                     // singleton
+calls.Incoming += (_, call) => ...;                  // call.State == Ringing: Accept(video) / Decline()
+var call = await calls.CallHost<IChatHub>(new CallOptions(Video: true));   // client → its host
+var call = await calls.CallClient<ChatHub>(connectionId, options);         // host → one of its clients
+var call = await calls.CallPeer<IChatHub>(connectionId, options);         // client → another client (relayed)
+
+call.State / StateChanged / Ended (CallEnd(reason, message)) / IsMuted / IsCameraOn / VideoCodec / Transport / Stats
+call.AttachVideo(cameraView, remoteVideoView);      // starts the encoder on the camera, renders the remote side
+await call.HangUp();
+```

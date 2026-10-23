@@ -3,6 +3,7 @@ using Shiny;
 using Shiny.Net.HttpServer.Ssh;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.UniversalHubs;
+using Sample.Calls;
 using Sample.Game;
 using Sample.Hub;
 using Sample.Services;
@@ -43,6 +44,7 @@ public static class MauiProgram
             .UseShiny()
             .UseShinyShell(x => x.AddGeneratedMaps())
             .UseShinyControls()
+            .UseShinyCamera()   // CameraView and RemoteVideoView, for calls
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -68,7 +70,7 @@ public static class MauiProgram
             {
                 ft.MaxUploadSize = 512 * 1024;
                 ft.Authorize = req => IsAvatar(req.Request.FileName);   // L2CAP
-            }))
+            }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
             .Http(o =>
             {
                 o.AuthorizeFile = req => IsAvatar(req.FileName);       // HTTP
@@ -92,6 +94,13 @@ public static class MauiProgram
         // ---- client: discovers hosts over BLE and mDNS, connects over whichever works (adds the BLE stack too) ----
         builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
         builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
+
+        // ---- calls: FaceTime the person in a chat, over Wi-Fi or Bluetooth ----
+        builder.Services.AddHubCalls(calls => calls
+            .Host<ChatHub>()        // visitors call this device's owner, and the owner calls them back
+            .Client<IChatHub>());   // and this device calls the owner of a chat it is visiting
+        builder.Services.AddHubCallsMaui();   // Shiny.Audio echo-cancelled voice + the Shiny Controls camera
+        builder.Services.AddSingleton<CallService>();
 
         builder.Services.AddNotifications();
         builder.Services.AddSingleton<ChatService>();

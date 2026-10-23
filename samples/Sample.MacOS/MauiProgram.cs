@@ -8,6 +8,7 @@ using Shiny;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Ssh;
 using Shiny.UniversalHubs;
+using Sample.Calls;
 using Sample.Hub;
 using Sample.Services;
 
@@ -32,6 +33,7 @@ public static class MauiProgram
             .UseShiny()
             .UseShinyShell(x => x.AddGeneratedMaps())
             .UseShinyControls()
+            .UseShinyCamera()   // CameraView and RemoteVideoView, for calls
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -60,7 +62,7 @@ public static class MauiProgram
             {
                 ft.MaxUploadSize = 512 * 1024;
                 ft.Authorize = req => IsAvatar(req.Request.FileName);
-            }))
+            }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
             .Http(o =>
             {
                 o.AuthorizeFile = req => IsAvatar(req.FileName);
@@ -83,6 +85,11 @@ public static class MauiProgram
         // ---- client: finds hosts over BLE and mDNS ----
         builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
         builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
+
+        // calls, as on the phones
+        builder.Services.AddHubCalls(calls => calls.Host<ChatHub>().Client<IChatHub>());
+        builder.Services.AddHubCallsMaui();
+        builder.Services.AddSingleton<CallService>();
 
         builder.Services.AddNotifications();
         builder.Services.AddGeneratedServices();

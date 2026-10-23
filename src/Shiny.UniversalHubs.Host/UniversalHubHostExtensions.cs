@@ -41,6 +41,7 @@ public static class UniversalHubHostExtensions
         builder.Services.AddMdns();
         builder.Services.AddSingleton(options);
         builder.Services.TryAddSingleton<FileTokens>();
+        builder.Services.TryAddSingleton<MediaTokens>();
         builder.Services.TryAddSingleton<UniversalHubHost>();
         builder.Services.TryAddSingleton<IUniversalHubHost>(sp => sp.GetRequiredService<UniversalHubHost>());
         builder.Configure(server =>
@@ -56,6 +57,7 @@ public static class UniversalHubHostExtensions
                 await next(ctx);
             });
             FileRoutes.Map(server, options);
+            MediaRoutes.Map(server, options);
         });
 
         return new UniversalHubHostBuilder(builder, options);
@@ -97,6 +99,7 @@ public sealed class UniversalHubHostBuilder
             sp,
             sp.GetRequiredService<UniversalHubHost>(),
             sp.GetRequiredService<FileTokens>(),
+            sp.GetRequiredService<MediaTokens>(),
             mdnsServiceType,
             allowTunnel,
             sp.GetService<ILoggerFactory>()

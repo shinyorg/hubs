@@ -7,6 +7,11 @@
              x:DataType="local:ChatViewModel"
              Title="{Binding Conversation.Name}">
 
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="📞" Command="{Binding CallCommand}" CommandParameter="{x:Boolean False}" />
+        <ToolbarItem Text="📹" Command="{Binding CallCommand}" CommandParameter="{x:Boolean True}" />
+    </ContentPage.ToolbarItems>
+
     <Grid RowDefinitions="Auto,*">
         <Label Text="{Binding Conversation.Status}"
                Padding="16,6"

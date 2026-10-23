@@ -9,6 +9,8 @@ Both kinds of client share the same hub, groups and pushes.
 - **Client**: one discovery list merges BLE scanning and mDNS browsing. Connect prefers Wi-Fi and falls back to BLE. The
   generated proxy, events, `Disconnected` and file methods work the same on either transport.
 - **Files**: L2CAP over BLE, plain HTTP over Wi-Fi, behind the same `UploadFile` / `DownloadFile`.
+- **Media channels**: blehubs' ordered packet pipe beside each hub connection works over Wi-Fi too (a WebSocket), so live
+  audio and video run on either transport. The sample uses it for FaceTime-style calls.
 
 | Package | What it is |
 |---|---|
@@ -185,6 +187,32 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
 - A short Wi-Fi drop is resumed: the line keeps its id and groups, and missed pushes are replayed. The hub sees no
   disconnect. Turn this off with `UniversalHubClientOptions.AutomaticReconnect = false`.
 
+## Media channels
+
+A media channel is [blehubs'](https://github.com/shinyorg/bluetoothle-hubs) ordered, two-way packet pipe beside a hub
+connection, for live audio and video. Over BLE it's an L2CAP channel. Over Wi-Fi this library carries it as a WebSocket
+at `{Endpoint}/media`. The API is blehubs' own, and it works the same on either transport:
+
+```csharp
+// host
+server.Ble(o => o.EnableMediaChannels());                     // off by default
+hubContext.MediaChannelOpened += (_, e) => Serve(e.Client, e.Channel);
+
+// client
+if (client.CanOpenMediaChannel)
+{
+    var channel = await client.OpenMediaChannel();
+    await channel.Send(packet);                               // whole packets, in order, up to MaxPacketSize
+    await foreach (var p in channel.Receive()) { ... }
+}
+```
+
+- The handshake reply carries a per-connection media token, and the WebSocket presents it. Nobody else can open
+  another client's channel.
+- The channel closes when the client disconnects, the hub stops or either side disposes it.
+- Through a tunnel, a hub's channels open only if that hub allows tunnels.
+- On devices, the WebSocket uses its own sockets, because the platform HTTP handlers can't upgrade.
+
 ## Platform setup
 
 | | Host | Client |
@@ -216,6 +244,13 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
   - Each conversation is a `ConversationActor` kept on disk. New messages arrive on its actor stream and in Shiny.Maui.Controls' `ChatView`.
   - Incoming messages raise Shiny.Notifications local notifications.
   - "Share on the internet" starts a quick tunnel. Only `ChatHub` allows it.
+- **Calls:** 📞 / 📹 in a chat FaceTime the other person, over Wi-Fi or Bluetooth (`samples/Sample/Calls`). It's app code
+  built on the libraries:
+  - media channels carry the call. The host relays calls between its clients.
+  - Shiny.Audio's `IAudioDuplex` plays and captures echo-cancelled voice.
+  - Shiny Controls' `CameraView` + `VideoEncoder` film, and `RemoteVideoView` shows the other side. Video is H.264 when
+    both devices have it, otherwise JPEG.
+  - Quality follows the link: 640 px at 15 fps with PCM16 over Wi-Fi; 160 px at 3 fps with IMA ADPCM over Bluetooth.
 - **`samples/Sample.MacOS`:** the same app for macOS (AppKit), on .NET MAUI's AppKit backend from dotnet/maui-labs.
   - It links the whole phone app (XAML app, Shell, pages, hubs, game and services), so it is the same full host and
     client. It hosts its chat and games over BLE and Wi-Fi, and joins anyone else's. Only its startup is its own.

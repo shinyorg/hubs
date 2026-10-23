@@ -1,7 +1,7 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <BleHubsVersion>1.3.0</BleHubsVersion>
+        <BleHubsVersion>1.4.0</BleHubsVersion>
         <HttpServerVersion>2.2.0</HttpServerVersion>
         <ShinyVersion>6.1.1</ShinyVersion>
         <!-- not on nuget.org yet: built from ~/Desktop/dev/actors. Bump to the published version once it ships. -->
@@ -21,6 +21,9 @@
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Maui.Shell" Version="7.0.3"/>
         <PackageVersion Include="Shiny.Maui.Controls" Version="1.6.0"/>
+        <!-- the sample's calls: IAudioDuplex and VideoEncoder/RemoteVideoView. Local builds until they're published. -->
+        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.1.0-beta-0001-gc0b0166557"/>
+        <PackageVersion Include="Shiny.Audio" Version="3.0.0-beta-0033-gac443606c2"/>
         <PackageVersion Include="Shiny.Actors" Version="$(ActorsVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Ssh" Version="$(HttpServerVersion)"/>

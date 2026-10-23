@@ -306,6 +306,7 @@ public class UniversalHubTests : IAsyncLifetime
         public Task StartBle(CancellationToken cancellationToken) => Task.CompletedTask;
         public Task StopBle(string? reason) => Task.CompletedTask;
         public Task HangUpAll(HubDisconnect disconnect) => Task.CompletedTask;
+        public bool OpenMedia(string connectionId, IBleHubMediaChannel channel) => false;
     }
 
 
@@ -316,6 +317,7 @@ public class UniversalHubTests : IAsyncLifetime
     [InlineData("/hubs/bbbb/connect", false)]
     [InlineData("/hubs/bbbbx", true)]        // not under a hub - someone else's route
     [InlineData("/hubs/files/avatar.jpg", true)]
+    [InlineData("/hubs/media", true)]         // any hub allows it; the media token decides which hub
     [InlineData("/api/status", true)]
     public void TunnelsReachOnlyTheHubsThatAllowThem(string path, bool allowed)
         => Assert.Equal(allowed, TunnelGate.IsAllowed(path, "/hubs", [new FakeBinding("aaaa", null, true), new FakeBinding("bbbb", null)]));

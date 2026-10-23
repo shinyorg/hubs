@@ -36,6 +36,8 @@
         <PackageReference Include="Shiny.BluetoothLE" />
         <PackageReference Include="Shiny.BluetoothLE.Hosting" />
         <PackageReference Include="Shiny.Maui.Controls" />
+        <PackageReference Include="Shiny.Maui.Controls.Camera" />
+        <PackageReference Include="Shiny.Audio" />
         <PackageReference Include="Shiny.Actors" />
         <PackageReference Include="Shiny.Notifications" />
         <PackageReference Include="Shiny.Net.HttpServer.Ssh" />

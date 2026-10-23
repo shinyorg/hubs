@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Shiny;
 using Shiny.Maui.Controls.Chat;
 using Sample.Services;
@@ -9,7 +10,7 @@ namespace Sample.Pages;
 /// One conversation, drawn by Shiny.Maui.Controls' ChatView through ChatSessionProvider
 /// </summary>
 [ShellMap<ChatPage>("Chat")]
-public partial class ChatViewModel(ChatService chat, ChatSessionProvider provider) : ObservableObject, IPageLifecycleAware
+public partial class ChatViewModel(ChatService chat, ChatSessionProvider provider, CallService calls, ShellServices shell) : ObservableObject, IPageLifecycleAware
 {
     public IChatSessionProvider Provider => provider;
     [ObservableProperty] public partial string? SessionId { get; set; }
@@ -27,4 +28,19 @@ public partial class ChatViewModel(ChatService chat, ChatSessionProvider provide
 
 
     public void OnDisappearing() => chat.Viewing = null;
+
+
+    /// <summary>
+    /// 📞 or 📹 - FaceTime the person in this conversation, over whichever link they're on
+    /// </summary>
+    [RelayCommand]
+    async Task Call(bool video)
+    {
+        if (this.Conversation is not { IsOnline: true } conversation)
+        {
+            await shell.Dialogs.Alert("Call", $"{this.Conversation?.Name ?? "They"} aren't here right now");
+            return;
+        }
+        await calls.Call(conversation, video);
+    }
 }

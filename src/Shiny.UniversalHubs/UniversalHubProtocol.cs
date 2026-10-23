@@ -61,6 +61,11 @@ public static partial class UniversalHubProtocol
     /// </summary>
     public const string FileTokenHeader = "X-Hub-File-Token";
 
+    /// <summary>
+    /// Sent with the media channel's WebSocket upgrade - the token comes from the handshake reply
+    /// </summary>
+    public const string MediaTokenHeader = "X-Hub-Media-Token";
+
     // mDNS TXT keys
     public const string TxtProtocol = "proto";
     public const string TxtHostId = "hostId";
@@ -77,6 +82,11 @@ public static partial class UniversalHubProtocol
     /// Where files are served: <c>PUT</c> / <c>GET {FilesPath}/{name}</c>
     /// </summary>
     public static string FilesPath(string basePath) => $"{TrimBase(basePath)}/files";
+
+    /// <summary>
+    /// Where media channels are opened: a WebSocket upgrade on <c>GET {MediaPath}</c>
+    /// </summary>
+    public static string MediaPath(string basePath) => $"{TrimBase(basePath)}/media";
 
     /// <summary>
     /// Throws unless <paramref name="serviceType"/> is an mDNS service type like <c>_myapp._tcp</c>
@@ -122,12 +132,16 @@ public sealed record HubHandshake(
 /// <param name="HostName">The host's name - the same local name it advertises over BLE</param>
 /// <param name="HostId">Identifies the host across transports</param>
 /// <param name="FileToken">Send as <see cref="UniversalHubProtocol.FileTokenHeader"/>; null when the host serves no files</param>
+/// <param name="MediaToken">Send as <see cref="UniversalHubProtocol.MediaTokenHeader"/>; null when the host has no media channels</param>
+/// <param name="MediaMaxPacketSize">The largest packet the host's media channels carry</param>
 public sealed record HubHandshakeReply(
     bool Accepted,
     string? Reason,
     string? HostName,
     string? HostId,
-    string? FileToken
+    string? FileToken,
+    string? MediaToken = null,
+    int? MediaMaxPacketSize = null
 );
 
 

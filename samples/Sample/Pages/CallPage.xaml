@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Sample.Pages"
+             xmlns:camera="clr-namespace:Shiny.Maui.Controls.Camera;assembly=Shiny.Maui.Controls.Camera"
+             x:Class="Sample.Pages.CallPage"
+             x:DataType="local:CallViewModel"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="Black">
+
+    <Grid>
+        <!-- the other person, full screen -->
+        <camera:RemoteVideoView x:Name="Remote"
+                                Aspect="AspectFill"
+                                IsVisible="{Binding ShowRemoteVideo}" />
+
+        <VerticalStackLayout Padding="24,64,24,0" Spacing="6" VerticalOptions="Start">
+            <Label Text="{Binding Name}" FontSize="32" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center" />
+            <Label Text="{Binding Status}" FontSize="15" TextColor="#DDFFFFFF" HorizontalOptions="Center" />
+        </VerticalStackLayout>
+
+        <!-- this device's camera, in the corner -->
+        <Border WidthRequest="110"
+                HeightRequest="160"
+                StrokeShape="RoundRectangle 14"
+                Stroke="#55FFFFFF"
+                Margin="16,120,16,0"
+                HorizontalOptions="End"
+                VerticalOptions="Start"
+                IsVisible="{Binding IsVideo}">
+            <camera:CameraView x:Name="Camera" Facing="Front" ScaleMode="AspectFill" />
+        </Border>
+
+        <!-- ringing -->
+        <HorizontalStackLayout Spacing="28" Margin="0,0,0,56" HorizontalOptions="Center" VerticalOptions="End" IsVisible="{Binding IsIncoming}">
+            <Button Text="✕" Command="{Binding DeclineCommand}" Style="{StaticResource CallButton}" BackgroundColor="#FF3B30" />
+            <Button Text="📞" Command="{Binding AcceptAudioCommand}" Style="{StaticResource CallButton}" BackgroundColor="#34C759" />
+            <Button Text="📹" Command="{Binding AcceptCommand}" Style="{StaticResource CallButton}" BackgroundColor="#34C759" IsVisible="{Binding IsVideo}" />
+        </HorizontalStackLayout>
+
+        <!-- in a call -->
+        <HorizontalStackLayout Spacing="20" Margin="0,0,0,56" HorizontalOptions="Center" VerticalOptions="End" IsVisible="{Binding IsInCall}">
+            <Button Text="{Binding IsMuted, Converter={StaticResource BoolToTextConverter}, ConverterParameter='🔇|🎙️'}" Command="{Binding ToggleMuteCommand}" Style="{StaticResource CallButton}" />
+            <Button Text="{Binding IsCameraOn, Converter={StaticResource BoolToTextConverter}, ConverterParameter='📹|🚫'}" Command="{Binding ToggleCameraCommand}" Style="{StaticResource CallButton}" IsVisible="{Binding IsVideo}" />
+            <Button Text="{Binding IsSpeakerphone, Converter={StaticResource BoolToTextConverter}, ConverterParameter='🔊|🔈'}" Command="{Binding ToggleSpeakerCommand}" Style="{StaticResource CallButton}" />
+            <Button Text="✕" Command="{Binding HangUpCommand}" Style="{StaticResource CallButton}" BackgroundColor="#FF3B30" />
+        </HorizontalStackLayout>
+    </Grid>
+</ContentPage>
