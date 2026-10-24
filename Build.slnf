@@ -1,6 +1,6 @@
 {
   "solution": {
-    "path": "Shiny.UniversalHubs.slnx",
+    "path": "Hubs.slnx",
     "projects": [
       "src/Shiny.BluetoothLE.Hubs/Shiny.BluetoothLE.Hubs.csproj",
       "src/Shiny.BluetoothLE.Hubs.SourceGenerators/Shiny.BluetoothLE.Hubs.SourceGenerators.csproj",
