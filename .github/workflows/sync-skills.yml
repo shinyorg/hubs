@@ -81,7 +81,7 @@ jobs:
 
             ---
             *This PR was automatically created by the [sync-skills workflow](https://github.com/shinyorg/hubs/actions/workflows/sync-skills.yml).*
-          branch: update-skills-universal-hubs
+          branch: update-skills-hubs
           delete-branch: true
           labels: |
             automated

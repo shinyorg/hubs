@@ -139,7 +139,7 @@ generic tool (nRF Connect) to separate "the OS can't" from "the library doesn't"
   `preview` / `v*`. nuget.org's trusted-publishing policy must list this repo for the `Shiny.BluetoothLE.Hubs*`
   packages too. Every package the libraries and tests use must be on nuget.org, or CI restore fails.
 - **Skill sync**: `.github/workflows/sync-skills.yml` opens a PR against `shinyorg/skills` on branch
-  `update-skills-universal-hubs` with every skill under `skills/`. It needs the `SKILLS_REPO_TOKEN` secret.
+  `update-skills-hubs` with every skill under `skills/`. It needs the `SKILLS_REPO_TOKEN` secret.
 
 ## Blog posts (only when explicitly requested)
 
