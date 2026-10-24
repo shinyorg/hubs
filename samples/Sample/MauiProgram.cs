@@ -54,6 +54,7 @@ public static class MauiProgram
 #if DEBUG
         builder.Logging.SetMinimumLevel(LogLevel.Debug);
         builder.Logging.AddDebug();
+        builder.Logging.AddConsole();   // shows up in `xcrun devicectl device process launch --console` and logcat
 #endif
 
         // hub arguments and results travel as JSON on both transports - register the source generated context (AOT safe)
@@ -68,12 +69,12 @@ public static class MauiProgram
             .ServiceUuid(ServiceUuid)   // the one BLE service every hub lives in - clients use the same one
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
-                ft.MaxUploadSize = 512 * 1024;
-                ft.Authorize = req => IsAvatar(req.Request.FileName);   // L2CAP
+                ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
+                ft.Authorize = req => IsSharedFile(req.Request.FileName);   // L2CAP
             }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
             .Http(o =>
             {
-                o.AuthorizeFile = req => IsAvatar(req.FileName);       // HTTP
+                o.AuthorizeFile = req => IsSharedFile(req.FileName);       // HTTP
                 o.HostId = PlayerSettings.InstallId;
             })
             // "Share on the internet" in the chat: a public HTTPS address with no account (pinggy). Started from a button.
@@ -114,6 +115,9 @@ public static class MauiProgram
 
 
     // only avatars move as files, on either transport
+    // avatars (the game) and chat photos and files - nothing else moves, on either transport
+    static bool IsSharedFile(string fileName) => IsAvatar(fileName) || ChatService.IsChatFile(fileName);
+
     static bool IsAvatar(string fileName)
         => fileName.StartsWith("avatar-", StringComparison.Ordinal) && fileName.EndsWith(".jpg", StringComparison.Ordinal);
 }

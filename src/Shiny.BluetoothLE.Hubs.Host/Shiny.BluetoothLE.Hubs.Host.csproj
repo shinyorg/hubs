@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.BluetoothLE.Hubs</RootNamespace>
+        <Description>Shiny.BluetoothLE.Hubs host - SignalR style hubs served over a BLE GATT server, plus L2CAP file transfers</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE.Hosting" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
+    </ItemGroup>
+</Project>

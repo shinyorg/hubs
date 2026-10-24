@@ -163,7 +163,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             try
             {
                 if (transport == HubTransports.Http)
-                    await this.ConnectHttp(host.Http!, options, cancellationToken).ConfigureAwait(false);
+                    await this.ConnectHttpOrRediscover(host.Http!, options, cancellationToken).ConfigureAwait(false);
                 else
                     await this.inner.Connect(host.Ble!, options.ToBle(), cancellationToken).ConfigureAwait(false);
 
@@ -187,6 +187,54 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             1 => errors[0],
             _ => new BleHubException($"Could not reach {host.Name}: {String.Join("; ", errors.Select(x => x.Message))}", new AggregateException(errors))
         };
+    }
+
+
+    /// <summary>
+    /// A host that restarted listens on a new port, and when it was killed it never said goodbye, so mDNS can still hand
+    /// out its old address. When no address answers, look the host up again by name and try what it advertises now.
+    /// </summary>
+    async Task ConnectHttpOrRediscover(DiscoveredHttpServer server, HubConnectOptions options, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await this.ConnectHttp(server, options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!IsRefusal(ex) && !cancellationToken.IsCancellationRequested)
+        {
+            var fresh = await this.Rediscover(server, cancellationToken).ConfigureAwait(false);
+            if (fresh == null)
+                throw;
+
+            this.logger?.LogInformation("{Host} moved to {Address} - retrying there", server.InstanceName, fresh.BaseAddress);
+            await this.ConnectHttp(fresh, options, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+
+    async Task<DiscoveredHttpServer?> Rediscover(DiscoveredHttpServer stale, CancellationToken cancellationToken)
+    {
+        // an address the app was given (HubHostInfo.FromUrl) has no advertisement to look up again
+        if (stale.TxtRecords.Count == 0 || this.options.HttpRediscoverTimeout <= TimeSpan.Zero || this.locator.Value is not { } wifi)
+            return null;
+
+        try
+        {
+            var fresh = await wifi.FindFirstAsync(
+                this.options.ServiceType,
+                this.options.HttpRediscoverTimeout,
+                x => x.InstanceName.Equals(stale.InstanceName, StringComparison.OrdinalIgnoreCase) && this.Serves(x),
+                cancellationToken
+            ).ConfigureAwait(false);
+
+            // the same address again would only fail the same way
+            return fresh == null || (fresh.BaseAddress == stale.BaseAddress && fresh.Addresses.SequenceEqual(stale.Addresses)) ? null : fresh;
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            this.logger?.LogDebug(ex, "Could not look {Host} up again", stale.InstanceName);
+            return null;
+        }
     }
 
 

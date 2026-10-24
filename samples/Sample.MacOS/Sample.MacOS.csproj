@@ -60,5 +60,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+        <!-- the hub proxies and dispatchers: a project reference doesn't carry the generator the way the package does -->
+        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 </Project>

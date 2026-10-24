@@ -16,7 +16,9 @@ public static class HubCallsMauiExtensions
     public static IServiceCollection AddHubCallsMaui(this IServiceCollection services)
     {
         services.AddAudioDuplex();
-        services.TryAddSingleton<ICallAudio, DuplexCallAudio>();
+        services.AddAudioDevices();
+        services.TryAddSingleton<DuplexCallAudio>();
+        services.TryAddSingleton<ICallAudio>(sp => sp.GetRequiredService<DuplexCallAudio>());
         services.TryAddSingleton<ICallVideoCapabilities, CameraCallVideoCapabilities>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IMauiInitializeService, HubCallsStartup>());
         return services;

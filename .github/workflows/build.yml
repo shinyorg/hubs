@@ -36,7 +36,10 @@ jobs:
     - name: Build
       run: dotnet build Build.slnf /restore -m -property:Configuration=Release -property:PublicRelease=true
 
-    - name: Test
+    - name: Test Shiny.BluetoothLE.Hubs
+      run: dotnet test tests/Shiny.BluetoothLE.Hubs.Tests --no-build -property:Configuration=Release
+
+    - name: Test Shiny.UniversalHubs
       run: dotnet test tests/Shiny.UniversalHubs.Tests --no-build -property:Configuration=Release
 
     - name: Publish Artifacts

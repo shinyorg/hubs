@@ -6,7 +6,7 @@
         <Description>Shiny.UniversalHubs - Shiny.BluetoothLE.Hubs over Wi-Fi as well as Bluetooth LE. Shared wire protocol for the host and client packages.</Description>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Shiny.BluetoothLE.Hubs" />
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Host" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Client" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />

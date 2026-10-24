@@ -43,6 +43,20 @@
                 <Setter Property="HeightRequest" Value="100" />
             </Style>
 
+            <Style x:Key="PersonAction" TargetType="Border">
+                <Setter Property="WidthRequest" Value="44" />
+                <Setter Property="HeightRequest" Value="44" />
+                <Setter Property="StrokeShape" Value="RoundRectangle 22" />
+                <Setter Property="StrokeThickness" Value="0" />
+                <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}" />
+            </Style>
+
+            <Style x:Key="PersonActionText" TargetType="Label">
+                <Setter Property="FontSize" Value="20" />
+                <Setter Property="HorizontalOptions" Value="Center" />
+                <Setter Property="VerticalOptions" Value="Center" />
+            </Style>
+
             <Style x:Key="CallButton" TargetType="Button">
                 <Setter Property="FontSize" Value="26" />
                 <Setter Property="WidthRequest" Value="68" />

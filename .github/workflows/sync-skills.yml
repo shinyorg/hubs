@@ -70,17 +70,17 @@ jobs:
         with:
           token: ${{ secrets.SKILLS_REPO_TOKEN }}
           path: skills-repo
-          commit-message: "Update skills from shinyorg/universalhubs"
+          commit-message: "Update skills from shinyorg/hubs"
           title: "Update skills from Shiny.UniversalHubs"
           body: |
-            This PR updates the `shiny` plugin skills from the [Shiny.UniversalHubs repository](https://github.com/shinyorg/universalhubs).
+            This PR updates the `shiny` plugin skills from the [Shiny Hubs repository](https://github.com/shinyorg/hubs).
 
             **Source branch:** `${{ github.ref_name }}`
             **Source commit:** ${{ github.sha }}
             **Triggered by:** @${{ github.actor }}
 
             ---
-            *This PR was automatically created by the [sync-skills workflow](https://github.com/shinyorg/universalhubs/actions/workflows/sync-skills.yml).*
+            *This PR was automatically created by the [sync-skills workflow](https://github.com/shinyorg/hubs/actions/workflows/sync-skills.yml).*
           branch: update-skills-universal-hubs
           delete-branch: true
           labels: |

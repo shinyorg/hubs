@@ -1,6 +1,7 @@
 # Shiny.UniversalHubs
 
-**[Shiny.BluetoothLE.Hubs](https://github.com/shinyorg/bluetoothle-hubs) over Wi-Fi as well as Bluetooth LE.** Write the hub
+**[Shiny.BluetoothLE.Hubs](README.BluetoothLE.Hubs.md) over Wi-Fi as well as Bluetooth LE.** Both libraries live in this
+repo and release together. Write the hub
 once. Players on a plane connect over BLE. At home they connect over Wi-Fi, which has more range and bandwidth and no MTU.
 Both kinds of client share the same hub, groups and pushes.
 
@@ -183,13 +184,16 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
 - `Prefer` is tried first when the host is reachable both ways, and the other transport is the fallback. `Allowed`
   limits which transports may be used at all.
 - A refusal (host full, `ValidateClient`, not running) is not retried on the other transport.
+- A host that restarted listens on a new port, and one that was killed never sent mDNS its goodbye, so discovery can
+  still hold its old address. When no address answers, the client looks the host up again by name
+  (`UniversalHubClientOptions.HttpRediscoverTimeout`, 3 seconds) and retries where it is now, before falling back to BLE.
 - `IUniversalHubClient<T>` is an `IBleHubClient<T>`. `Discover()` and `Connect(BleHubHostInfo)` still give BLE-only behavior.
 - A short Wi-Fi drop is resumed: the line keeps its id and groups, and missed pushes are replayed. The hub sees no
   disconnect. Turn this off with `UniversalHubClientOptions.AutomaticReconnect = false`.
 
 ## Media channels
 
-A media channel is [blehubs'](https://github.com/shinyorg/bluetoothle-hubs) ordered, two-way packet pipe beside a hub
+A media channel is [BluetoothLE Hubs'](README.BluetoothLE.Hubs.md) ordered, two-way packet pipe beside a hub
 connection, for live audio and video. Over BLE it's an L2CAP channel. Over Wi-Fi this library carries it as a WebSocket
 at `{Endpoint}/media`. The API is blehubs' own, and it works the same on either transport:
 
@@ -243,13 +247,19 @@ if (client.CanOpenMediaChannel)
     internet can message the device's owner.
   - Each conversation is a `ConversationActor` kept on disk. New messages arrive on its actor stream and in Shiny.Maui.Controls' `ChatView`.
   - Incoming messages raise Shiny.Notifications local notifications.
+  - Photos (ChatView's attach button, opened in its image viewer when tapped) and files ("📎 Send a file") move over the
+    hub's file transfers: L2CAP over BLE, HTTP over Wi-Fi. A visitor uploads to the chat's owner; the owner's files are
+    downloaded by the visitor.
   - "Share on the internet" starts a quick tunnel. Only `ChatHub` allows it.
-- **Calls:** 📞 / 📹 in a chat FaceTime the other person, over Wi-Fi or Bluetooth (`samples/Sample/Calls`). It's app code
+- **People:** one list of everyone you can reach (nearby, on the network, visiting you, past chats), each with 💬 / 📞 / 📹.
+  Tapping one connects first if it has to.
+- **Calls:** 📞 / 📹 FaceTime the other person, over Wi-Fi or Bluetooth (`samples/Sample/Calls`). It's app code
   built on the libraries:
   - media channels carry the call. The host relays calls between its clients.
   - Shiny.Audio's `IAudioDuplex` plays and captures echo-cancelled voice.
   - Shiny Controls' `CameraView` + `VideoEncoder` film, and `RemoteVideoView` shows the other side. Video is H.264 when
-    both devices have it, otherwise JPEG.
+    both devices have it, otherwise JPEG. People → "More options" → "Video codec for calls" forces H.264 or JPEG, so you can
+    try both. On the call screen, 📷 picks the camera and 🎤 the microphone, before answering or mid-call.
   - Quality follows the link: 640 px at 15 fps with PCM16 over Wi-Fi; 160 px at 3 fps with IMA ADPCM over Bluetooth.
 - **`samples/Sample.MacOS`:** the same app for macOS (AppKit), on .NET MAUI's AppKit backend from dotnet/maui-labs.
   - It links the whole phone app (XAML app, Shell, pages, hubs, game and services), so it is the same full host and

@@ -8,7 +8,7 @@
     <ItemGroup>
         <ProjectReference Include="..\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
         <PackageReference Include="Shiny.BluetoothLE" />
-        <PackageReference Include="Shiny.BluetoothLE.Hubs.Client" />
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs.Client\Shiny.BluetoothLE.Hubs.Client.csproj" />
         <PackageReference Include="Shiny.Net.HttpServer.Switchboard.Client" />
         <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />

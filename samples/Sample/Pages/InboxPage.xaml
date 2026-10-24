@@ -2,28 +2,116 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:Sample.Pages"
-             xmlns:services="clr-namespace:Sample.Services"
              x:Class="Sample.Pages.InboxPage"
              x:DataType="local:InboxViewModel"
-             Title="Chat">
+             Title="People">
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto" Padding="16" RowSpacing="12">
+    <Grid RowDefinitions="Auto,*,Auto" Padding="16,8,16,16" RowSpacing="10">
         <Label Text="{Binding OpenOn}"
+               FontSize="13"
                TextColor="{AppThemeBinding Light={StaticResource Gray600}, Dark={StaticResource Gray300}}" />
 
-        <Border Grid.Row="1" Padding="14" StrokeShape="RoundRectangle 12">
-            <VerticalStackLayout Spacing="8">
+        <!-- everyone, once: tap a button to message, call or video call them -->
+        <CollectionView Grid.Row="1" ItemsSource="{Binding People}" SelectionMode="None">
+            <CollectionView.EmptyView>
+                <VerticalStackLayout VerticalOptions="Center" Spacing="10" Padding="24">
+                    <ActivityIndicator IsRunning="True" HeightRequest="24" />
+                    <Label Text="Looking for people..."
+                           FontSize="17"
+                           HorizontalTextAlignment="Center" />
+                    <Label Text="Anyone with the app open nearby or on this Wi-Fi shows up here."
+                           HorizontalTextAlignment="Center"
+                           TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+                </VerticalStackLayout>
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="local:Person">
+                    <Border Margin="0,5" Padding="12" StrokeShape="RoundRectangle 14">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                            <!-- initial, with the unread count on it -->
+                            <Grid WidthRequest="48" HeightRequest="48" VerticalOptions="Center">
+                                <Border StrokeShape="RoundRectangle 24" BackgroundColor="{StaticResource Primary}" StrokeThickness="0">
+                                    <Label Text="{Binding Initial}" FontSize="20" FontAttributes="Bold" TextColor="White"
+                                           HorizontalOptions="Center" VerticalOptions="Center" />
+                                </Border>
+                                <Label Text="{Binding Unread}"
+                                       IsVisible="{Binding Unread, Converter={StaticResource IsPositiveConverter}}"
+                                       BackgroundColor="#FF3B30" TextColor="White" FontSize="11"
+                                       Padding="5,1" HorizontalOptions="End" VerticalOptions="Start" />
+                            </Grid>
+
+                            <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                                <Label Text="{Binding Name}" FontSize="17" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                                <Label Text="{Binding Reach}" FontSize="12"
+                                       TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+                                <Label Text="{Binding LastText}" FontSize="13" LineBreakMode="TailTruncation"
+                                       IsVisible="{Binding HasLastText}" />
+                            </VerticalStackLayout>
+
+                            <!-- tap targets, not Buttons: on macOS (AppKit) a CollectionView row's selection click
+                                 swallows Button clicks, while tap gestures still fire -->
+                            <HorizontalStackLayout Grid.Column="2" Spacing="6" VerticalOptions="Center">
+                                <Border Style="{StaticResource PersonAction}">
+                                    <Label Text="💬" Style="{StaticResource PersonActionText}" />
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding MessageCommand}" />
+                                    </Border.GestureRecognizers>
+                                </Border>
+                                <Border Style="{StaticResource PersonAction}" Opacity="{Binding CallOpacity}">
+                                    <Label Text="📞" Style="{StaticResource PersonActionText}" />
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding CallCommand}" />
+                                    </Border.GestureRecognizers>
+                                </Border>
+                                <Border Style="{StaticResource PersonAction}" Opacity="{Binding CallOpacity}">
+                                    <Label Text="📹" Style="{StaticResource PersonActionText}" />
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding VideoCommand}" />
+                                    </Border.GestureRecognizers>
+                                </Border>
+                            </HorizontalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- the rarely used things, tucked away -->
+        <VerticalStackLayout Grid.Row="2" Spacing="10">
+            <Button Text="{Binding ShowOptions, Converter={StaticResource BoolToTextConverter}, ConverterParameter='Hide options|More options'}"
+                    Command="{Binding ToggleOptionsCommand}"
+                    Style="{StaticResource LinkButton}" />
+
+            <VerticalStackLayout Spacing="12" IsVisible="{Binding ShowOptions}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Entry Text="{Binding Address}"
+                           Placeholder="Connect to an address someone shared"
+                           Keyboard="Url"
+                           ReturnCommand="{Binding ConnectToAddressCommand}" />
+                    <Button Grid.Column="1" Text="Go" Command="{Binding ConnectToAddressCommand}" Style="{StaticResource SecondaryButton}" />
+                </Grid>
+
+                <Button Text="🔍 Video check (camera → encoder → video view)" Command="{Binding VideoCheckCommand}" Style="{StaticResource SecondaryButton}" />
+
                 <Grid ColumnDefinitions="*,Auto">
-                    <Label Text="🌍 Share on the internet" FontAttributes="Bold" VerticalOptions="Center" />
+                    <Label Text="🔵 Connect over Bluetooth when possible" VerticalOptions="Center" />
+                    <Switch Grid.Column="1" IsToggled="{Binding PreferBluetooth}" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Text="📹 Video codec for calls" VerticalOptions="Center" />
+                    <Picker Grid.Column="1" ItemsSource="{Binding VideoCodecs}" SelectedItem="{Binding VideoCodec}" WidthRequest="110" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <Label Text="🌍 Share on the internet" VerticalOptions="Center" />
                     <Button Grid.Column="1"
                             Text="{Binding IsSharing, Converter={StaticResource BoolToTextConverter}, ConverterParameter='Stop|Share'}"
                             Command="{Binding ToggleSharingCommand}"
                             Style="{StaticResource SecondaryButton}" />
                 </Grid>
                 <Label Text="{Binding ShareStatus}" FontSize="13" />
-                <Label Text="{Binding PublicUrl}"
-                       FontSize="13"
-                       TextDecorations="Underline"
+                <Label Text="{Binding PublicUrl}" FontSize="13" TextDecorations="Underline"
                        IsVisible="{Binding PublicUrl, Converter={StaticResource IsNotNullConverter}}">
                     <Label.GestureRecognizers>
                         <TapGestureRecognizer Command="{Binding CopyUrlCommand}" />
@@ -31,39 +119,15 @@
                 </Label>
                 <ActivityIndicator IsRunning="{Binding IsStartingShare}" IsVisible="{Binding IsStartingShare}" />
             </VerticalStackLayout>
-        </Border>
+        </VerticalStackLayout>
 
-        <CollectionView Grid.Row="2" ItemsSource="{Binding Chat.Conversations}" SelectionMode="None">
-            <CollectionView.EmptyView>
-                <Label Text="No messages yet. Anyone nearby can message you while the app is open."
-                       HorizontalTextAlignment="Center"
-                       VerticalOptions="Center"
-                       TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
-            </CollectionView.EmptyView>
-            <CollectionView.ItemTemplate>
-                <DataTemplate x:DataType="services:Conversation">
-                    <Border Margin="0,6" Padding="14" StrokeShape="RoundRectangle 12">
-                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
-                            <Label Text="{Binding Name}" FontSize="17" FontAttributes="Bold" />
-                            <Label Grid.Column="1"
-                                   Text="{Binding Unread}"
-                                   IsVisible="{Binding Unread, Converter={StaticResource IsPositiveConverter}}"
-                                   BackgroundColor="{StaticResource Primary}"
-                                   TextColor="White"
-                                   Padding="8,2" />
-                            <Label Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding LastText}" LineBreakMode="TailTruncation" />
-                            <Label Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding Status}" FontSize="12"
-                                   TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
-                        </Grid>
-                        <Border.GestureRecognizers>
-                            <TapGestureRecognizer Command="{Binding OpenCommand, Source={RelativeSource AncestorType={x:Type local:InboxViewModel}}, x:DataType=local:InboxViewModel}"
-                                                  CommandParameter="{Binding .}" />
-                        </Border.GestureRecognizers>
-                    </Border>
-                </DataTemplate>
-            </CollectionView.ItemTemplate>
-        </CollectionView>
-
-        <Button Grid.Row="3" Text="Message someone" Command="{Binding VisitCommand}" />
+        <!-- connecting -->
+        <Grid Grid.RowSpan="3" IsVisible="{Binding IsBusy}" BackgroundColor="#99000000" Margin="-16,-8,-16,-16">
+            <VerticalStackLayout VerticalOptions="Center" Spacing="12">
+                <ActivityIndicator IsRunning="{Binding IsBusy}" Color="White" />
+                <Label Text="{Binding BusyText}" TextColor="White" HorizontalOptions="Center" />
+                <Button Text="Cancel" Command="{Binding CancelReachCommand}" Style="{StaticResource SecondaryButton}" HorizontalOptions="Center" />
+            </VerticalStackLayout>
+        </Grid>
     </Grid>
 </ContentPage>

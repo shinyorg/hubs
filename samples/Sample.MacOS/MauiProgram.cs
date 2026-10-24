@@ -60,12 +60,12 @@ public static class MauiProgram
             .ServiceUuid(ServiceUuid)
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
-                ft.MaxUploadSize = 512 * 1024;
-                ft.Authorize = req => IsAvatar(req.Request.FileName);
+                ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
+                ft.Authorize = req => IsSharedFile(req.Request.FileName);
             }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
             .Http(o =>
             {
-                o.AuthorizeFile = req => IsAvatar(req.FileName);
+                o.AuthorizeFile = req => IsSharedFile(req.FileName);
                 o.HostId = PlayerSettings.InstallId;
             })
             .HttpServer(http => http.AddQuickTunnel())
@@ -115,6 +115,9 @@ public static class MauiProgram
 
 
     // only avatars move as files, on either transport
+    // avatars (the game) and chat photos and files - nothing else moves, on either transport
+    static bool IsSharedFile(string fileName) => IsAvatar(fileName) || ChatService.IsChatFile(fileName);
+
     static bool IsAvatar(string fileName)
         => fileName.StartsWith("avatar-", StringComparison.Ordinal) && fileName.EndsWith(".jpg", StringComparison.Ordinal);
 }

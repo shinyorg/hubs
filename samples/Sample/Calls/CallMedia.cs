@@ -181,5 +181,11 @@ public class HubCallsOptions
     /// </summary>
     public CallVideoCodec? PreferredVideoCodec { get; set; }
 
+    /// <summary>
+    /// The codecs this device offers, of those it supports. Leave out H264 to force JPEG on calls this device is part of.
+    /// Read as each call starts.
+    /// </summary>
+    public CallVideoCodecs AllowedVideoCodecs { get; set; } = CallVideoCodecs.Jpeg | CallVideoCodecs.H264;
+
     internal CallQuality For(CallProfile profile) => profile == CallProfile.Ble ? this.Ble : this.Wifi;
 }

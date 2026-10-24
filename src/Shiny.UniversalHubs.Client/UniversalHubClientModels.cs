@@ -96,6 +96,12 @@ public class UniversalHubClientOptions
     public TimeSpan HttpConnectTimeout { get; set; } = TimeSpan.FromSeconds(6);
 
     /// <summary>
+    /// When none of a discovered host's addresses answer, how long to spend looking it up again over mDNS - a host that
+    /// restarted (or was killed without a goodbye) is on a new port. Zero turns this off.
+    /// </summary>
+    public TimeSpan HttpRediscoverTimeout { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// Resume the Wi-Fi line after a short drop instead of disconnecting - the host keeps the client, its groups and
     /// replays missed pushes
     /// </summary>

@@ -1,16 +1,14 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <BleHubsVersion>1.4.0</BleHubsVersion>
         <HttpServerVersion>2.2.0</HttpServerVersion>
         <ShinyVersion>6.1.1</ShinyVersion>
+        <!-- pinned rather than taken from the installed MAUI workload; the AppKit backend (Microsoft.Maui.Platforms.MacOS) needs 10.0.70+ -->
+        <MauiVersion>10.0.110</MauiVersion>
         <!-- not on nuget.org yet: built from ~/Desktop/dev/actors. Bump to the published version once it ships. -->
         <ActorsVersion>1.0.0-beta.10.g151af7d1f3</ActorsVersion>
     </PropertyGroup>
     <ItemGroup>
-        <PackageVersion Include="Shiny.BluetoothLE.Hubs" Version="$(BleHubsVersion)"/>
-        <PackageVersion Include="Shiny.BluetoothLE.Hubs.Host" Version="$(BleHubsVersion)"/>
-        <PackageVersion Include="Shiny.BluetoothLE.Hubs.Client" Version="$(BleHubsVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Switchboard" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Switchboard.Client" Version="$(HttpServerVersion)"/>
@@ -20,18 +18,22 @@
         <PackageVersion Include="Shiny.BluetoothLE.Hosting" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Maui.Shell" Version="7.0.3"/>
-        <PackageVersion Include="Shiny.Maui.Controls" Version="1.6.0"/>
-        <!-- the sample's calls: IAudioDuplex and VideoEncoder/RemoteVideoView. Local builds until they're published. -->
-        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.1.0-beta-0001-gc0b0166557"/>
-        <PackageVersion Include="Shiny.Audio" Version="3.0.0-beta-0033-gac443606c2"/>
+        <PackageVersion Include="Shiny.Maui.Controls" Version="2.1.0-beta-0002"/>
+        <!-- the sample's calls: IAudioDuplex (Shiny.Audio) and VideoEncoder / RemoteVideoView (camera) -->
+        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.1.0-beta-0002-g1d272c89bb"/>
+        <PackageVersion Include="Shiny.Audio" Version="3.0.0-beta-0034-g9c2041de24"/>
         <PackageVersion Include="Shiny.Actors" Version="$(ActorsVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Ssh" Version="$(HttpServerVersion)"/>
     </ItemGroup>
     <ItemGroup>
         <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94"/>
-        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="0.1.0-preview.12.26421.1"/>
-        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="0.1.0-preview.12.26421.1"/>
+        <!-- Shiny.BluetoothLE.Hubs: the argument codec, and the source generator -->
+        <PackageVersion Include="Shiny.Extensions.Serialization" Version="6.0.0"/>
+        <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0"/>
+        <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0"/>
+        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="0.1.0-preview.13.26512.5"/>
+        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="0.1.0-preview.13.26512.5"/>
         <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2"/>
         <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10"/>
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10"/>

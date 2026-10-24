@@ -136,6 +136,80 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
+    sealed class FakeLocator(DiscoveredHttpServer? current) : IHttpServerLocator
+    {
+        public int Lookups;
+
+        public IAsyncEnumerable<HttpServerDiscoveryEvent> WatchAsync(string serviceType = "_http._tcp", CancellationToken cancellationToken = default)
+            => AsyncEnumerable.Empty<HttpServerDiscoveryEvent>();
+
+        public Task<DiscoveredHttpServer?> FindFirstAsync(string serviceType = "_http._tcp", TimeSpan? timeout = null, Func<DiscoveredHttpServer, bool>? filter = null, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref this.Lookups);
+            return Task.FromResult(current != null && (filter == null || filter(current)) ? current : null);
+        }
+
+        public Task<IReadOnlyList<DiscoveredHttpServer>> FindAllAsync(string serviceType = "_http._tcp", TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<DiscoveredHttpServer>>(current == null ? [] : [current]);
+    }
+
+
+    IUniversalHubClient<ITestHub> CreateClientWithLocator(IHttpServerLocator locator)
+    {
+        var services = new ServiceCollection()
+            .AddLogging()
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o =>
+            {
+                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
+                o.HttpConnectTimeout = TimeSpan.FromSeconds(2);
+            })
+            .AddSingleton(locator)
+            .BuildServiceProvider();
+
+        this.clientContainers.Add(services);
+        return services.GetRequiredService<IUniversalHubClient<ITestHub>>();
+    }
+
+
+    [Fact]
+    public async Task AHostThatMovedIsLookedUpAgain()
+    {
+        // what the scan last saw (a host that has since restarted somewhere else), and where it is now
+        var locator = new FakeLocator(HttpHost().Http);
+        var client = this.CreateClientWithLocator(locator);
+
+        await client.Connect(HttpHost("/moved-away"), new HubConnectOptions("Alice") { Allowed = HubTransports.Http });
+
+        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.Equal(1, locator.Lookups);
+        Assert.Equal("Alice", await client.Hub.WhoAmI());
+    }
+
+
+    [Fact]
+    public async Task AHostStillAtItsStaleAddressIsNotRetried()
+    {
+        var stale = HttpHost("/moved-away");
+        var locator = new FakeLocator(stale.Http);   // mDNS still says the same thing
+        var client = this.CreateClientWithLocator(locator);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice") { Allowed = HubTransports.Http }));
+        Assert.Equal(1, locator.Lookups);
+        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+    }
+
+
+    [Fact]
+    public async Task AnAddressFromOutsideMdnsIsNotLookedUp()
+    {
+        var locator = new FakeLocator(HttpHost().Http);
+        var client = this.CreateClientWithLocator(locator);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost"), "/moved-away"), new HubConnectOptions("Alice")));
+        Assert.Equal(0, locator.Lookups);
+    }
+
+
     [Fact]
     public async Task ConnectsOverHttpAndCallsWork()
     {

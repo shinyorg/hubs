@@ -18,21 +18,64 @@ public class CallService
     readonly ILogger<CallService> logger;
 
 
-    public CallService(IHubCalls calls, ShellServices shell, PlayerSettings settings, ILogger<CallService> logger)
+    readonly HubCallsOptions options;
+    readonly DuplexCallAudio audio;
+
+
+    public CallService(IHubCalls calls, HubCallsOptions options, DuplexCallAudio audio, ShellServices shell, PlayerSettings settings, ILogger<CallService> logger)
     {
         this.calls = calls;
+        this.options = options;
+        this.audio = audio;
         this.shell = shell;
         this.settings = settings;
         this.logger = logger;
 
         calls.Incoming += (_, call) => shell.MainThread.BeginInvokeOnMainThread(() => _ = this.Show(call));
+        this.ApplyVideoCodec();
     }
+
+
+    /// <summary>
+    /// The microphone calls use - picked on the call screen, and kept for the next call
+    /// </summary>
+    public DuplexCallAudio Audio => this.audio;
+
+
+    public static IReadOnlyList<string> VideoCodecChoices { get; } = ["Auto", "H264", "Jpeg"];
+
+    /// <summary>
+    /// Auto offers H.264 and JPEG, and a call uses H.264 when both phones have it. H264 or Jpeg offers only that one, so
+    /// a call with this phone uses it - or, for H264 with a phone that lacks it, has no video.
+    /// </summary>
+    public string VideoCodec
+    {
+        get => this.settings.VideoCodec;
+        set
+        {
+            this.settings.VideoCodec = value;
+            this.ApplyVideoCodec();
+        }
+    }
+
+
+    void ApplyVideoCodec() => this.options.AllowedVideoCodecs = this.settings.VideoCodec switch
+    {
+        "H264" => CallVideoCodecs.H264,
+        "Jpeg" => CallVideoCodecs.Jpeg,
+        _ => CallVideoCodecs.Jpeg | CallVideoCodecs.H264
+    };
 
 
     /// <summary>
     /// The call the call screen shows
     /// </summary>
     public IHubCall? Current { get; private set; }
+
+    /// <summary>
+    /// A call is ringing, connecting or active
+    /// </summary>
+    public bool IsInCall => this.calls.Current != null;
 
 
     public async Task Call(Conversation conversation, bool video)

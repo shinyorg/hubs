@@ -12,6 +12,40 @@ public class ChatSessionProvider(ChatService chat) : IChatSessionProvider
     public Task<IChatSession> CreateSessionAsync(string[] userIds, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Conversations start when someone connects");
 
+    internal const string FileKey = "file";
+
+
+    /// <summary>
+    /// A file from the "📎 Send a file" action - photos come through ChatView's own attach button. The bubble arrives
+    /// through the conversation's live stream, like every other line.
+    /// </summary>
+    public async Task SendFile(string sessionId, FileResult picked)
+    {
+        var conversation = chat.Find(sessionId) ?? throw new ChatSessionException($"No conversation {sessionId}");
+        var temp = Path.Combine(FileSystem.CacheDirectory, $"send-{Guid.NewGuid():N}{Path.GetExtension(picked.FileName)}");
+        await using (var source = await picked.OpenReadAsync())
+        await using (var file = File.Create(temp))
+            await source.CopyToAsync(file);
+
+        try
+        {
+            var isImage = picked.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true;
+            await chat.SendFile(conversation, temp, picked.FileName, isImage, "", Guid.NewGuid().ToString("N"));
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
+
+    /// <summary>
+    /// The local copy of a message's photo or file, to open it
+    /// </summary>
+    public static string? FileFor(ChatMessage message)
+        => message.Metadata?.TryGetValue(FileKey, out var path) == true && File.Exists(path) ? path : null;
+
+
     public Task<IChatSession> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         var conversation = chat.Find(sessionId) ?? throw new ChatSessionException($"No conversation {sessionId}");
@@ -56,7 +90,7 @@ sealed class ConversationSession : IChatSession
         ],
         [],                                   // no reactions
         MessageBodyPermissions.None,
-        this.conversation.IsOnline ? ChatSessionPermissions.CanSendMessages : ChatSessionPermissions.None,
+        this.conversation.IsOnline ? ChatSessionPermissions.CanSendMessages | ChatSessionPermissions.CanSendImages : ChatSessionPermissions.None,
         DateTimeOffset.MinValue,
         null,
         0
@@ -100,6 +134,25 @@ sealed class ConversationSession : IChatSession
 
     public async Task<ChatMessage> SendMessageAsync(OutgoingMessage message, CancellationToken ct = default)
     {
+        // a photo from ChatView's attach button - it hands over the stream, and the session owns it
+        if (message.Attachment is { } attachment)
+        {
+            var temp = Path.Combine(FileSystem.CacheDirectory, $"send-{Guid.NewGuid():N}{Path.GetExtension(attachment.FileName)}");
+            await using (attachment.Content)
+            await using (var file = File.Create(temp))
+                await attachment.Content.CopyToAsync(file, ct);
+
+            try
+            {
+                var sent = await this.chat.SendFile(this.conversation, temp, attachment.FileName, true, message.Body?.Trim() ?? "", message.ClientMessageId);
+                return this.ToMessage(sent);
+            }
+            finally
+            {
+                File.Delete(temp);
+            }
+        }
+
         var text = message.Body?.Trim();
         if (String.IsNullOrEmpty(text))
             throw new ChatSendRejectedException("Say something", SendRejectionKind.UnsupportedContent);
@@ -147,18 +200,42 @@ sealed class ConversationSession : IChatSession
     }
 
 
-    ChatMessage ToMessage(ChatLine line) => new(
-        line.Id,
-        line.ClientMessageId,
-        this.conversation.IsMine(line) ? Me : Them,
-        line.Text,
-        null,
-        MessageStatus.Sent,
-        null,
-        line.Timestamp,
-        null,
-        [],
-        []
-    );
+    // a photo shows in the bubble (tapping it opens ChatView's image viewer); any other file is a "📎 name" bubble
+    ChatMessage ToMessage(ChatLine line)
+    {
+        var local = this.chat.LocalFile(this.conversation, line);
+        var body = line.Text;
+        string? image = null;
+        if (line.File != null)
+        {
+            if (line.IsImage && local != null && File.Exists(local))
+                image = local;
+            else
+                body = $"📎 {ChatService.DisplayName(line.File)} ({Size(line.FileSize)})" + (String.IsNullOrEmpty(line.Text) ? "" : "\n" + line.Text);
+        }
+
+        return new(
+            line.Id,
+            line.ClientMessageId,
+            this.conversation.IsMine(line) ? Me : Them,
+            String.IsNullOrEmpty(body) ? null : body,
+            image,
+            MessageStatus.Sent,
+            null,
+            line.Timestamp,
+            null,
+            [],
+            [],
+            Metadata: local == null ? null : new Dictionary<string, string> { [ChatSessionProvider.FileKey] = local }
+        );
+    }
+
+
+    static string Size(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0} KB",
+        _ => $"{bytes / 1024.0 / 1024.0:0.0} MB"
+    };
 }
 #pragma warning restore CS0067

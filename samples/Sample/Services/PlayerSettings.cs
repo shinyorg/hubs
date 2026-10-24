@@ -33,6 +33,16 @@ public class PlayerSettings
     }
 
 
+    /// <summary>
+    /// Auto, H264 or Jpeg - forcing one on either phone lets you try each codec on a call
+    /// </summary>
+    public string VideoCodec
+    {
+        get => Preferences.Get(nameof(this.VideoCodec), "Auto");
+        set => Preferences.Set(nameof(this.VideoCodec), value);
+    }
+
+
     public string Name
     {
         get

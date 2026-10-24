@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.BluetoothLE.Hubs</RootNamespace>
+        <Description>Shiny.BluetoothLE.Hubs client - discovers BLE hub hosts and calls them through generated, strongly typed proxies</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
+    </ItemGroup>
+</Project>

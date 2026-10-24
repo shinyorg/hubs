@@ -14,14 +14,21 @@ public partial class HomeViewModel(
 {
     [ObservableProperty] public partial string PlayerName { get; set; } = settings.Name;
     [ObservableProperty] public partial ImageSource? Avatar { get; set; }
-    [ObservableProperty] public partial string ChatText { get; set; } = "💬 Chat";
+    [ObservableProperty] public partial string ChatText { get; set; } = "👋 People - message & call";
 
+
+    static bool videoCheckOpened;
 
     public void OnAppearing()
     {
+        if (!videoCheckOpened && Environment.GetEnvironmentVariable("UH_VIDEOCHECK") == "1")
+        {
+            videoCheckOpened = true;
+            _ = shell.Navigator.NavigateToVideoCheck();
+        }
         this.Avatar = settings.AvatarPath is { } p ? ImageSource.FromFile(p) : null;
         var unread = chat.Conversations.Sum(x => x.Unread);
-        this.ChatText = unread > 0 ? $"💬 Chat ({unread} new)" : "💬 Chat";
+        this.ChatText = unread > 0 ? $"👋 People - message & call ({unread} new)" : "👋 People - message & call";
     }
 
 

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <IsPackable>false</IsPackable>
+        <RootNamespace>Shiny.BluetoothLE.Hubs.Tests</RootNamespace>
+        <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="xunit.v3" />
+        <PackageReference Include="xunit.runner.visualstudio" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
+        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.Client\Shiny.BluetoothLE.Hubs.Client.csproj" />
+        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.Host\Shiny.BluetoothLE.Hubs.Host.csproj" />
+        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
+    </ItemGroup>
+    <ItemGroup>
+        <Using Include="Xunit" />
+    </ItemGroup>
+</Project>

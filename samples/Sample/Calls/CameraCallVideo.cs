@@ -32,6 +32,7 @@ public class CameraCallVideoSource(CameraView camera) : ICallVideoSource
                 this.encoder = encoder;
                 Apply(encoder, settings);
                 camera.Analyzer = encoder;
+                Console.WriteLine($"[call] camera encoder on: {settings.Codec} {settings.MaxDimension}px {settings.FrameRate}fps, camera active={camera.IsActive}");
             }
             else
             {

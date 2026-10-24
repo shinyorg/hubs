@@ -31,6 +31,30 @@ public partial class ChatViewModel(ChatService chat, ChatSessionProvider provide
 
 
     /// <summary>
+    /// "📎 Send a file" in the chat's input menu
+    /// </summary>
+    public async Task SendFile()
+    {
+        if (this.SessionId is not { } id || this.Conversation is not { IsOnline: true })
+        {
+            await shell.Dialogs.Alert("Send a file", $"{this.Conversation?.Name ?? "They"} aren't here right now");
+            return;
+        }
+
+        try
+        {
+            var picked = await FilePicker.Default.PickAsync();
+            if (picked != null)
+                await provider.SendFile(id, picked);
+        }
+        catch (Exception ex)
+        {
+            await shell.Dialogs.Alert("Send a file", ex.Message);
+        }
+    }
+
+
+    /// <summary>
     /// 📞 or 📹 - FaceTime the person in this conversation, over whichever link they're on
     /// </summary>
     [RelayCommand]

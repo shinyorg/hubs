@@ -68,7 +68,7 @@ internal sealed class HubCalls : IHubCalls
         this.services = services;
         this.Options = options;
         this.Audio = audio;
-        this.VideoCodecs = video?.Supported ?? CallVideoCodecs.None;
+        this.supportedCodecs = video?.Supported ?? CallVideoCodecs.None;
         this.LoggerFactory = loggerFactory;
         this.Logger = loggerFactory?.CreateLogger<HubCalls>();
 
@@ -82,7 +82,8 @@ internal sealed class HubCalls : IHubCalls
     internal ILogger? Logger { get; }
     internal ILoggerFactory? LoggerFactory { get; }
 
-    public CallVideoCodecs VideoCodecs { get; }
+    readonly CallVideoCodecs supportedCodecs;
+    public CallVideoCodecs VideoCodecs => this.supportedCodecs & this.Options.AllowedVideoCodecs;
     public event EventHandler<IHubCall>? Incoming;
 
     public IHubCall? Current => this.calls.Values.FirstOrDefault(x => x.State != CallState.Ended);

@@ -7,18 +7,24 @@
              x:DataType="local:ChatViewModel"
              Title="{Binding Conversation.Name}">
 
-    <ContentPage.ToolbarItems>
-        <ToolbarItem Text="📞" Command="{Binding CallCommand}" CommandParameter="{x:Boolean False}" />
-        <ToolbarItem Text="📹" Command="{Binding CallCommand}" CommandParameter="{x:Boolean True}" />
-    </ContentPage.ToolbarItems>
-
     <Grid RowDefinitions="Auto,*">
-        <Label Text="{Binding Conversation.Status}"
-               Padding="16,6"
-               FontSize="12"
-               TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+        <!-- who, how they're connected, and call buttons you can see -->
+        <Grid ColumnDefinitions="*,Auto" Padding="16,8" ColumnSpacing="8">
+            <Label Text="{Binding Conversation.Status}"
+                   FontSize="12"
+                   VerticalOptions="Center"
+                   TextColor="{AppThemeBinding Light={StaticResource Gray500}, Dark={StaticResource Gray400}}" />
+            <HorizontalStackLayout Grid.Column="1" Spacing="8">
+                <Button Text="📞 Call" Command="{Binding CallCommand}" CommandParameter="{x:Boolean False}" Style="{StaticResource SecondaryButton}" />
+                <Button Text="📹 Video" Command="{Binding CallCommand}" CommandParameter="{x:Boolean True}" Style="{StaticResource SecondaryButton}" />
+            </HorizontalStackLayout>
+        </Grid>
 
-        <chat:ChatView Grid.Row="1"
+        <!-- photos: the attach button, tapped open in the image viewer. Files: "📎 Send a file" in the input menu -->
+        <chat:ChatView x:Name="Chat"
+                       Grid.Row="1"
+                       OpenImagesInViewer="True"
+                       MessageTapped="OnMessageTapped"
                        Provider="{Binding Provider}"
                        SessionId="{Binding SessionId}" />
     </Grid>

@@ -8,13 +8,20 @@
     <File Path="Directory.Packages.props" />
     <File Path="nuget.config" />
     <File Path="PLAN.md" />
+    <File Path="PLAN.BluetoothLE.Hubs.md" />
     <File Path="README.md" />
+    <File Path="README.BluetoothLE.Hubs.md" />
     <File Path="version.json" />
   </Folder>
   <Project Path="samples/Sample/Sample.csproj" />
   <Project Path="samples/Sample.MacOS/Sample.MacOS.csproj" />
+  <Project Path="src/Shiny.BluetoothLE.Hubs/Shiny.BluetoothLE.Hubs.csproj" />
+  <Project Path="src/Shiny.BluetoothLE.Hubs.Client/Shiny.BluetoothLE.Hubs.Client.csproj" />
+  <Project Path="src/Shiny.BluetoothLE.Hubs.Host/Shiny.BluetoothLE.Hubs.Host.csproj" />
+  <Project Path="src/Shiny.BluetoothLE.Hubs.SourceGenerators/Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" />
   <Project Path="src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj" />
+  <Project Path="tests/Shiny.BluetoothLE.Hubs.Tests/Shiny.BluetoothLE.Hubs.Tests.csproj" />
   <Project Path="tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj" />
 </Solution>

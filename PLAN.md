@@ -4,7 +4,8 @@
 a plane, and over Wi-Fi at home. Hub contracts, hub classes and app code stay the same. The client picks the transport when
 it connects.
 
-UniversalHubs adds Wi-Fi to [Shiny.BluetoothLE.Hubs](../blehubs), which it references **through NuGet**:
+UniversalHubs adds Wi-Fi to [Shiny.BluetoothLE.Hubs](PLAN.BluetoothLE.Hubs.md), which lives in this repo (`src/Shiny.BluetoothLE.Hubs*`)
+since 2026-10-23 and is referenced by project:
 - The Wi-Fi side is [Shiny.Net.HttpServer.Switchboard](../httpserver): SSE downstream, POST upstream, with resume.
 - Discovery is mDNS through Shiny.Net.HttpServer.Discovery.
 
@@ -18,8 +19,9 @@ UniversalHubs adds Wi-Fi to [Shiny.BluetoothLE.Hubs](../blehubs), which it refer
 
 ## 2. What blehubs provides (its transport seams)
 
-These hidden (`[EditorBrowsable(Never)]`) seams were added to blehubs for this library. blehubs owns their code and
-tests, and this section is their design doc. Change them in blehubs and consume the new version here.
+These hidden (`[EditorBrowsable(Never)]`) seams live in `Shiny.BluetoothLE.Hubs*`, with their tests in
+`tests/Shiny.BluetoothLE.Hubs.Tests`; this section is their design doc. Change them there and in UniversalHubs in the
+same change.
 
 ### 2.1 Host: `IHubContext<THub>.TransportEndpoint` → `IBleHubTransportEndpoint`
 
@@ -293,17 +295,28 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - Host: the `{BasePath}/media` WebSocket route. Client: `SwitchboardTransport.OpenMediaChannel`. The handshake reply
     gained `mediaToken` / `mediaMaxPacketSize`. `UniversalHubClient` passes blehubs' `CanOpenMediaChannel` /
     `OpenMediaChannel` through.
-  - Built against locally packed upstream work, none of it published yet:
-    - blehubs `1.4.0`: media channels (`BleHubsVersion` is bumped to it).
-    - For the sample only: Shiny.Audio `3.0.0` beta (`IAudioDuplex`) and Shiny.Maui.Controls.Camera `2.1.0` beta
-      (`VideoEncoder`, `RemoteVideoView`).
-    Publish them, then set their versions in `Directory.Packages.props`. CI can't restore until blehubs 1.4.0 is on
-    nuget.org.
+  - Consumes blehubs `1.4.0` (media channels) from nuget.org. The sample also uses Shiny.Audio `3.0.0-beta-0034`
+    (`IAudioDuplex`) and Shiny.Maui.Controls.Camera `2.1.0-beta-0002` (`VideoEncoder`, `RemoteVideoView`).
   - Tests: Wi-Fi media channels end to end (both directions, ordering, 200 KB packets, the size limit, reopening, closing
     on disconnect and on host dispose, tokens, a host without media channels).
-  - Sample: FaceTime-style calls (`samples/Sample/Calls`). 📞 / 📹 in a chat call the other person; the call screen rings,
+  - Sample: FaceTime-style calls (`samples/Sample/Calls`). People lists everyone reachable with 💬 / 📞 / 📹, connecting first when needed; the call screen rings,
     then shows them full screen with your camera in the corner.
   - **Not yet verified:** real devices, real radios, echo cancellation, H.264 encode/decode. See §7.
+- **2026-10-23**: **blehubs moved into this repo.** `src/Shiny.BluetoothLE.Hubs*`, `tests/Shiny.BluetoothLE.Hubs.Tests`,
+  `skills/shiny-ble-hubs`, `README.BluetoothLE.Hubs.md` and `PLAN.BluetoothLE.Hubs.md` came across from blehubs'
+  working tree (including its unreleased stale-peripheral fix); its history stays in the old repo. UniversalHubs, its
+  tests and the samples use project references, and the tests and samples load the generator as an analyzer. One
+  `version.json` for every package, now 1.5.0 (above blehubs' published 1.4.0). CI builds and tests both libraries.
+  144 + 76 tests.
+- **2026-10-23**: Wi-Fi connect re-resolves a moved host. A host restarted on a new port (or killed without an mDNS
+  goodbye) stayed listed at its old address, and connecting failed until the client restarted. Now, when no address
+  answers, `UniversalHubClient` looks the host up by instance name (`IHttpServerLocator.FindFirstAsync`,
+  `HttpRediscoverTimeout`) and retries once at the new address. Addresses from `FromUrl` aren't looked up. 76 tests.
+- **2026-10-23**: macOS sample: no alert ever showed, so Back on a hosted game (which asks "End game?") did nothing.
+  maui-labs `preview.12.26421.1` predates its fix for dialog registration on MAUI 10.0.70+ (maui-labs #575). It is now on
+  `0.1.0-preview.13.26512.5`, and `MauiVersion` is pinned to `10.0.110` instead of coming from the installed workload.
+  Incremental builds of `Sample.MacOS` can skip recompiling the linked sample files: use `--no-incremental` after editing
+  `samples/Sample`.
 
 ## 7. Verifying on hardware
 
@@ -322,22 +335,25 @@ You need two physical devices. Run the sample on both and check:
   - A kick shows `ServerDisconnect` on both sides.
 - **Wi-Fi blip:** toggle Wi-Fi off and on quickly on the client. The game resumes without a disconnect.
 - **Always-on chat:**
-  - With the app open on two devices, each one lists the other under "Message someone".
+  - With the app open on two devices, each one lists the other under People.
   - A message raises a local notification unless that conversation is on screen.
   - Hosting and ending a game leaves the chat connected.
 - **Tunnel:**
   - "Share on the internet" shows a public URL. A device on cellular can open it through "Address someone shared".
   - Through that URL the game route answers 404.
-- **Calls** (chat → 📞 / 📹):
+- **Calls** (People → 📞 / 📹 on a row, or the buttons at the top of a chat):
   - Over Wi-Fi, both directions (visitor calls owner, owner calls visitor). Video is smooth, and the status shows
     H.264 between two iPhones or two Androids, and between an iPhone and an Android.
+  - Set People → More options → "Video codec for calls" to Jpeg on either phone: the next call says JPEG and still plays. Back to Auto: H.264 again.
+  - Mid-call, 📷 switches to the back camera (the other side's picture follows) and 🎤 to a headset or USB mic (the other
+    side hears it). The mic choice carries over to the next call.
   - With Wi-Fi off (Bluetooth only): voice is clear, video is a small, slow picture, and the status says Bluetooth.
   - Speakerphone: no echo on the other side. Toggle the speaker, mute and camera.
   - Walk out of range mid-call: the call ends as "Connection lost" on both sides.
   - Call someone already on a call: Busy. Don't answer: "No answer" after 45 s.
   - Rotate the phone during a video call: the other side stays upright, and the front camera is mirrored.
 - **Mac host and client:** `samples/Sample.MacOS`
-  - It hosts its chat over BLE and Wi-Fi as soon as it opens. Phones list it under "Message someone".
+  - It hosts its chat over BLE and Wi-Fi as soon as it opens. Phones list it under People.
   - "Host a game" on the Mac shows up in the phones' join list, and a phone can join it over either transport.
   - It lists and joins the phones' games and chats, over Bluetooth or Wi-Fi.
   - Run it from Finder, `open` or `-t:Run`, not by executing the binary from a terminal. macOS charges the Bluetooth

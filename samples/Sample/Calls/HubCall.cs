@@ -514,6 +514,8 @@ internal sealed class HubCall : IHubCall
             this.clock.Start();
             this.SetState(CallState.Active);
         }
+        this.logger?.LogInformation("Call active - {Video}, {Profile}, camera {Camera}",
+            this.VideoCodec?.ToString() ?? "audio only", this.Profile, this.videoSource == null ? "not attached" : "attached");
         this.SendMediaState();
         this.UpdateVideoSource();
         // a decoder starting cold needs a key frame
@@ -572,7 +574,8 @@ internal sealed class HubCall : IHubCall
         if (this.State != CallState.Active || this.VideoCodec == null)
             return;
 
-        Interlocked.Increment(ref this.videoReceived);
+        if (Interlocked.Increment(ref this.videoReceived) == 1)
+            this.logger?.LogInformation("First video frame received: {Codec} {Width}x{Height} - {Sink}", packet.Codec, packet.Width, packet.Height, this.videoSink == null ? "no view attached" : "rendering");
         this.videoSink?.Render(new CallVideoFrame(
             packet.Codec,
             packet.Payload,
@@ -650,6 +653,9 @@ internal sealed class HubCall : IHubCall
     {
         if (this.State != CallState.Active || !this.cameraOn)
             return;
+
+        if (Interlocked.Read(ref this.videoSent) == 0)
+            this.logger?.LogInformation("First video frame encoded: {Codec} {Width}x{Height}, {Bytes} bytes", frame.Codec, frame.Width, frame.Height, frame.Data.Length);
 
         this.Link.Send(CallProtocol.Video(this.Id, new VideoPacket(
             this.videoSeq++,
@@ -745,6 +751,7 @@ internal sealed class HubCall : IHubCall
             }
         }
 
+        this.logger?.LogInformation("Call ended {Reason}: {Stats}", end.Reason, this.Stats);
         this.owner.OnEnded(this);
         this.completion.TrySetResult(end);
     }

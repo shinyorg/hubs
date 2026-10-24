@@ -11,8 +11,9 @@
         <PackageProjectUrl>https://shinylib.net</PackageProjectUrl>
         <PackageIcon>icon.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageReadmeSource Condition="'$(PackageReadmeSource)' == ''">README.md</PackageReadmeSource>
         <PackageTags>ble bluetooth wifi mdns hub signalr switchboard ios android maui</PackageTags>
-        <RepositoryUrl>https://github.com/shinyorg/universalhubs</RepositoryUrl>
+        <RepositoryUrl>https://github.com/shinyorg/hubs</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
         <!-- the platforms with a Shiny BLE stack - the packages register it there; plain net10.0 brings its own -->

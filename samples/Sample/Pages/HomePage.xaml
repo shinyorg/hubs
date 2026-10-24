@@ -45,15 +45,15 @@
                    MaxLength="12"
                    HorizontalTextAlignment="Center" />
 
+            <Button Text="{Binding ChatText}"
+                    Command="{Binding ChatCommand}" />
+
             <Button Text="Host a game"
-                    Command="{Binding HostCommand}" />
+                    Command="{Binding HostCommand}"
+                    Style="{StaticResource SecondaryButton}" />
 
             <Button Text="Join a game"
                     Command="{Binding JoinCommand}"
-                    Style="{StaticResource SecondaryButton}" />
-
-            <Button Text="{Binding ChatText}"
-                    Command="{Binding ChatCommand}"
                     Style="{StaticResource SecondaryButton}" />
         </VerticalStackLayout>
     </Grid>

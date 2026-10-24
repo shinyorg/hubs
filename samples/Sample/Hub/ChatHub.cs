@@ -21,6 +21,10 @@ public class ChatHub(ChatService chat) : UniversalHub<IChatHub>
     }
 
 
+    public Task<ChatLine> SendFile(string fileName, bool isImage, long size, string clientMessageId)
+        => chat.OnVisitorFile(this.Connection, fileName, isImage, size, clientMessageId);
+
+
     public override Task OnDisconnectedAsync(HubConnection connection, HubDisconnect disconnect)
     {
         chat.OnVisitorDisconnected(connection, disconnect);

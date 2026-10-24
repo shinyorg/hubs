@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Sample.Pages"
+             xmlns:camera="clr-namespace:Shiny.Maui.Controls.Camera;assembly=Shiny.Maui.Controls.Camera"
+             x:Class="Sample.Pages.VideoCheckPage"
+             x:DataType="local:VideoCheckViewModel"
+             Title="Video check">
+
+    <Grid RowDefinitions="Auto,*,Auto,*" Padding="12" RowSpacing="8">
+        <Label Text="Camera preview" FontAttributes="Bold" />
+        <camera:CameraView x:Name="Camera" Grid.Row="1" Facing="Front" ScaleMode="AspectFit" BackgroundColor="#202020" />
+        <Label Grid.Row="2" Text="{Binding Status}" FontAttributes="Bold" />
+        <camera:RemoteVideoView x:Name="Remote" Grid.Row="3" Aspect="AspectFit" BackgroundColor="#303030" />
+    </Grid>
+</ContentPage>

@@ -19,6 +19,13 @@
             <Label Text="{Binding Status}" FontSize="15" TextColor="#DDFFFFFF" HorizontalOptions="Center" />
         </VerticalStackLayout>
 
+        <!-- pick the camera and microphone, before answering or during the call -->
+        <VerticalStackLayout Spacing="10" Margin="16,120,0,0" HorizontalOptions="Start" VerticalOptions="Start">
+            <Button Text="📷" Command="{Binding PickCameraCommand}" Style="{StaticResource CallButton}" IsVisible="{Binding IsVideo}" />
+            <Button Text="🎤" Command="{Binding PickMicrophoneCommand}" Style="{StaticResource CallButton}" />
+            <Label Text="{Binding MicrophoneName}" FontSize="11" TextColor="#BBFFFFFF" MaxLines="1" WidthRequest="90" LineBreakMode="TailTruncation" />
+        </VerticalStackLayout>
+
         <!-- this device's camera, in the corner -->
         <Border WidthRequest="110"
                 HeightRequest="160"
@@ -28,7 +35,7 @@
                 HorizontalOptions="End"
                 VerticalOptions="Start"
                 IsVisible="{Binding IsVideo}">
-            <camera:CameraView x:Name="Camera" Facing="Front" ScaleMode="AspectFill" />
+            <camera:CameraView x:Name="Camera" Facing="Front" CameraId="{Binding CameraId}" ScaleMode="AspectFill" />
         </Border>
 
         <!-- ringing -->
@@ -37,6 +44,12 @@
             <Button Text="📞" Command="{Binding AcceptAudioCommand}" Style="{StaticResource CallButton}" BackgroundColor="#34C759" />
             <Button Text="📹" Command="{Binding AcceptCommand}" Style="{StaticResource CallButton}" BackgroundColor="#34C759" IsVisible="{Binding IsVideo}" />
         </HorizontalStackLayout>
+
+        <!-- calling them: cancel before they answer -->
+        <VerticalStackLayout Spacing="8" Margin="0,0,0,56" HorizontalOptions="Center" VerticalOptions="End" IsVisible="{Binding IsDialing}">
+            <Button Text="✕" Command="{Binding HangUpCommand}" Style="{StaticResource CallButton}" BackgroundColor="#FF3B30" HorizontalOptions="Center" />
+            <Label Text="Cancel" TextColor="White" HorizontalOptions="Center" />
+        </VerticalStackLayout>
 
         <!-- in a call -->
         <HorizontalStackLayout Spacing="20" Margin="0,0,0,56" HorizontalOptions="Center" VerticalOptions="End" IsVisible="{Binding IsInCall}">

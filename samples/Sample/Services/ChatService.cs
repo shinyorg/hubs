@@ -61,11 +61,11 @@ public class ChatService
         this.mainThread = mainThread;
         this.logger = logger;
 
-        // the owner's answers arrive as pushes on the proxy
+        // the owner's answers arrive as pushes on the proxy - a photo or file is fetched before the line is shown
         client.Hub.MessageReceived += line =>
         {
             if (this.remote is { } conversation)
-                _ = this.Add(conversation, line, fromPeer: true);
+                _ = this.Receive(conversation, line);
         };
         client.Disconnected += (_, disconnect) =>
         {
@@ -203,16 +203,21 @@ public class ChatService
     /// <summary>
     /// Opens a conversation with someone else's chat. One at a time: visiting another one leaves the current one.
     /// </summary>
-    public async Task<Conversation> Visit(HubHostInfo info)
+    public async Task<Conversation> Visit(HubHostInfo info, CancellationToken cancellationToken = default)
     {
         if (this.client.Status != BleHubClientStatus.Disconnected)
             await this.client.Disconnect();
 
+        this.logger.LogInformation("Visiting {Host} - reachable over {Transports}, preferring {Prefer}", info.Name, info.Transports, this.PreferredTransport);
         await this.client.Connect(info, new HubConnectOptions(
             this.settings.Name,
             AppInfo.Current.VersionString,
             new Dictionary<string, string> { [InstallIdProperty] = PlayerSettings.InstallId }
-        ));
+        )
+        {
+            // People → More options → "Connect over Bluetooth when possible"; Wi-Fi stays the fallback
+            Prefer = this.PreferredTransport
+        }, cancellationToken);
 
         var id = "out:" + info.Key;
         var name = this.client.HostName ?? info.Name;
@@ -228,6 +233,19 @@ public class ChatService
         this.remote = conversation;
         return conversation;
     }
+
+
+    HubTransports PreferredTransport => this.settings.PreferBluetooth ? HubTransports.Ble : HubTransports.Http;
+
+
+    /// <summary>
+    /// The chat being visited is on the other transport than the one now preferred, and the host is reachable over the
+    /// preferred one - visiting again switches
+    /// </summary>
+    public bool ShouldSwitchTransport(HubHostInfo host)
+        => this.client.Status == BleHubClientStatus.Connected
+           && this.client.Transport != this.PreferredTransport
+           && host.Transports.HasFlag(this.PreferredTransport);
 
 
     // ---------- both ----------
@@ -257,6 +275,103 @@ public class ChatService
     }
 
 
+    // ---------- photos and files ----------
+
+    const string ChatFilePrefix = "chat-";
+
+    /// <summary>
+    /// A photo or file sent in a chat: <c>chat-{id}-{original name}</c>, in the chat owner's files
+    /// </summary>
+    public static bool IsChatFile(string fileName)
+        => fileName.StartsWith(ChatFilePrefix, StringComparison.Ordinal) && Path.GetFileName(fileName) == fileName;
+
+    /// <summary>
+    /// The name a file was sent with, without its transfer prefix
+    /// </summary>
+    public static string DisplayName(string fileName)
+    {
+        var parts = fileName.Split('-', 3);
+        return parts.Length == 3 && parts[0] + "-" == ChatFilePrefix ? parts[2] : fileName;
+    }
+
+    static string DownloadsDirectory => Path.Combine(FileSystem.CacheDirectory, "chat-files");
+
+    /// <summary>
+    /// Where this device keeps a line's photo or file: the owner holds it with its hub files, a visitor downloads a copy
+    /// </summary>
+    public string? LocalFile(Conversation conversation, ChatLine line)
+        => line.File == null ? null : Path.Combine(conversation.IsVisiting ? DownloadsDirectory : GameSession.HostFilesDirectory, line.File);
+
+
+    /// <summary>
+    /// Sends a photo or file from this device: a visitor uploads it to the owner over the hub's file transfer (L2CAP or
+    /// HTTP) and then sends the message; the owner keeps it with its files and tells the visitor, who downloads it
+    /// </summary>
+    public async Task<ChatLine> SendFile(Conversation conversation, string localPath, string originalName, bool isImage, string text, string clientMessageId)
+    {
+        var safe = String.Concat(Path.GetFileName(originalName).Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == '-' ? '_' : c));
+        var fileName = $"{ChatFilePrefix}{Guid.NewGuid():N}-{safe}";
+        var size = new FileInfo(localPath).Length;
+        ChatLine line;
+
+        if (conversation.IsVisiting)
+        {
+            if (!ReferenceEquals(this.remote, conversation) || this.client.Status != BleHubClientStatus.Connected)
+                throw new InvalidOperationException($"Not connected to {conversation.Name}");
+
+            await this.client.UploadFile(localPath, fileName);
+            line = await this.client.Hub.SendFile(fileName, isImage, size, clientMessageId);
+
+            Directory.CreateDirectory(DownloadsDirectory);
+            File.Copy(localPath, Path.Combine(DownloadsDirectory, fileName), true);
+        }
+        else
+        {
+            var connectionId = conversation.ConnectionId ?? throw new InvalidOperationException($"{conversation.Name} has left");
+            Directory.CreateDirectory(GameSession.HostFilesDirectory);
+            File.Copy(localPath, Path.Combine(GameSession.HostFilesDirectory, fileName), true);
+
+            line = new ChatLine(Guid.NewGuid().ToString("N"), clientMessageId, true, this.settings.Name, text, DateTimeOffset.Now, fileName, isImage, size);
+            await this.hub.Clients.Client(connectionId).MessageReceived(line);
+        }
+
+        await this.Add(conversation, line, fromPeer: false);
+        return line;
+    }
+
+
+    public async Task<ChatLine> OnVisitorFile(HubConnection connection, string fileName, bool isImage, long size, string clientMessageId)
+    {
+        if (!IsChatFile(fileName) || !File.Exists(Path.Combine(GameSession.HostFilesDirectory, fileName)))
+            throw new InvalidOperationException("Upload the file first");
+
+        var id = (string)connection.Properties["conversation"];
+        var line = new ChatLine(Guid.NewGuid().ToString("N"), clientMessageId, false, connection.Client.Name ?? "Visitor", "", DateTimeOffset.Now, fileName, isImage, size);
+        var conversation = this.Find(id) ?? throw new InvalidOperationException("Not in a conversation");
+        await this.Add(conversation, line, fromPeer: true);
+        return line;
+    }
+
+
+    // a visitor fetches the owner's photo or file before showing the line, so the bubble has something to show
+    async Task Receive(Conversation conversation, ChatLine line)
+    {
+        if (line.File is { } file && this.LocalFile(conversation, line) is { } local && !File.Exists(local))
+        {
+            try
+            {
+                Directory.CreateDirectory(DownloadsDirectory);
+                await this.client.DownloadFile(file, local);
+            }
+            catch (Exception ex)
+            {
+                this.logger.LogWarning(ex, "Could not download {File}", file);
+            }
+        }
+        await this.Add(conversation, line, fromPeer: true);
+    }
+
+
     async Task Add(Conversation conversation, ChatLine line, bool fromPeer)
     {
         // the actor stores it and publishes it to anyone watching the conversation
@@ -265,7 +380,7 @@ public class ChatService
 
         this.mainThread.BeginInvokeOnMainThread(() =>
         {
-            conversation.LastText = line.Text;
+            conversation.LastText = line.File == null ? line.Text : (line.IsImage ? "📷 Photo" : "📎 " + DisplayName(line.File));
             if (fromPeer && this.Viewing != conversation.Id)
             {
                 conversation.Unread++;

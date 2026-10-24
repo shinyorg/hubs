@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.BluetoothLE.Hubs</RootNamespace>
+        <Description>SignalR style hubs over Bluetooth LE - shared protocol and the hub source generator</Description>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="Shiny.Extensions.Serialization" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Client" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Host" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
+    </ItemGroup>
+    <ItemGroup>
+        <!-- ship the generator with the core package so host and client apps both get it -->
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="None" PrivateAssets="all" />
+        <None Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\bin\$(Configuration)\netstandard2.0\Shiny.BluetoothLE.Hubs.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+</Project>

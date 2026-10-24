@@ -16,6 +16,11 @@ public interface IChatHub
     Task<ChatLine> Send(string text, string clientMessageId);
 
     /// <summary>
+    /// Sends a photo or file the visitor has already uploaded (UploadFile) as <paramref name="fileName"/>
+    /// </summary>
+    Task<ChatLine> SendFile(string fileName, bool isImage, long size, string clientMessageId);
+
+    /// <summary>
     /// Host to client: the host answered
     /// </summary>
     event Action<ChatLine> MessageReceived;
@@ -25,13 +30,18 @@ public interface IChatHub
 /// <param name="Id">Unique per message</param>
 /// <param name="ClientMessageId">The id the sender's ChatView gave the message, so its optimistic bubble is matched up</param>
 /// <param name="FromHost">Written by the chat's owner rather than the visitor</param>
+/// <param name="File">A photo or file sent with the message: its name in the owner's files (chat-{id}-{original})</param>
+/// <param name="IsImage">The file is a photo - shown in the bubble, opened in the image viewer</param>
 public record ChatLine(
     string Id,
     string ClientMessageId,
     bool FromHost,
     string SenderName,
     string Text,
-    DateTimeOffset Timestamp
+    DateTimeOffset Timestamp,
+    string? File = null,
+    bool IsImage = false,
+    long FileSize = 0
 );
 
 

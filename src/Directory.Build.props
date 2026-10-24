@@ -1,0 +1,10 @@
+<Project>
+    <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+    <!-- Shiny.BluetoothLE.Hubs: its own product name, tags and package readme, next to the UniversalHubs packages -->
+    <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Shiny.BluetoothLE.Hubs'))">
+        <Product>Shiny.BluetoothLE.Hubs</Product>
+        <PackageTags>ble bluetooth bluetoothle hub signalr gatt l2cap ios android maui</PackageTags>
+        <PackageReadmeSource>README.BluetoothLE.Hubs.md</PackageReadmeSource>
+    </PropertyGroup>
+</Project>

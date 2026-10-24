@@ -11,6 +11,9 @@ public partial class CallPage : ContentPage
     {
         base.OnBindingContextChanged();
         if (this.BindingContext is CallViewModel vm)
+        {
+            vm.LoadCameras = () => this.Camera.GetAvailableCamerasAsync();
             vm.VideoReady += (_, _) => vm.Call?.AttachVideo(this.Camera, this.Remote);
+        }
     }
 }
