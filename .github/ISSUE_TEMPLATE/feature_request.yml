@@ -8,6 +8,8 @@ body:
       value: |
         Hub behavior (calls, pushes, groups, the hub contract) lives in Shiny.BluetoothLE.Hubs - requests for it belong there.
         This repo carries those hubs over Wi-Fi (Switchboard + mDNS) as well as BLE.
+
+        > ⭐ **Finding this library useful? Please give the repository a [Star](https://github.com/shinyorg/hubs) - it's free and it's how the project gets seen.**
   - type: textarea
     attributes:
       label: Summary

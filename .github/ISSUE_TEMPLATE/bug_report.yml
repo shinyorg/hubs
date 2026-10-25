@@ -9,6 +9,8 @@ body:
         Thank you for filing an issue. Please file against the latest version of Shiny.UniversalHubs from NuGet.
         If you have questions, please post them in GitHub discussions.
         Problems usually depend on BOTH devices and the network between them - please tell us which device was the host, which was the client, and whether they connected over Wi-Fi or BLE.
+
+        > ⭐ **Finding this library useful? Please give the repository a [Star](https://github.com/shinyorg/hubs) - it's free and it's how the project gets seen.**
   - type: dropdown
     id: component
     attributes:
