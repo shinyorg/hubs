@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <!--
+            net10.0 carries the transport-free core (tested against an in-memory link) and reports Nearby as unavailable.
+            Android adds the Google Play services link; iOS and macOS the native NearbyConnections bridge (native/ShinyNearbyBridge).
+        -->
+        <TargetFrameworks>net10.0;net10.0-android;net10.0-ios;net10.0-macos</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RootNamespace>Shiny.UniversalHubs</RootNamespace>
+        <Description>Shiny.UniversalHubs over Google's Nearby Connections - Android, iOS and macOS devices host and join universal hubs over Bluetooth, Wi-Fi LAN, Wi-Fi Direct, hotspots and Wi-Fi Aware with no network needed, beside BLE and HTTP</Description>
+        <PackageTags>$(PackageTags) nearby nearbyconnections wifiaware wifidirect peer-to-peer offline</PackageTags>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
+        <ProjectReference Include="..\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+    </ItemGroup>
+
+    <ItemGroup Condition="$(TargetFramework.Contains('-android'))">
+        <PackageReference Include="Xamarin.GooglePlayServices.Nearby" />
+        <!--
+            Google Play services brings androidx.fragment 1.9, which absorbed fragment-ktx. MAUI apps still carry
+            fragment-ktx 1.8, and the two define the same classes (D8: "defined multiple times") - lift it to match.
+        -->
+        <PackageReference Include="Xamarin.AndroidX.Fragment.Ktx" />
+    </ItemGroup>
+
+    <!--
+        The native bridge to Google's NearbyConnections (Swift). native/ShinyNearbyBridge/build.sh builds it; CI does before packing.
+        It packs with the assembly (the .resources sidecar), so apps get it from the package.
+    -->
+    <PropertyGroup Condition="$(TargetFramework.Contains('-ios')) Or $(TargetFramework.Contains('-macos'))">
+        <!-- only binding projects pack a NativeReference beside the assembly (the .resources sidecar) -->
+        <IsBindingProject>true</IsBindingProject>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Remove="Binding\**\*.cs" />
+    </ItemGroup>
+    <ItemGroup Condition="$(TargetFramework.Contains('-ios')) Or $(TargetFramework.Contains('-macos'))">
+        <ObjcBindingApiDefinition Include="Binding\ApiDefinition.cs" />
+    </ItemGroup>
+    <PropertyGroup>
+        <NearbyBridgePlatform Condition="$(TargetFramework.Contains('-ios'))">ios</NearbyBridgePlatform>
+        <NearbyBridgePlatform Condition="$(TargetFramework.Contains('-macos'))">macos</NearbyBridgePlatform>
+        <NearbyBridge>$(MSBuildThisFileDirectory)..\..\native\ShinyNearbyBridge\build\$(NearbyBridgePlatform)\ShinyNearbyBridge.xcframework</NearbyBridge>
+    </PropertyGroup>
+    <ItemGroup Condition="$(TargetFramework.Contains('-ios')) Or $(TargetFramework.Contains('-macos'))">
+        <NativeReference Include="$(NearbyBridge)">
+            <Kind>Framework</Kind>
+            <SmartLink>False</SmartLink>
+            <Frameworks>Foundation Network CoreBluetooth Security SystemConfiguration</Frameworks>
+            <LinkerFlags>-lc++</LinkerFlags>
+        </NativeReference>
+    </ItemGroup>
+    <Target Name="RequireNearbyBridge" BeforeTargets="Build;_PrepareNativeReferences" Condition="($(TargetFramework.Contains('-ios')) Or $(TargetFramework.Contains('-macos'))) And !Exists('$(NearbyBridge)')">
+        <Error Text="ShinyNearbyBridge.xcframework is missing - run native/ShinyNearbyBridge/build.sh first (it builds Google's NearbyConnections for iOS and macOS)" />
+    </Target>
+
+    <ItemGroup Condition="!$(TargetFramework.Contains('-android'))">
+        <Compile Remove="Platforms\Android\**\*.cs" />
+    </ItemGroup>
+    <ItemGroup Condition="!$(TargetFramework.Contains('-ios')) And !$(TargetFramework.Contains('-macos'))">
+        <Compile Remove="Platforms\Apple\**\*.cs" />
+    </ItemGroup>
+</Project>

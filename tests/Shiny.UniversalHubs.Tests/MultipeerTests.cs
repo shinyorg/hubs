@@ -70,6 +70,7 @@ public class MultipeerTests : IAsyncLifetime
                 o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
             })
             .Multipeer(ServiceType)
+            .AllowDynamicHubs(o => o.ServiceTypes.Add(MdnsServiceType))
             .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
             .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType)
         );
@@ -115,6 +116,30 @@ public class MultipeerTests : IAsyncLifetime
             .WaitAsync(TimeSpan.FromSeconds(5));
 
 
+    [Fact]
+    public async Task DynamicHubsAreServedOverMultipeer()
+    {
+        const string dynamicUuid = "6e400010-b5a3-f393-e0a9-e50e24dcca9e";
+        var handler = new DynamicHubTests.ScriptedHandler();
+        var hub = this.app.Services.GetRequiredService<IDynamicHubs>().Add(new DynamicHubDefinition("game", dynamicUuid, MdnsServiceType), handler);
+        Assert.Equal(HubTransports.Multipeer, await hub.Start(HubTransports.Multipeer));
+
+        var client = this.CreateClient<IDynamicTestHub>(dynamicUuid);
+        await client.Connect(await Find(client), new HubConnectOptions("Mia") { Allowed = HubTransports.Multipeer });
+
+        Assert.Equal(HubTransports.Multipeer, client.Transport);
+        Assert.Equal(new Payload("mc", 7), await client.Hub.Echo(new Payload("mc", 7)));
+        Assert.Contains("connected:Mia:Multipeer", handler.Log);
+
+        var messages = new List<string>();
+        client.Hub.Message += m => { lock (messages) messages.Add(m); };
+        await hub.Clients.All.Send("Message", ["\"over the air\""u8.ToArray()]);
+        for (var i = 0; i < 100 && messages.Count == 0; i++)
+            await Task.Delay(20);
+        Assert.Equal(["over the air"], messages);
+    }
+
+
     async Task<IUniversalHubClient<ITestHub>> Connect(string name = "Alice")
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
@@ -150,7 +175,7 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Equal("TestHost", ad.DisplayName);
         Assert.Equal("host-1", ad.Info[MultipeerProtocol.InfoHostId]);
         Assert.Equal("TestHost", ad.Info[MultipeerProtocol.InfoName]);
-        Assert.Equal(MultipeerProtocol.Version.ToString(), ad.Info[MultipeerProtocol.InfoProtocol]);
+        Assert.Equal(PeerProtocol.Version.ToString(), ad.Info[MultipeerProtocol.InfoProtocol]);
         Assert.Equal(new[] { CharacteristicUuid, OtherCharacteristicUuid }.Order(), ad.Info[MultipeerProtocol.InfoHubs].Split(',').Order());
     }
 
@@ -603,24 +628,24 @@ public class MultipeerTests : IAsyncLifetime
     {
         var raw = await RawSession.Open(this.network);
 
-        raw.Send(MultipeerProtocol.Encode(MultipeerMessageKind.Handshake, 1, CharacteristicUuid, new HubHandshake(99, "Future", null, null), MultipeerJsonContext.Default.HubHandshake));
-        var refused = (await raw.Next()).Read(MultipeerJsonContext.Default.MultipeerHandshakeReply);
+        raw.Send(PeerProtocol.Encode(PeerMessageKind.Handshake, 1, CharacteristicUuid, new HubHandshake(99, "Future", null, null), PeerJsonContext.Default.HubHandshake));
+        var refused = (await raw.Next()).Read(PeerJsonContext.Default.PeerHandshakeReply);
         Assert.False(refused.Accepted);
         Assert.Contains("protocol version 99", refused.Reason);
 
         raw = await RawSession.Open(this.network);
-        raw.Send(MultipeerProtocol.Encode(MultipeerMessageKind.Handshake, 1, CharacteristicUuid, new HubHandshake(MultipeerProtocol.Version, "Raw", null, null), MultipeerJsonContext.Default.HubHandshake));
-        var reply = (await raw.Next()).Read(MultipeerJsonContext.Default.MultipeerHandshakeReply);
+        raw.Send(PeerProtocol.Encode(PeerMessageKind.Handshake, 1, CharacteristicUuid, new HubHandshake(PeerProtocol.Version, "Raw", null, null), PeerJsonContext.Default.HubHandshake));
+        var reply = (await raw.Next()).Read(PeerJsonContext.Default.PeerHandshakeReply);
         Assert.True(reply.Accepted);
         Assert.Equal("host-1", reply.HostId);
         Assert.True(reply.Files);
         Assert.Equal(64 * 1024, reply.MediaMaxPacketSize);
 
-        raw.Send(MultipeerProtocol.Encode(MultipeerMessageKind.Invoke, 2, "NoSuchMethod", []));
+        raw.Send(PeerProtocol.Encode(PeerMessageKind.Invoke, 2, "NoSuchMethod", []));
         var error = await raw.Next();
-        Assert.Equal(MultipeerMessageKind.Error, error.Kind);
+        Assert.Equal(PeerMessageKind.Error, error.Kind);
         Assert.Equal(2u, error.Id);
-        Assert.Equal("HubMethodNotFound", error.Read(MultipeerJsonContext.Default.MultipeerError).Type);
+        Assert.Equal("HubMethodNotFound", error.Read(PeerJsonContext.Default.PeerError).Type);
     }
 
 
@@ -628,30 +653,30 @@ public class MultipeerTests : IAsyncLifetime
     public async Task CallsBeforeTheHandshakeAreRefused()
     {
         var raw = await RawSession.Open(this.network);
-        raw.Send(MultipeerProtocol.Encode(MultipeerMessageKind.Invoke, 7, "WhoAmI", []));
+        raw.Send(PeerProtocol.Encode(PeerMessageKind.Invoke, 7, "WhoAmI", []));
 
         var error = await raw.Next();
-        Assert.Equal(MultipeerMessageKind.Error, error.Kind);
-        Assert.Contains("Handshake required", error.Read(MultipeerJsonContext.Default.MultipeerError).Message);
+        Assert.Equal(PeerMessageKind.Error, error.Kind);
+        Assert.Contains("Handshake required", error.Read(PeerJsonContext.Default.PeerError).Message);
     }
 
 
     [Fact]
     public void MessagesRoundTrip()
     {
-        var bytes = MultipeerProtocol.Encode(MultipeerMessageKind.Push, 0xDEADBEEF, "Moved", new byte[] { 4, 5, 6 });
-        var message = MultipeerProtocol.Decode(bytes);
+        var bytes = PeerProtocol.Encode(PeerMessageKind.Push, 0xDEADBEEF, "Moved", new byte[] { 4, 5, 6 });
+        var message = PeerProtocol.Decode(bytes);
 
-        Assert.Equal(MultipeerMessageKind.Push, message.Kind);
+        Assert.Equal(PeerMessageKind.Push, message.Kind);
         Assert.Equal(0xDEADBEEF, message.Id);
         Assert.Equal("Moved", message.Name);
         Assert.Equal(new byte[] { 4, 5, 6 }, message.Payload.ToArray());
 
         bytes[0] = 99;
-        Assert.Throws<BleHubProtocolException>(() => MultipeerProtocol.Decode(bytes));
-        Assert.Throws<BleHubProtocolException>(() => MultipeerProtocol.Decode(new byte[3]));
-        Assert.Equal(42u, MultipeerProtocol.ReadFileResourceId(MultipeerProtocol.FileResourceName(42)));
-        Assert.Null(MultipeerProtocol.ReadFileResourceId("something-else"));
+        Assert.Throws<BleHubProtocolException>(() => PeerProtocol.Decode(bytes));
+        Assert.Throws<BleHubProtocolException>(() => PeerProtocol.Decode(new byte[3]));
+        Assert.Equal(42u, PeerProtocol.ReadFileResourceId(PeerProtocol.FileResourceName(42)));
+        Assert.Null(PeerProtocol.ReadFileResourceId("something-else"));
     }
 
 
@@ -694,10 +719,11 @@ public class MultipeerTests : IAsyncLifetime
 
 
     [Theory]
-    [InlineData(HubTransports.Http, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble })]
-    [InlineData(HubTransports.Ble, new[] { HubTransports.Ble, HubTransports.Http, HubTransports.Multipeer })]
-    [InlineData(HubTransports.Multipeer, new[] { HubTransports.Multipeer, HubTransports.Http, HubTransports.Ble })]
-    [InlineData(HubTransports.All, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble })]
+    [InlineData(HubTransports.Http, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble })]
+    [InlineData(HubTransports.Ble, new[] { HubTransports.Ble, HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby })]
+    [InlineData(HubTransports.Multipeer, new[] { HubTransports.Multipeer, HubTransports.Http, HubTransports.Nearby, HubTransports.Ble })]
+    [InlineData(HubTransports.Nearby, new[] { HubTransports.Nearby, HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble })]
+    [InlineData(HubTransports.All, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble })]
     public void TransportsAreTriedPreferredFirst(HubTransports prefer, HubTransports[] expected)
         => Assert.Equal(expected, new HubConnectOptions { Prefer = prefer }.Order);
 
@@ -728,10 +754,10 @@ public class MultipeerTests : IAsyncLifetime
     /// <summary>
     /// A session to the host with no hub client on top - what a client on another protocol version would look like
     /// </summary>
-    sealed class RawSession : IMultipeerConnectionHandler
+    sealed class RawSession : IPeerConnectionHandler
     {
-        readonly Channel<MultipeerMessage> received = Channel.CreateUnbounded<MultipeerMessage>();
-        IMultipeerConnection connection = null!;
+        readonly Channel<PeerMessage> received = Channel.CreateUnbounded<PeerMessage>();
+        IPeerConnection connection = null!;
 
         public static async Task<RawSession> Open(FakeMultipeerNetwork network)
         {
@@ -743,9 +769,9 @@ public class MultipeerTests : IAsyncLifetime
 
         public void Send(byte[] message) => this.connection.Send(message);
 
-        public async Task<MultipeerMessage> Next() => await this.received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        public async Task<PeerMessage> Next() => await this.received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
-        public void Received(ReadOnlyMemory<byte> message) => this.received.Writer.TryWrite(MultipeerProtocol.Decode(message));
+        public void Received(ReadOnlyMemory<byte> message) => this.received.Writer.TryWrite(PeerProtocol.Decode(message));
         public void FileProgress(string name, double fraction) { }
         public void FileReceived(string name, string? path, Exception? error) { }
         public void Closed() => this.received.Writer.TryComplete();

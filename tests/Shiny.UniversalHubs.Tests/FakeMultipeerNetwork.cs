@@ -38,7 +38,7 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
     }
 
 
-    public IDisposable Advertise(string serviceType, string displayName, IReadOnlyDictionary<string, string> info, Action<IMultipeerConnection> accepted)
+    public IDisposable Advertise(string serviceType, string displayName, IReadOnlyDictionary<string, string> info, Action<IPeerConnection> accepted)
     {
         var ad = new FakeAdvertisement(serviceType, displayName, info, accepted);
         List<IObserver<MultipeerSighting>> watching;
@@ -84,7 +84,7 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
     });
 
 
-    public Task<IMultipeerConnection> Connect(object peer, TimeSpan timeout, CancellationToken cancellationToken)
+    public Task<IPeerConnection> Connect(object peer, TimeSpan timeout, CancellationToken cancellationToken)
     {
         // like a persisted MCPeerID, a host is the same peer across re-advertisements
         var name = ((FakePeer)peer).DisplayName;
@@ -100,7 +100,7 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
             this.sessions.Add((client, host));
 
         ad.Accepted(host);
-        return Task.FromResult<IMultipeerConnection>(client);
+        return Task.FromResult<IPeerConnection>(client);
     }
 }
 
@@ -108,10 +108,10 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
 internal sealed record FakePeer(string DisplayName);
 
 
-internal sealed record FakeAdvertisement(string ServiceType, string DisplayName, IReadOnlyDictionary<string, string> Info, Action<IMultipeerConnection> Accepted);
+internal sealed record FakeAdvertisement(string ServiceType, string DisplayName, IReadOnlyDictionary<string, string> Info, Action<IPeerConnection> Accepted);
 
 
-internal sealed class FakeMultipeerConnection : MultipeerConnectionBase
+internal sealed class FakeMultipeerConnection : PeerConnectionBase
 {
     readonly Channel<Action> inbox = Channel.CreateUnbounded<Action>(new UnboundedChannelOptions { SingleReader = true });
     readonly string remoteName;

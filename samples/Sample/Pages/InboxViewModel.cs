@@ -48,22 +48,53 @@ public partial class InboxViewModel(
 
     public IReadOnlyList<string> VideoCodecs => CallService.VideoCodecChoices;
 
+    public IReadOnlyList<string> ConnectChoices => PlayerSettings.ConnectChoices;
+    public bool IsMultipeerSupported => PlayerSettings.IsMultipeerSupported;
+    public bool IsNearbySupported => PlayerSettings.IsNearbySupported;
+
     /// <summary>
-    /// The video codec this phone offers on calls - force H264 or Jpeg to test each
+    /// How to reach people: Auto, or only Wi-Fi, Multipeer, Nearby or Bluetooth
     /// </summary>
-    /// <summary>
-    /// Reach people over Bluetooth when they're nearby, even if they're on the same Wi-Fi
-    /// </summary>
-    public bool PreferBluetooth
+    public string ConnectChoice
     {
-        get => settings.PreferBluetooth;
+        get => settings.ConnectChoice;
         set
         {
-            settings.PreferBluetooth = value;
+            settings.ConnectChoice = value;
             this.OnPropertyChanged();
         }
     }
 
+    /// <summary>
+    /// What others can reach this device's chat and games over
+    /// </summary>
+    public bool BroadcastBle
+    {
+        get => settings.BroadcastOver.HasFlag(HubTransports.Ble);
+        set => this.SetBroadcast(HubTransports.Ble, value);
+    }
+
+    public bool BroadcastWifi
+    {
+        get => settings.BroadcastOver.HasFlag(HubTransports.Http);
+        set => this.SetBroadcast(HubTransports.Http, value);
+    }
+
+    public bool BroadcastMultipeer
+    {
+        get => settings.BroadcastOver.HasFlag(HubTransports.Multipeer);
+        set => this.SetBroadcast(HubTransports.Multipeer, value);
+    }
+
+    public bool BroadcastNearby
+    {
+        get => settings.BroadcastOver.HasFlag(HubTransports.Nearby);
+        set => this.SetBroadcast(HubTransports.Nearby, value);
+    }
+
+    /// <summary>
+    /// The video codec this phone offers on calls - force H264 or Jpeg to test each
+    /// </summary>
     public string VideoCodec
     {
         get => calls.VideoCodec;
@@ -77,15 +108,7 @@ public partial class InboxViewModel(
 
     public void OnAppearing()
     {
-        var over = chat.HostedOver;
-        this.OpenOn = over == HubTransports.None
-            ? "⚠️ Others can't reach you - check Bluetooth and Wi-Fi"
-            : "Others can reach you over " + String.Join(" + ", new[]
-            {
-                over.HasFlag(HubTransports.Ble) ? "🔵 Bluetooth" : null,
-                over.HasFlag(HubTransports.Http) ? "📶 Wi-Fi" : null,
-                over.HasFlag(HubTransports.Multipeer) ? "📡 Multipeer" : null
-            }.Where(x => x != null));
+        this.ShowOpenOn();
 
         this.People.Clear();
         foreach (var conversation in chat.Conversations)
@@ -97,6 +120,48 @@ public partial class InboxViewModel(
 
         chat.Tunnel.PropertyChanged += this.OnTunnelChanged;
         this.OnTunnelChanged(null, new PropertyChangedEventArgs(null));
+    }
+
+
+    void ShowOpenOn()
+    {
+        var over = chat.HostedOver;
+        this.OpenOn = over == HubTransports.None
+            ? "⚠️ Others can't reach you - check Bluetooth and Wi-Fi"
+            : "Others can reach you over " + String.Join(" + ", new[]
+            {
+                over.HasFlag(HubTransports.Ble) ? "🔵 Bluetooth" : null,
+                over.HasFlag(HubTransports.Http) ? "📶 Wi-Fi" : null,
+                over.HasFlag(HubTransports.Multipeer) ? "📡 Multipeer" : null,
+                over.HasFlag(HubTransports.Nearby) ? "🛰️ Nearby" : null
+            }.Where(x => x != null));
+    }
+
+
+    async void SetBroadcast(HubTransports transport, bool on)
+    {
+        var over = on ? settings.BroadcastOver | transport : settings.BroadcastOver & ~transport;
+        if (over == settings.BroadcastOver)
+            return;
+
+        if (over == HubTransports.None)
+        {
+            // the switch flips back - there must be some way in
+            this.OnPropertyChanged(String.Empty);
+            await shell.Dialogs.Alert("Broadcast over", "Keep at least one way open");
+            return;
+        }
+
+        settings.BroadcastOver = over;
+        try
+        {
+            await chat.Reopen();
+        }
+        catch (Exception ex)
+        {
+            await shell.Dialogs.Alert("Could not reopen the chat", ex.Message);
+        }
+        this.ShowOpenOn();
     }
 
 

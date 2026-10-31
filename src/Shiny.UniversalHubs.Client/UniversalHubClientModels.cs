@@ -5,12 +5,12 @@ using Shiny.Net.HttpServer.Discovery;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A host found over BLE, Wi-Fi, Multipeer or several of them. <see cref="UniversalHubClient{TContract}.DiscoverAll"/>
+/// A host found over BLE, Wi-Fi, Multipeer, Nearby or several of them. <see cref="UniversalHubClient{TContract}.DiscoverAll"/>
 /// raises a fresh snapshot whenever any side changes; when <see cref="Transports"/> is None the host has gone.
 /// </summary>
 /// <param name="Key">Stable for one host across every transport - its advertised name</param>
 /// <param name="Name">The host's name</param>
-/// <param name="HostId">From mDNS or Multipeer, when the host has been seen there</param>
+/// <param name="HostId">From mDNS, Multipeer or Nearby, when the host has been seen there</param>
 /// <param name="Ble">Set while the host is seen over BLE</param>
 /// <param name="Http">Set while the host is seen over mDNS</param>
 public sealed record HubHostInfo(
@@ -26,10 +26,16 @@ public sealed record HubHostInfo(
     /// </summary>
     public MultipeerHost? Multipeer { get; init; }
 
+    /// <summary>
+    /// Set while the host is seen over Nearby Connections (Shiny.UniversalHubs.Nearby)
+    /// </summary>
+    public NearbyHost? Nearby { get; init; }
+
     public HubTransports Transports =>
         (this.Ble != null ? HubTransports.Ble : HubTransports.None)
         | (this.Http != null ? HubTransports.Http : HubTransports.None)
-        | (this.Multipeer != null ? HubTransports.Multipeer : HubTransports.None);
+        | (this.Multipeer != null ? HubTransports.Multipeer : HubTransports.None)
+        | (this.Nearby != null ? HubTransports.Nearby : HubTransports.None);
 
     /// <summary>
     /// Signal strength, when seen over BLE
@@ -73,7 +79,7 @@ public sealed record HubConnectOptions(
 {
     /// <summary>
     /// Tried first when the host is reachable more than one way. Wi-Fi by default: more range, more bandwidth, no MTU.
-    /// The rest follow in the order Wi-Fi, Multipeer, BLE.
+    /// The rest follow in the order Wi-Fi, Multipeer, Nearby, BLE.
     /// </summary>
     public HubTransports Prefer { get; init; } = HubTransports.Http;
 
@@ -83,14 +89,15 @@ public sealed record HubConnectOptions(
     public HubTransports Allowed { get; init; } = HubTransports.All;
 
     /// <summary>
-    /// The order transports are tried in: <see cref="Prefer"/>, then Wi-Fi, Multipeer and BLE. Wi-Fi comes first among the
-    /// rest because Android peers can use it too; Multipeer beats BLE because it is Wi-Fi fast with no network at all.
+    /// The order transports are tried in: <see cref="Prefer"/>, then Wi-Fi, Multipeer, Nearby and BLE. Wi-Fi comes first
+    /// among the rest because every peer can use it; Multipeer and Nearby beat BLE because they reach Wi-Fi speed with no
+    /// network at all, and Multipeer comes before Nearby because it is the OS's own on Apple devices.
     /// </summary>
     internal IReadOnlyList<HubTransports> Order
     {
         get
         {
-            HubTransports[] order = [HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble];
+            HubTransports[] order = [HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble];
             return order.Contains(this.Prefer)
                 ? [this.Prefer, .. order.Where(x => x != this.Prefer)]
                 : order;
@@ -136,9 +143,22 @@ public class UniversalHubClientOptions
     public Func<HttpMessageHandler>? HttpMessageHandlerFactory { get; set; }
 
     /// <summary>
-    /// Transports beyond BLE and HTTP, from add-on packages (Shiny.UniversalHubs.Multipeer's <c>o.Multipeer(...)</c>)
+    /// Transports beyond BLE and HTTP, from add-on packages (<c>o.Multipeer(...)</c>, <c>o.Nearby(...)</c>)
     /// </summary>
     internal List<Func<IServiceProvider, IUniversalHubClientTransport>> Transports { get; } = new();
+
+    readonly HashSet<HubTransports> addOns = new();
+
+    /// <summary>
+    /// Adds an add-on transport - each one once per hub client
+    /// </summary>
+    internal void AddTransport(HubTransports transport, string name, Func<IServiceProvider, IUniversalHubClientTransport> factory)
+    {
+        if (!this.addOns.Add(transport))
+            throw new InvalidOperationException($"{name} is already set up for this hub client");
+
+        this.Transports.Add(factory);
+    }
 
     /// <summary>
     /// Registrations those add-on transports need
@@ -156,6 +176,19 @@ public sealed record MultipeerHost(string DisplayName, IReadOnlyDictionary<strin
 {
     /// <summary>
     /// The native peer (an MCPeerID) - only the Multipeer package knows what to do with it
+    /// </summary>
+    internal object? Peer { get; init; }
+}
+
+
+/// <summary>
+/// A host seen over Nearby Connections. The endpoint itself stays inside Shiny.UniversalHubs.Nearby.
+/// </summary>
+/// <param name="EndpointName">The host's advertised name</param>
+public sealed record NearbyHost(string EndpointName)
+{
+    /// <summary>
+    /// The native endpoint - only the Nearby package knows what to do with it
     /// </summary>
     internal object? Peer { get; init; }
 }

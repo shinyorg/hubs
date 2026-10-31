@@ -87,6 +87,19 @@ public class ChatService
 
     public QuickTunnel Tunnel => this.tunnel;
 
+
+    /// <summary>
+    /// Reopens the chat over <see cref="PlayerSettings.BroadcastOver"/> - StartHub only adds transports, so it stops
+    /// first. Visitors are dropped and come back over whatever is still open.
+    /// </summary>
+    public async Task<HubTransports> Reopen()
+    {
+        await this.host.StopHub<ChatHub>("The chat is reopening");
+        var over = await this.host.StartHub<ChatHub>(this.settings.BroadcastOver);
+        this.logger.LogInformation("Chat reopened over {Transports}", over);
+        return over;
+    }
+
     /// <summary>
     /// The conversation on screen - it doesn't raise notifications
     /// </summary>
@@ -127,7 +140,7 @@ public class ChatService
         try
         {
             this.hostOptions.LocalName ??= ShortName(this.settings.Name);
-            var over = await this.host.StartHub<ChatHub>(HubTransports.All);
+            var over = await this.host.StartHub<ChatHub>(this.settings.BroadcastOver);
             this.logger.LogInformation("Chat open over {Transports}", over);
         }
         catch (Exception ex)
@@ -208,16 +221,14 @@ public class ChatService
         if (this.client.Status != BleHubClientStatus.Disconnected)
             await this.client.Disconnect();
 
-        this.logger.LogInformation("Visiting {Host} - reachable over {Transports}, preferring {Prefer}", info.Name, info.Transports, this.PreferredTransport);
-        await this.client.Connect(info, new HubConnectOptions(
+        this.logger.LogInformation("Visiting {Host} - reachable over {Transports}, connecting over {Over}", info.Name, info.Transports, this.settings.ConnectChoice);
+
+        // People → More options → "Connect over": Auto, or only the one picked
+        await this.client.Connect(info, this.settings.Route(new HubConnectOptions(
             this.settings.Name,
             AppInfo.Current.VersionString,
             new Dictionary<string, string> { [InstallIdProperty] = PlayerSettings.InstallId }
-        )
-        {
-            // People → More options → "Connect over Bluetooth when possible"; Wi-Fi stays the fallback
-            Prefer = this.PreferredTransport
-        }, cancellationToken);
+        )), cancellationToken);
 
         var id = "out:" + info.Key;
         var name = this.client.HostName ?? info.Name;
@@ -235,17 +246,15 @@ public class ChatService
     }
 
 
-    HubTransports PreferredTransport => this.settings.PreferBluetooth ? HubTransports.Ble : HubTransports.Http;
-
-
     /// <summary>
-    /// The chat being visited is on the other transport than the one now preferred, and the host is reachable over the
-    /// preferred one - visiting again switches
+    /// The chat being visited is on another transport than the one picked to connect over, and the host is reachable
+    /// over the picked one - visiting again switches. Auto keeps whatever connected.
     /// </summary>
     public bool ShouldSwitchTransport(HubHostInfo host)
-        => this.client.Status == BleHubClientStatus.Connected
-           && this.client.Transport != this.PreferredTransport
-           && host.Transports.HasFlag(this.PreferredTransport);
+        => this.settings.ConnectOver is var over and not HubTransports.None
+           && this.client.Status == BleHubClientStatus.Connected
+           && this.client.Transport != over
+           && host.Transports.HasFlag(over);
 
 
     // ---------- both ----------
@@ -453,6 +462,7 @@ public partial class Conversation(string id, string name, bool isVisiting) : Obs
             HubTransports.Ble => "🔵 here over Bluetooth",
             HubTransports.Http => "📶 here over Wi-Fi / internet",
             HubTransports.Multipeer => "📡 here over Multipeer",
+            HubTransports.Nearby => "🛰️ here over Nearby",
             _ => "here"
         };
         this.OnlineChanged?.Invoke(this, EventArgs.Empty);

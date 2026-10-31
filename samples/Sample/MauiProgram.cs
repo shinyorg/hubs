@@ -42,6 +42,13 @@ public static class MauiProgram
     /// </summary>
     public const string MultipeerServiceType = "unihub-mc";
 
+    /// <summary>
+    /// The Nearby Connections service id: Android, iPhones and Macs reach each other through it with no shared network.
+    /// One per app, for the host and every hub client. NSBonjourServices lists _84102701D61D._tcp
+    /// (NearbyProtocol.BonjourServices).
+    /// </summary>
+    public const string NearbyServiceId = "org.shiny.universalhubs.sample";
+
 
     public static MauiApp CreateMauiApp()
     {
@@ -71,10 +78,11 @@ public static class MauiProgram
         // every chat conversation and every hosted game is an actor - conversations are kept on disk, games in memory
         builder.Services.AddShinyActors(actors => actors.UseFileStorage(Path.Combine(FileSystem.AppDataDirectory, "actors")));
 
-        // ---- host: a universal server - GameHub served over BLE, HTTP and Multipeer at once (adds the BLE hosting stack too) ----
+        // ---- host: a universal server - GameHub served over BLE, HTTP, Multipeer and Nearby at once (adds the BLE hosting stack too) ----
         builder.Services.AddUniversalServer(server => server
             .ServiceUuid(ServiceUuid)   // the one BLE service every hub lives in - clients use the same one
             .Multipeer(MultipeerServiceType)   // Apple to Apple with no network: Wi-Fi speed instead of BLE
+            .Nearby(NearbyServiceId)            // Android and Apple with no network, through Google's Nearby Connections
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
                 ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
@@ -100,16 +108,18 @@ public static class MauiProgram
             })   // started with the app, and left running
         );
 
-        // ---- client: discovers hosts over BLE, mDNS and Multipeer, connects over whichever works (adds the BLE stack too) ----
+        // ---- client: discovers hosts over BLE, mDNS, Multipeer and Nearby, connects over whichever works (adds the BLE stack too) ----
         builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
         {
             o.ServiceUuid = ServiceUuid;
             o.Multipeer(MultipeerServiceType);
+            o.Nearby(NearbyServiceId);
         });
         builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
         {
             o.ServiceUuid = ServiceUuid;
             o.Multipeer(MultipeerServiceType);
+            o.Nearby(NearbyServiceId);
         });
 
         // ---- calls: FaceTime the person in a chat, over Wi-Fi or Bluetooth ----

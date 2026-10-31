@@ -14,6 +14,8 @@ Both kinds of client share the same hub, groups and pushes.
   audio and video run on either transport. The sample uses it for FaceTime-style calls.
 - **Multipeer** (optional, Apple only): add `Shiny.UniversalHubs.Multipeer` and iPhones, iPads and Macs also reach each
   other over Apple's MultipeerConnectivity, at Wi-Fi speed with no shared network at all. See [Multipeer](#multipeer-apple-devices-no-network).
+- **Nearby** (optional, Android, iOS and macOS): add `Shiny.UniversalHubs.Nearby` and Android phones, iPhones and Macs
+  reach each other over Google's Nearby Connections with no shared network. See [Nearby](#nearby-android-ios-and-macos-no-network).
 
 | Package | What it is |
 |---|---|
@@ -21,6 +23,7 @@ Both kinds of client share the same hub, groups and pushes.
 | `Shiny.UniversalHubs.Client` | `AddUniversalHubClient<TContract>()`, `IUniversalHubClient<TContract>` |
 | `Shiny.UniversalHubs` | The shared Wi-Fi wire protocol. Comes with both. |
 | `Shiny.UniversalHubs.Multipeer` | `server.Multipeer(...)` and `o.Multipeer(...)`: the MultipeerConnectivity transport for iOS, Mac Catalyst and macOS |
+| `Shiny.UniversalHubs.Nearby` | `server.Nearby(...)` and `o.Nearby(...)`: the Nearby Connections transport for Android, iOS and macOS |
 
 ## Host
 
@@ -55,8 +58,8 @@ services.AddUniversalServer(server => server
   `NotifyOnNotification`), because hubs are used in the foreground. Call `AddBluetoothLE(appleConfig)` *before* the client
   registration to use your own, because the first registration wins. On plain `net10.0` (Linux, tests), register an
   `IBleHostingManager` / `IBleManager` yourself.
-- **Registration rules:** `AddUniversalServer` can only be called once and needs at least one hub. It doesn't start
-  anything; `IUniversalHubHost` starts and stops both transports.
+- **Registration rules:** `AddUniversalServer` can only be called once and needs at least one hub (or
+  [`AllowDynamicHubs`](#dynamic-hubs)). It doesn't start anything; `IUniversalHubHost` starts and stops both transports.
 - **Lower-level API:** blehubs' `AddBleHubServer` + `AddShinyHttpServer(http => http.AddUniversalHubs().AddHub<THub>())`
   still works, and it's what the universal server calls.
 
@@ -145,12 +148,71 @@ services.AddUniversalServer(server => server
   and QR codes.
 - **Authentication:** put it in front of anything you share on the internet.
 
+### Dynamic hubs
+
+A dynamic hub is defined while the app runs (by a downloaded web app, say) and served over BLE, Wi-Fi and Multipeer
+beside the compiled hubs. Its methods are dispatched by name, and argument and result values are passed through as the
+exact bytes the caller's `IBleHubSerializer` wrote (JSON with the default serializer, which Wi-Fi needs anyway). Clients
+are unchanged: a compiled contract reaches it at `{Endpoint}/{characteristicUuid}`, like any hub.
+
+```csharp
+services.AddUniversalServer(server => server
+    .AllowDynamicHubs(o =>
+    {
+        o.ServiceTypes.Add("_myapp._tcp");   // empty = only UniversalHubHostOptions.ServiceType
+        o.MaxHubs = 6;                       // the default - an mDNS TXT record fits about six
+    }));                                     // compiled hubs are optional now
+
+public class Scripts(IDynamicHubs hubs)
+{
+    public async Task Open(IDynamicHubHandler handler)
+    {
+        var hub = hubs.Add(new DynamicHubDefinition("game", CharacteristicUuid, "_myapp._tcp") { MaxClients = 4 }, handler);
+        await hub.Start();                                                    // HubTransports.All by default
+        await hub.Clients.All.Send("Opened", [Encoding.UTF8.GetBytes("\"hi\"")]);  // arguments already serialized
+    }
+
+    public Task Close() => hubs.Remove("game", "Game over");
+}
+```
+
+- **The handler:** `IDynamicHubHandler` answers `GetMethodKind(method)` (`NotFound`, `Invoke` or `Stream`), runs
+  `Invoke(DynamicHubCall)` → `byte[]?` and `Stream` → `IAsyncEnumerable<byte[]>`, and gets `OnConnectedAsync` (throw to
+  refuse the client), `OnDisconnectedAsync` and `OnRenamedAsync`. `DynamicHubCall` has the `Connection`, `Method`,
+  `Arguments`, `ConnectionAborted` and `Abort(reason)`.
+- **`IDynamicHub`:** `Start`/`Stop`, `RunningTransports`, `Connections`, `Groups`, `Clients` and `Disconnect`, like a
+  compiled hub's.
+- **Limits are set in the app:** `Add` throws when the name or characteristic is taken, the service type isn't one of
+  `ServiceTypes`, or `MaxHubs` are added. They're fixed up front because the platform fixes them at build time: iOS lists
+  every mDNS type in `NSBonjourServices`, and there is one BLE service UUID.
+- **BLE:** adding a hub while the GATT service is up changes nothing on air. The service is rebuilt when that hub first
+  starts, and BLE clients of the other hubs are disconnected first (`ServerShutdown`, "The host's hubs changed -
+  reconnect"). A removed hub's characteristic stays in the running service, refusing handshakes, until it's next rebuilt.
+- **Tunnels:** with dynamic hubs on, every other path under the base path is closed to tunnels; a dynamic hub with
+  `AllowTunnel` is reachable.
+
+#### Dynamic hub clients
+
+The other direction: joining a hub whose contract isn't compiled into the app. `AddDynamicHubClients` registers
+`IDynamicHubClients`; each client it creates discovers and connects like any [universal client](#client) and calls by
+name, with values as serialized bytes (JSON with the default serializer). It works against compiled and dynamic hubs.
+
+```csharp
+services.AddDynamicHubClients(o => o.ServiceUuid = ServiceUuid);   // runs again for each client; add-ons (Multipeer) register once
+
+using var client = dynamicClients.Create(CharacteristicUuid, "_myapp._tcp");   // IUniversalHubClient<IDynamicHubCalls>
+client.Hub.Pushed += (name, args) => { /* each argument serialized */ };
+await client.Connect(host, new HubConnectOptions("Allan"));
+var result = await client.Hub.Invoke("Echo", [Encoding.UTF8.GetBytes("\"hi\"")]);   // ReadOnlyMemory<byte>, empty for none
+await foreach (var item in client.Hub.Stream("Count", [Encoding.UTF8.GetBytes("3")])) { }
+```
+
 ### Disconnect reasons
 
 Every disconnect carries a `HubDisconnect`: a `HubDisconnectReason` you can switch on, plus an optional message. It
 means the same thing on every transport, and the host and the client see the same value:
 
-| Reason | BLE | HTTP | Multipeer |
+| Reason | BLE | HTTP | Multipeer and Nearby |
 |---|---|---|---|
 | `ClientDisconnect` | the client called `Disconnect()` (it says goodbye before unsubscribing) | the client closed its line | the client said goodbye, then ended its session |
 | `ClientTimeout` | an unsubscribe without a goodbye, or the client sweep | the line dropped and its resume window ran out | the session ended without a goodbye |
@@ -160,8 +222,8 @@ means the same thing on every transport, and the host and the client see the sam
 
 - **Host:** `UniversalHub.OnDisconnectedAsync(connection, disconnect)` and `IHubContext.ClientDisconnected` carry it.
 - **Client:** `Disconnected`, `StatusChanged` (`e.Disconnect`) and `BleHubDisconnectedException.Disconnect` carry it.
-- **Short drops:** a brief HTTP drop that resumes isn't a disconnect at all. Multipeer has no resume: a dropped session
-  is a `ClientTimeout`.
+- **Short drops:** a brief HTTP drop that resumes isn't a disconnect at all. Multipeer and Nearby have no resume: a
+  dropped session is a `ClientTimeout`.
 
 ## Client
 
@@ -179,14 +241,15 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
     async Task Join(HubHostInfo host)
     {
         await client.Connect(host, new HubConnectOptions("Allan") { Prefer = HubTransports.Http });
-        // client.Transport is Http, Multipeer or Ble
+        // client.Transport is Http, Multipeer, Nearby or Ble
         await client.Hub.MakeMove(4);
     }
 }
 ```
 
 - `Prefer` is tried first when the host is reachable more than one way. The rest follow in the order Wi-Fi, Multipeer,
-  BLE. `Allowed` limits which transports may be used at all.
+  Nearby, BLE. `Allowed` limits which transports may be used at all; `Prefer = Allowed = HubTransports.Nearby` uses
+  only that one.
 - A refusal (host full, `ValidateClient`, not running) is not retried on another transport.
 - A host that restarted listens on a new port, and one that was killed never sent mDNS its goodbye, so discovery can
   still hold its old address. When no address answers, the client looks the host up again by name
@@ -259,28 +322,76 @@ services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp", o =
 - **No resume.** MultipeerConnectivity sessions end when the app goes to the background. A dropped session is a
   disconnect (`ClientTimeout`); reconnect as you would over BLE.
 
+## Nearby (Android, iOS and macOS, no network)
+
+`Shiny.UniversalHubs.Nearby` adds Google's [Nearby Connections](https://developers.google.com/nearby/connections/overview)
+as another transport. Like Multipeer it needs no network and picks the radio itself: Bluetooth, BLE, Wi-Fi LAN, Wi-Fi
+Direct, a hotspot or Wi-Fi Aware. Unlike Multipeer it runs on Android, so it's the way an Android phone and another
+device get more than BLE's bandwidth with no shared network.
+
+```csharp
+// host - one Nearby service id per app, for the host and every hub client
+services.AddUniversalServer(server => server
+    .Nearby("com.mycompany.mygame")
+    .AddHub<GameHub>(CharacteristicUuid, "_mygame._tcp"));
+
+// client
+services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp", o => o.Nearby("com.mycompany.mygame"));
+```
+
+- **Platforms.** Android needs Google Play services. On iOS and macOS the package carries Google's NearbyConnections as a
+  native framework (`ShinyNearbyBridge`). Elsewhere (Windows, Linux, Mac Catalyst) it is skipped like Multipeer on
+  Android, so one registration works everywhere.
+- **Which devices reach which.** Android to Android works with no network at all (Bluetooth, Wi-Fi Direct, hotspots).
+  Android to iPhone or Mac only uses mediums both platforms have in Google's library: Wi-Fi LAN when they share a
+  network works; BLE (the bridge turns on Google's BLE v2) may with no network, but isn't verified yet. Wi-Fi Aware stays
+  off: on iOS it needs devices paired through Apple's own Wi-Fi Aware pairing first. Between Apple devices, Multipeer is
+  tried first.
+- **One service id per app.** Nearby allows one advertisement and one discovery per app, so the host and all its hub
+  clients share one service id and one `NearbyStrategy` (Cluster by default: a device can host and visit at once). A
+  mismatch throws when Nearby starts.
+- **One connection per pair of devices.** Nearby refuses a second connection between the same two devices, so every hub
+  session is a channel inside the one connection, in either direction. A phone in a game and a chat on the same host,
+  or two phones visiting each other's chats, share it. It hangs up two seconds after its last channel closes.
+- **Info.plist** (iOS / macOS) needs `NearbyProtocol.BonjourServices(serviceId)` in `NSBonjourServices`
+  (`_` + the first 6 bytes of SHA-256 of the service id in upper-case hex + `._tcp`), an `NSLocalNetworkUsageDescription`
+  and an `NSBluetoothAlwaysUsageDescription`.
+- **Android permissions** are merged into the manifest by the package. The runtime ones (Bluetooth and nearby Wi-Fi
+  devices on Android 12+, location before) are asked for when Nearby first starts; if they're refused, Nearby is skipped
+  and the other transports carry on.
+- **The advertisement** (Nearby's endpoint info, 131 bytes) holds the host id, a 4-byte tag per running hub and the
+  host's name, cut to fit. About 20 hubs fit.
+- **What the hub sees:** connection ids are `nb:{id}`, `connection.Transport` is `Nearby`, and `connection.Nearby` has
+  the name the client connected under (`NearbyClientOptions.EndpointName`, the hub client name unless set).
+- **Messages over 32 KB** (Nearby's limit on one payload) travel in pieces and arrive whole. **Files** are Nearby file
+  payloads, under the same `EnableFileTransfers` and `AuthorizeFile` rules. **Media channels** ride the channel as
+  ordered messages. Renames work, as over Multipeer.
+- **No resume**, as with Multipeer: a dropped connection is a `ClientTimeout`.
+- **Building from source:** run `native/ShinyNearbyBridge/build.sh` once before building the package or an app for iOS
+  or macOS. It builds NearbyConnections' C++ core, which takes a few minutes. Package users don't need it.
+
 ## Platform setup
 
 | | Host | Client |
 |---|---|---|
-| iOS / macOS | `NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`, `NSBonjourServices` = your hubs' mDNS service types, plus `_{type}._tcp` and `_{type}._udp` for the Multipeer service type | the same, plus `NSAppTransportSecurity` / `NSAllowsLocalNetworking` (games are plain HTTP on the LAN) |
-| Android | BLE permissions, `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE` | the same, plus `android:usesCleartextTraffic="true"` |
+| iOS / macOS | `NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`, `NSBonjourServices` = your hubs' mDNS service types, plus `_{type}._tcp` and `_{type}._udp` for the Multipeer service type and `NearbyProtocol.BonjourServices(serviceId)` for Nearby | the same, plus `NSAppTransportSecurity` / `NSAllowsLocalNetworking` (games are plain HTTP on the LAN) |
+| Android | BLE permissions, `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`; Nearby adds its own | the same, plus `android:usesCleartextTraffic="true"` |
 
 ## Things to know
 
 - **Plane, hotel and public Wi-Fi usually isolate clients from each other.** mDNS and device-to-device traffic are
-  blocked there, which is why BLE is the fallback. Between Apple devices, Multipeer works there too.
+  blocked there, which is why BLE is the fallback. Multipeer and Nearby work there too.
 - Hosting runs while the app is in the foreground, the same as BLE hosting.
 - Hub values are carried as JSON over HTTP. They are re-framed, never re-serialized, so `IBleHubSerializer` must produce
-  JSON (the default does). BLE and Multipeer carry them as-is.
+  JSON (the default does). BLE, Multipeer and Nearby carry them as-is.
 - The host still needs a BLE hosting stack registered (`AddBluetoothLeHosting`) even if Bluetooth is off. Wi-Fi-only
   hosting works on a device whose Bluetooth is off or unavailable.
 - An mDNS TXT record fits about six hubs per host.
 
 ## Sample
 
-`samples/Sample` is the Shiny.BluetoothLE.Hubs tic-tac-toe game, hosting over every transport (BLE, Wi-Fi, and
-Multipeer between iPhones and Macs), plus an always-on chat:
+`samples/Sample` is the Shiny.BluetoothLE.Hubs tic-tac-toe game, hosting over every transport (BLE, Wi-Fi, Multipeer
+between iPhones and Macs, and Nearby between any of them), plus an always-on chat:
 
 - **Game:** each hosted game is its own Shiny.Actors `GameActor`. `GameHub` runs only while hosting
   (`StartHub`/`StopHub<GameHub>`). The join list shows how each game is reachable, and the game screen says which

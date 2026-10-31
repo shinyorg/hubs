@@ -22,6 +22,20 @@ public sealed class BleHubArgumentWriter(IBleHubSerializer serializer)
     }
 
 
+    /// <summary>
+    /// Adds a value that is already serialized - exactly as <see cref="IBleHubSerializer"/> wrote it. For hubs dispatched by
+    /// name (IBleHubHandler), which never see the values' types.
+    /// </summary>
+    public BleHubArgumentWriter WriteSerialized(ReadOnlySpan<byte> value)
+    {
+        if (this.values.Count == byte.MaxValue)
+            throw new BleHubException($"A hub call can have at most {byte.MaxValue} arguments");
+
+        this.values.Add(value.ToArray());
+        return this;
+    }
+
+
     public byte[] ToArray()
     {
         var size = 1 + this.values.Sum(x => 4 + x.Length);
@@ -86,7 +100,14 @@ public sealed class BleHubArgumentReader
     }
 
 
-    public T Read<T>()
+    public T Read<T>() => this.serializer.Deserialize<T>(this.ReadSerialized().Span);
+
+
+    /// <summary>
+    /// The next value exactly as the caller's <see cref="IBleHubSerializer"/> wrote it - for hubs dispatched by name
+    /// (IBleHubHandler), which never see the values' types
+    /// </summary>
+    public ReadOnlyMemory<byte> ReadSerialized()
     {
         if (this.read >= this.Count)
             throw new BleHubProtocolException("Read past the last argument");
@@ -100,7 +121,7 @@ public sealed class BleHubArgumentReader
         if (length < 0 || this.offset + length > span.Length)
             throw new BleHubProtocolException("Argument value is truncated");
 
-        var value = this.serializer.Deserialize<T>(span.Slice(this.offset, length));
+        var value = this.data.Slice(this.offset, length);
         this.offset += length;
         this.read++;
         return value;

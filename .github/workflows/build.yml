@@ -31,8 +31,23 @@ jobs:
       uses: actions/setup-dotnet@v6
       with:
           dotnet-version: '10.0.400'
-          # macos: Shiny.UniversalHubs.Multipeer also targets net10.0-macos (AppKit apps)
+          # macos: Shiny.UniversalHubs.Multipeer and .Nearby also target net10.0-macos (AppKit apps)
           workloads: maui-ios, maui-android, maui-maccatalyst, macos
+
+    # Shiny.UniversalHubs.Nearby carries Google's NearbyConnections for iOS and macOS as a native framework. It only
+    # changes with native/ShinyNearbyBridge, so it is cached on that folder's contents.
+    - name: Cache the Nearby bridge
+      id: nearby-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          native/ShinyNearbyBridge/build/ios
+          native/ShinyNearbyBridge/build/macos
+        key: nearby-bridge-${{ hashFiles('native/ShinyNearbyBridge/Package.swift', 'native/ShinyNearbyBridge/Sources/**', 'native/ShinyNearbyBridge/build.sh') }}
+
+    - name: Build the Nearby bridge
+      if: steps.nearby-cache.outputs.cache-hit != 'true'
+      run: native/ShinyNearbyBridge/build.sh
 
     - name: Build
       run: dotnet build Build.slnf /restore -m -property:Configuration=Release -property:PublicRelease=true

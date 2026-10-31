@@ -28,8 +28,8 @@ public static class HostServiceCollectionExtensions
 
         var server = new BleHubServerBuilder();
         configure(server);
-        if (server.Hubs.Count == 0)
-            throw new InvalidOperationException("A hub server needs at least one hub - call AddHub");
+        if (server.Hubs.Count == 0 && !server.HandlerHubsAllowed)
+            throw new InvalidOperationException("A hub server needs at least one hub - call AddHub (or AllowHandlerHubs to add them while the app runs)");
 
         services.AddSingleton<BleHubServerMarker>();
 #if ANDROID || IOS || MACCATALYST
@@ -48,6 +48,7 @@ public static class HostServiceCollectionExtensions
 
         services.TryAddSingleton<BleHubHost>();
         services.TryAddSingleton<IBleHubHost>(sp => sp.GetRequiredService<BleHubHost>());
+        services.TryAddSingleton<IBleHubHandlerHost>(sp => sp.GetRequiredService<BleHubHost>());
         services.TryAddSingleton(sp =>
         {
             var o = new BleHubHostOptions();
@@ -72,6 +73,18 @@ public sealed class BleHubServerBuilder
     internal List<Action<IServiceCollection>> Hubs { get; } = new();
     readonly HashSet<Type> hubTypes = new();
     readonly HashSet<string> characteristics = new(StringComparer.OrdinalIgnoreCase);
+    internal bool HandlerHubsAllowed { get; private set; }
+
+
+    /// <summary>
+    /// Lets the server start with no compiled hubs: hubs are added while the app runs, through IBleHubHandlerHost
+    /// </summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public BleHubServerBuilder AllowHandlerHubs()
+    {
+        this.HandlerHubsAllowed = true;
+        return this;
+    }
 
 
     /// <summary>

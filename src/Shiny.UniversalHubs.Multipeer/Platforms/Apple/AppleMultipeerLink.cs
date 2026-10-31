@@ -22,7 +22,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
     public bool IsSupported => true;
 
 
-    public IDisposable Advertise(string serviceType, string displayName, IReadOnlyDictionary<string, string> info, Action<IMultipeerConnection> accepted)
+    public IDisposable Advertise(string serviceType, string displayName, IReadOnlyDictionary<string, string> info, Action<IPeerConnection> accepted)
     {
         this.CheckPlist(serviceType);
 
@@ -61,7 +61,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
     });
 
 
-    public async Task<IMultipeerConnection> Connect(object peer, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<IPeerConnection> Connect(object peer, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var found = peer as BrowsedPeer ?? throw new ArgumentException("Not a peer this link browsed", nameof(peer));
 
@@ -165,7 +165,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
     }
 
 
-    sealed class AdvertiserDelegate(MCPeerID me, Action<IMultipeerConnection> accepted, ILogger? logger) : MCNearbyServiceAdvertiserDelegate
+    sealed class AdvertiserDelegate(MCPeerID me, Action<IPeerConnection> accepted, ILogger? logger) : MCNearbyServiceAdvertiserDelegate
     {
         public override void DidReceiveInvitationFromPeer(MCNearbyServiceAdvertiser advertiser, MCPeerID peerID, NSData? context, MCNearbyServiceAdvertiserInvitationHandler invitationHandler)
         {
@@ -215,7 +215,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
 /// <summary>
 /// One MCSession with one remote peer
 /// </summary>
-internal sealed class AppleMultipeerConnection : MultipeerConnectionBase
+internal sealed class AppleMultipeerConnection : PeerConnectionBase
 {
     readonly MCSession session;
     readonly MCPeerID remote;

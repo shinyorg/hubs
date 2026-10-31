@@ -49,7 +49,7 @@ public partial class GameViewModel : ObservableObject,
     public string Transport => (this.session.IsHost, this.session.Transports) switch
     {
         (_, HubTransports.None) => "",
-        (true, var over) when !over.HasFlag(HubTransports.Ble) => $"Hosting over {Describe(over)} (Bluetooth is unavailable)",
+        (true, var over) when this.session.Requested.HasFlag(HubTransports.Ble) && !over.HasFlag(HubTransports.Ble) => $"Hosting over {Describe(over)} (Bluetooth is unavailable)",
         (true, var over) => $"Hosting over {Describe(over)}",
         (false, var over) => $"Connected over {Describe(over)}"
     };
@@ -59,6 +59,7 @@ public partial class GameViewModel : ObservableObject,
     {
         over.HasFlag(HubTransports.Http) ? "Wi-Fi" : null,
         over.HasFlag(HubTransports.Multipeer) ? "Multipeer" : null,
+        over.HasFlag(HubTransports.Nearby) ? "Nearby" : null,
         over.HasFlag(HubTransports.Ble) ? "Bluetooth" : null
     }.Where(x => x != null));
     public string[] Emotes { get; } = ["👍", "😂", "😱", "🔥", "🤝"];
@@ -124,9 +125,9 @@ public partial class GameViewModel : ObservableObject,
         try
         {
             if (this.Join == null)
-                await this.session.StartHosting(this.settings.Name, this.settings.AvatarPath);
+                await this.session.StartHosting(this.settings.Name, this.settings.AvatarPath, this.settings.BroadcastOver);
             else
-                await this.session.JoinHost(this.Join, this.settings.Name, this.settings.AvatarPath, this.settings.PreferBluetooth);
+                await this.session.JoinHost(this.Join, this.settings.Name, this.settings.AvatarPath, this.settings);
         }
         catch (Exception ex)
         {

@@ -22,6 +22,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     readonly IServiceProvider services;
     readonly BleHubProtocolOptions options;
     readonly ILogger? logger;
+    readonly Func<object>? createHub;
     CancellationTokenSource lifetime = new();
 
 
@@ -31,10 +32,14 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         IServiceProvider services,
         BleHubProtocolOptions options,
         IBleHubSerializer serializer,
-        ILogger? logger
+        ILogger? logger,
+        string? name = null,
+        Func<object>? createHub = null
     )
     {
         this.registration = registration;
+        this.Name = name ?? registration.HubType.Name;
+        this.createHub = createHub;
         this.dispatcher = dispatcher;
         this.services = services;
         this.options = options;
@@ -44,6 +49,11 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 
 
     public BleHubRegistration Registration => this.registration;
+
+    /// <summary>
+    /// The hub's name in logs and errors - its class name, or the name a handler hub was added under
+    /// </summary>
+    public string Name { get; }
     public Type ContractType => this.dispatcher.ContractType;
     public IBleHubSerializer Serializer { get; }
     public IGroupManager Groups => this;
@@ -142,7 +152,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             return;
 
         var client = peer.Client;
-        this.logger?.LogInformation("Client {Client} left {Hub}: {Reason}", client, this.registration.HubType.Name, disconnect);
+        this.logger?.LogInformation("Client {Client} left {Hub}: {Reason}", client, this.Name, disconnect);
         _ = Task.Run(async () =>
         {
             try
@@ -365,7 +375,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 
             if (rejection == null)
             {
-                this.logger?.LogInformation("Client {Client} connected to {Hub}", client, this.registration.HubType.Name);
+                this.logger?.LogInformation("Client {Client} connected to {Hub}", client, this.Name);
                 this.ClientConnected?.Invoke(this, client);
             }
         }
@@ -418,7 +428,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
                 return ex.Message;
             }
 
-            this.logger?.LogInformation("Client {Client} on {Hub} renamed from '{Previous}'", client, this.registration.HubType.Name, previous);
+            this.logger?.LogInformation("Client {Client} on {Hub} renamed from '{Previous}'", client, this.Name, previous);
             this.ClientRenamed?.Invoke(this, new BleHubClientRenamedEventArgs(client, previous));
             return null;
         }
@@ -482,7 +492,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         if (kind != expected)
         {
             var error = kind == BleHubMethodKind.NotFound
-                ? $"{this.registration.HubType.Name} has no method '{method}'"
+                ? $"{this.Name} has no method '{method}'"
                 : $"'{method}' is {(kind == BleHubMethodKind.Stream ? "a stream" : "not a stream")}";
             await this.SendError(peer, message.MessageId, "HubMethodNotFound", error).ConfigureAwait(false);
             return;
@@ -522,8 +532,8 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         }
         catch (Exception ex)
         {
-            this.logger?.LogWarning(ex, "{Hub}.{Method} failed", this.registration.HubType.Name, method);
-            await this.SendError(peer, message.MessageId, ex.GetType().Name, ex.Message).ConfigureAwait(false);
+            this.logger?.LogWarning(ex, "{Hub}.{Method} failed", this.Name, method);
+            await this.SendError(peer, message.MessageId, BleHubRemoteException.TypeOf(ex), ex.Message).ConfigureAwait(false);
         }
         finally
         {
@@ -583,7 +593,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         }
 
         _ = channel.Completion.ContinueWith(_ => peer.ClearMedia(channel), TaskScheduler.Default);
-        this.logger?.LogInformation("Client {Client} opened a media channel on {Hub}", client, this.registration.HubType.Name);
+        this.logger?.LogInformation("Client {Client} opened a media channel on {Hub}", client, this.Name);
         try
         {
             this.MediaChannelOpened?.Invoke(this, new BleHubMediaChannelEventArgs(client, channel));
@@ -695,7 +705,8 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 
     object CreateHub(IServiceProvider scope, HostPeer peer, BleHubConnectedClient client, Action<string?>? abort = null)
     {
-        var hub = scope.GetRequiredService(this.registration.HubType);
+        // a handler hub has no class to resolve - it stands in for one
+        var hub = this.createHub?.Invoke() ?? scope.GetRequiredService(this.registration.HubType);
         abort ??= reason => _ = this.Disconnect(peer.Id, new HubDisconnect(HubDisconnectReason.ServerDisconnect, reason));
         ((IBleHubInternal)hub).Initialize(new BleHubCallerContext(client, abort, peer.Aborted), this);
         return hub;
@@ -712,7 +723,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         }
         catch (Exception ex)
         {
-            this.logger?.LogError(ex, "{Hub} lifecycle hook failed for {Client}", this.registration.HubType.Name, client);
+            this.logger?.LogError(ex, "{Hub} lifecycle hook failed for {Client}", this.Name, client);
             throw;
         }
     }

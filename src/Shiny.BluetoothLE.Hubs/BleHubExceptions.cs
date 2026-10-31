@@ -30,6 +30,16 @@ public class BleHubRemoteException(string remoteErrorType, string message) : Ble
     public const string RenameRefused = "HubRenameRefused";
 
     public string RemoteErrorType { get; } = remoteErrorType;
+
+    /// <summary>
+    /// The error type a caller is told for a hub method's exception: its class name, or - for a BleHubRemoteException thrown
+    /// by the hub, which is how a hub relaying someone else's error keeps that error's type - its <see cref="RemoteErrorType"/>
+    /// </summary>
+    public static string TypeOf(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception is BleHubRemoteException remote ? remote.RemoteErrorType : exception.GetType().Name;
+    }
 }
 
 

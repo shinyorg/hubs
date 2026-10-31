@@ -26,6 +26,28 @@ public static class ClientServiceCollectionExtensions
         var serviceUuid = BleUuid.Normalize(options.ServiceUuid, nameof(options.ServiceUuid));
         var charUuid = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
 
+        services.AddBleHubClientCore();
+        foreach (var c in options.ProtocolActions)
+            services.ConfigureBleHubProtocol(c);
+
+        services.AddSingleton<IBleHubClient<TContract>>(sp => (IBleHubClient<TContract>)BleHubClientFactories.Create<TContract>(
+            sp.GetRequiredService<BleHubClientServices>(),
+            serviceUuid,
+            charUuid
+        ));
+        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
+        return services;
+    }
+
+
+    /// <summary>
+    /// What every hub client needs - the platform BLE stack, the protocol and serializer, and the services proxies are
+    /// created with - without a proxy. AddBleHubClient calls it; so does a client created at runtime (UniversalHubs'
+    /// dynamic hub clients).
+    /// </summary>
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public static IServiceCollection AddBleHubClientCore(this IServiceCollection services)
+    {
 #if IOS || MACCATALYST
         // the platform BLE central stack - a no-op when the app already added it. Hubs are a foreground thing, so iOS isn't
         // asked to alert the user about connections and notifications while the app is in the background (Shiny's
@@ -41,9 +63,6 @@ public static class ClientServiceCollectionExtensions
         services.AddBluetoothLE();
 #endif
         services.AddBleHubCore();
-        foreach (var c in options.ProtocolActions)
-            services.ConfigureBleHubProtocol(c);
-
         services.TryAddSingleton(sp => new BleHubClientServices(
             sp.GetRequiredService<BleHubProtocolOptions>(),
             sp.GetRequiredService<IBleHubSerializer>(),
@@ -54,12 +73,6 @@ public static class ClientServiceCollectionExtensions
             LocalAdvertisement = sp.GetService<LocalHubAdvertisement>()
         });
 
-        services.AddSingleton<IBleHubClient<TContract>>(sp => (IBleHubClient<TContract>)BleHubClientFactories.Create<TContract>(
-            sp.GetRequiredService<BleHubClientServices>(),
-            serviceUuid,
-            charUuid
-        ));
-        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
         return services;
     }
 }

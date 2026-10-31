@@ -11,6 +11,8 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
         <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Client" />
         <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Host" />
+        <!-- dynamic hub clients normalize UUIDs the way AddBleHubClient does -->
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Client" />
         <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
     </ItemGroup>
     <ItemGroup>

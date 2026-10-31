@@ -201,7 +201,7 @@ Contracts declared in a referenced assembly are supported. Proxies and senders g
 
 ## 5. Host (`Shiny.BluetoothLE.Hubs.Host`)
 
-- **`AddBleHubServer(server => ...)`**, called once with at least one hub:
+- **`AddBleHubServer(server => ...)`**, called once with at least one hub (or `.AllowHandlerHubs()`, §13):
   - `.ServiceUuid(uuid)` sets `BleHubHostOptions.ServiceUuid`, `.Host(...)` the rest of `BleHubHostOptions`, and `.Protocol(...)` the app-wide `BleHubProtocolOptions`.
   - `.AddHub<THub>(characteristicUuid, o => ...)` registers the hub as transient (a new DI scope for each invocation, like SignalR) and `IHubContext<THub>`. A hub type or characteristic added twice, and a malformed UUID, are refused at registration.
   - registers the shared `IBleHubHost`, and on Android, iOS and Mac Catalyst the platform hosting stack (`AddBluetoothLeHosting()`).
@@ -237,6 +237,7 @@ Contracts declared in a referenced assembly are supported. Proxies and senders g
   - `ServerDisconnect`: `Context.Abort(reason)` or `IHubContext.Disconnect(id, reason)`.
   - `ServerShutdown`: `IBleHubHost.Stop(reason)`, or `IHubContext.Stop(reason)` (default message "Hub stopped").
   - `ClientDisconnected` raises `BleHubClientDisconnectedEventArgs(Client, Disconnect)`. Its `Reason` string is `Disconnect.Description`.
+- **Errors**: a hub method's exception fails the call with its class name as the error type, except a `BleHubRemoteException`, which keeps its own `RemoteErrorType` (`BleHubRemoteException.TypeOf`). That is how a hub relaying someone else's error keeps its type; every transport uses the same rule.
 - **Client options**: `MaxClients` and `ValidateClient` (return a rejection reason) are set per hub through `server.AddHub<THub>(..., o => ...)`.
 - **Cleanup**: a peer that unsubscribes is removed right away. A periodic sweep also removes peers that no longer appear in `SubscribedCentrals`, because Android doesn't always report the unsubscribe.
 
@@ -380,6 +381,7 @@ The core package targets `net10.0`. The host and client packages target `net10.0
 | MTU (2026-10-10) | Every new BLE connection asks for ATT MTU 517, the maximum. Inside blehubs MTU means ATT MTU; Shiny's payload size is converted at the BLE adapters |
 | Own advertisement (2026-10-10) | `Discover()` drops the app's own host, matched by service UUID and advertised local name while it advertises. The 31 byte advertisement has no room for an id beside the 128-bit UUID, so the name is the only signal: another host with the same name is hidden while this app advertises, and a nameless advertisement is never treated as this app's |
 | Media channels (2026-10-23) | A packet pipe per connection on its own L2CAP PSM (§6b), not hub frames: GATT write-with-response is a few KB/s, and media wants raw bytes with no serializer. Gated by a random token from the handshake ack. Additive ack fields, protocol version stays 1. Other transports carry it through seams (§13) |
+| Handler hubs (2026-10-31) | Hubs added at runtime go through the same `HubRuntime`, with a dispatcher that passes each argument's bytes to an `IBleHubHandler` by method name. Hidden (`EditorBrowsable(Never)`): it is a seam for Shiny.UniversalHubs' dynamic hubs, not an app-facing API. A GATT service can't gain a characteristic, so adding one rebuilds the service when that hub first starts |
 | Other transports (§13) | Hidden host and client seams in this repo. Wi-Fi itself (Switchboard, mDNS, transport choice) lives in Shiny.UniversalHubs, its own repo, which references this one through NuGet |
 
 ## 10. Status
@@ -421,6 +423,19 @@ The core package targets `net10.0`. The host and client packages target `net10.0
   devices: an app that rescanned between discovering a host and connecting to it timed out on iPhone and Mac. Shiny's
   Apple manager clears unconnected peripherals when a scan starts, so the connection's events went to a new instance
   while the client waited on the discovered one. 144 tests pass (`DiscoveryTests.ConnectUsesTheManagersCurrentPeripheral`).
+
+- **2026-10-31**: handler hubs (§13), for Shiny.UniversalHubs' dynamic hubs: `IBleHubHandler`, `BleHubHandlerCall`,
+  `IBleHubHandlerHost`, `IBleHubHandle`, `BleHubServerBuilder.AllowHandlerHubs()`, all hidden.
+  `BleHubArgumentReader.ReadSerialized` / `BleHubArgumentWriter.WriteSerialized` give raw argument bytes. `HubRuntime`
+  gained a `Name` (the class name, or the handler hub's name) for logs and errors. `BleHubRemoteException.TypeOf`: a hub
+  that throws a `BleHubRemoteException` keeps its `RemoteErrorType` (before, every error was typed by class name). Fix:
+  `BleHubHost.Dispose()` no longer touches the hosting manager when hosting never started (it threw on a device without
+  usable Bluetooth). Wire unchanged. New `HandlerHubTests` (9).
+  - **Not yet verified:** the GATT service rebuild on real radios, and that iOS and Android clients reconnect after it.
+- **2026-10-31**: hidden client seams for Shiny.UniversalHubs' dynamic hub clients: `BleHubClient`'s protected
+  `InvokeSerializedCore` / `StreamSerializedCore` (results left as serialized bytes) and `AddBleHubClientCore()` (what
+  every client needs, without a proxy; `AddBleHubClient` now uses it). Wire unchanged.
+
 ## 11. Future
 
 - Client results (the host awaits a value from a client)
@@ -467,3 +482,17 @@ Media channels cross the seams too (1.4.0):
 - host: `IBleHubTransportEndpoint.MediaChannelOpened(connectionId, channel)`, called once the transport has checked its
   own token. It raises `IHubContext.MediaChannelOpened` and closes the channel when that client goes. It returns false
   for an unknown client, and the caller closes the channel.
+
+Handler hubs (2026-10-31) are hubs added while the app runs, with no generated dispatcher:
+- `server.AllowHandlerHubs()` lets `AddBleHubServer` have no compiled hubs. `IBleHubHandlerHost` (registered by
+  `AddBleHubServer`) has `Handlers`, `Add(characteristicUuid, name, BleHubOptions, IBleHubHandler)` and
+  `Remove(characteristicUuid, reason)`. `Add` refuses a characteristic another hub uses.
+- `IBleHubHandler`: `GetMethodKind`, `Invoke(BleHubHandlerCall)` → `byte[]?`, `Stream` → `IAsyncEnumerable<byte[]>`,
+  `OnConnectedAsync` / `OnDisconnectedAsync` / `OnRenamedAsync`. `BleHubHandlerCall` has `Context`, `Method` and
+  `Arguments`, each exactly as the caller's serializer wrote it.
+- `IBleHubHandle` is the counterpart of `IHubContext<THub>`: `Start`/`Stop`, `Clients` (push with
+  `WriteSerialized`), `Groups`, `ConnectedClients`, `Disconnect`, `TransportEndpoint` and the client events.
+- Adding a hub while the GATT service is up changes nothing on air. The service is rebuilt when that hub first starts,
+  and BLE clients of the other hubs are first sent a disconnect (`ServerShutdown`, "The host's hubs changed - reconnect").
+  `Remove` stops the hub and disconnects its clients on every transport; its characteristic stays in a running service,
+  refusing handshakes, until the service is next rebuilt.

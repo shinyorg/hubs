@@ -23,6 +23,7 @@ public static class MauiProgram
     const string ChatHubCharacteristicUuid = "37625851-7287-4de0-92f8-0b8a25e755ec";
     const string ChatMdnsServiceType = "_unichat._tcp";
     const string MultipeerServiceType = "unihub-mc";
+    const string NearbyServiceId = "org.shiny.universalhubs.sample";
 
 
     public static MauiApp CreateMauiApp()
@@ -60,6 +61,7 @@ public static class MauiProgram
         builder.Services.AddUniversalServer(server => server
             .ServiceUuid(ServiceUuid)
             .Multipeer(MultipeerServiceType)   // iPhones reach the Mac with no shared network
+            .Nearby(NearbyServiceId)            // and Android phones too
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
                 ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
@@ -84,16 +86,18 @@ public static class MauiProgram
             })
         );
 
-        // ---- client: finds hosts over BLE, mDNS and Multipeer ----
+        // ---- client: finds hosts over BLE, mDNS, Multipeer and Nearby ----
         builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
         {
             o.ServiceUuid = ServiceUuid;
             o.Multipeer(MultipeerServiceType);
+            o.Nearby(NearbyServiceId);
         });
         builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
         {
             o.ServiceUuid = ServiceUuid;
             o.Multipeer(MultipeerServiceType);
+            o.Nearby(NearbyServiceId);
         });
 
         // calls, as on the phones

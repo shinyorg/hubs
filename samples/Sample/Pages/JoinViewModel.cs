@@ -19,9 +19,10 @@ public partial class JoinViewModel(
 
     public ObservableCollection<HostItem> Hosts { get; } = new();
     [ObservableProperty] public partial string Status { get; set; } = "Looking for games nearby and on this network...";
-    [ObservableProperty] public partial bool PreferBluetooth { get; set; } = settings.PreferBluetooth;
+    [ObservableProperty] public partial string ConnectChoice { get; set; } = settings.ConnectChoice;
+    public IReadOnlyList<string> ConnectChoices => PlayerSettings.ConnectChoices;
 
-    partial void OnPreferBluetoothChanged(bool value) => settings.PreferBluetooth = value;
+    partial void OnConnectChoiceChanged(string value) => settings.ConnectChoice = value;
 
 
     public void OnAppearing()
@@ -87,6 +88,10 @@ public partial class HostItem(HubHostInfo info) : ObservableObject
         var parts = new List<string>();
         if (info.Http != null)
             parts.Add("📶 Wi-Fi");
+        if (info.Multipeer != null)
+            parts.Add("📡 Multipeer");
+        if (info.Nearby != null)
+            parts.Add("🛰️ Nearby");
         if (info.Ble != null)
             parts.Add($"🔵 Bluetooth {info.Rssi} dBm");
         return String.Join("   ", parts);

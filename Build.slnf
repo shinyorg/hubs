@@ -10,6 +10,7 @@
       "src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj",
       "src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj",
       "src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj",
+      "src/Shiny.UniversalHubs.Nearby/Shiny.UniversalHubs.Nearby.csproj",
       "tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj",
       "tests/Shiny.BluetoothLE.Hubs.Tests/Shiny.BluetoothLE.Hubs.Tests.csproj"
     ]

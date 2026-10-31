@@ -5,10 +5,10 @@ using Shiny.BluetoothLE.Hubs;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A media channel over the hub connection's own Multipeer session: one MediaPacket message is one packet. Reliable and
+/// A media channel over the hub connection's own peer-link session (Multipeer, Nearby): one MediaPacket message is one packet. Reliable and
 /// ordered like L2CAP and the Wi-Fi WebSocket, so signalling can share the pipe. The same class serves both ends.
 /// </summary>
-internal sealed class MultipeerMediaChannel(Action<MultipeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IBleHubMediaChannel
+internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IBleHubMediaChannel
 {
     readonly Channel<ReadOnlyMemory<byte>> inbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -31,7 +31,7 @@ internal sealed class MultipeerMediaChannel(Action<MultipeerMessageKind, ReadOnl
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            send(MultipeerMessageKind.MediaPacket, packet);
+            send(PeerMessageKind.MediaPacket, packet);
         }
         catch (Exception ex)
         {
@@ -78,7 +78,7 @@ internal sealed class MultipeerMediaChannel(Action<MultipeerMessageKind, ReadOnl
         {
             try
             {
-                send(MultipeerMessageKind.MediaClose, ReadOnlyMemory<byte>.Empty);
+                send(PeerMessageKind.MediaClose, ReadOnlyMemory<byte>.Empty);
             }
             catch
             {

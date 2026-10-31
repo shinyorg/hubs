@@ -7,8 +7,8 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// A client connected to a hub, over either transport
 /// </summary>
-/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over Wi-Fi, <c>mc:{id}</c> over Multipeer</param>
-/// <param name="Transport">How the client is connected - <see cref="HubTransports.Ble"/>, <see cref="HubTransports.Http"/> or <see cref="HubTransports.Multipeer"/></param>
+/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over Wi-Fi, <c>mc:{id}</c> over Multipeer, <c>nb:{id}</c> over Nearby</param>
+/// <param name="Transport">How the client is connected - <see cref="HubTransports.Ble"/>, <see cref="HubTransports.Http"/>, <see cref="HubTransports.Multipeer"/> or <see cref="HubTransports.Nearby"/></param>
 /// <param name="Client">The client's handshake details and per connection state</param>
 public sealed record HubConnection(string Id, HubTransports Transport, BleHubConnectedClient Client)
 {
@@ -38,6 +38,11 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     public MultipeerPeer? Multipeer { get; init; }
 
     /// <summary>
+    /// The Nearby Connections endpoint the client is connected through - null on the other transports
+    /// </summary>
+    public NearbyPeer? Nearby { get; init; }
+
+    /// <summary>
     /// Prefixed to the Switchboard line id to make a Wi-Fi connection id
     /// </summary>
     internal const string HttpPrefix = "sb:";
@@ -48,15 +53,23 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     internal const string MultipeerPrefix = "mc:";
 
     /// <summary>
-    /// Which transport a connection id belongs to. Wi-Fi ids are <c>sb:{lineId}</c>, Multipeer ids <c>mc:{id}</c>; anything
-    /// else is a BLE peripheral.
+    /// Prefixed to the session id to make a Nearby connection id
+    /// </summary>
+    internal const string NearbyPrefix = "nb:";
+
+    /// <summary>
+    /// Which transport a connection id belongs to. Wi-Fi ids are <c>sb:{lineId}</c>, Multipeer ids <c>mc:{id}</c>, Nearby
+    /// ids <c>nb:{id}</c>; anything else is a BLE peripheral.
     /// </summary>
     public static HubTransports GetTransport(string connectionId)
     {
         if (connectionId.StartsWith(HttpPrefix, StringComparison.Ordinal))
             return HubTransports.Http;
 
-        return connectionId.StartsWith(MultipeerPrefix, StringComparison.Ordinal) ? HubTransports.Multipeer : HubTransports.Ble;
+        if (connectionId.StartsWith(MultipeerPrefix, StringComparison.Ordinal))
+            return HubTransports.Multipeer;
+
+        return connectionId.StartsWith(NearbyPrefix, StringComparison.Ordinal) ? HubTransports.Nearby : HubTransports.Ble;
     }
 
     public static HubConnection From(BleHubConnectedClient client)
@@ -65,7 +78,8 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
         return new(client.Id, transport, client)
         {
             Http = transport == HubTransports.Http ? HttpCall.Current : null,
-            Multipeer = transport == HubTransports.Multipeer ? MultipeerPeers.Find(client.Id) : null
+            Multipeer = transport == HubTransports.Multipeer ? PeerLinkPeers.Find(client.Id) as MultipeerPeer : null,
+            Nearby = transport == HubTransports.Nearby ? PeerLinkPeers.Find(client.Id) as NearbyPeer : null
         };
     }
 
@@ -133,13 +147,21 @@ public sealed record MultipeerPeer(string DisplayName);
 
 
 /// <summary>
-/// The Multipeer peer behind each Multipeer connection id, kept by Shiny.UniversalHubs.Multipeer while it is connected
+/// A client's Nearby Connections endpoint
 /// </summary>
-internal static class MultipeerPeers
-{
-    static readonly ConcurrentDictionary<string, MultipeerPeer> peers = new(StringComparer.Ordinal);
+/// <param name="EndpointName">The name the client's device connected under - the hub's own client name is <see cref="BleHubConnectedClient.Name"/></param>
+public sealed record NearbyPeer(string EndpointName);
 
-    public static void Add(string connectionId, MultipeerPeer peer) => peers[connectionId] = peer;
+
+/// <summary>
+/// The radio peer behind each peer-link connection id (<see cref="MultipeerPeer"/>, <see cref="NearbyPeer"/>), kept by the
+/// add-on transport while it is connected
+/// </summary>
+internal static class PeerLinkPeers
+{
+    static readonly ConcurrentDictionary<string, object> peers = new(StringComparer.Ordinal);
+
+    public static void Add(string connectionId, object peer) => peers[connectionId] = peer;
     public static void Remove(string connectionId) => peers.TryRemove(connectionId, out _);
-    public static MultipeerPeer? Find(string connectionId) => peers.TryGetValue(connectionId, out var peer) ? peer : null;
+    public static object? Find(string connectionId) => peers.TryGetValue(connectionId, out var peer) ? peer : null;
 }

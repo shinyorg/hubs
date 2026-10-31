@@ -49,7 +49,12 @@ public static class UniversalHubHostExtensions
             // before routing: a hub that isn't shared over a tunnel doesn't exist as far as the internet can tell
             server.Use(async (ctx, next) =>
             {
-                if (ctx.Connection.IsTunneled && !TunnelGate.IsAllowed(ctx.Request.Path, options.BasePath, server.Services!.GetServices<IHubBinding>()))
+                if (ctx.Connection.IsTunneled && !TunnelGate.IsAllowed(
+                    ctx.Request.Path,
+                    options.BasePath,
+                    server.Services!.GetRequiredService<UniversalHubHost>().Hubs,
+                    server.Services!.GetService<DynamicHubRegistry>() != null
+                ))
                 {
                     ctx.Response.StatusCode = 404;
                     return;
@@ -112,6 +117,25 @@ public sealed class UniversalHubHostBuilder
             var binding = server.Services!.GetRequiredService<HubBinding<THub>>();
             server.MapSwitchboard<HubBoard<THub>>(UniversalHubProtocol.HubPath(options.BasePath, binding.CharacteristicUuid));
         });
+        return this;
+    }
+
+
+    /// <summary>
+    /// Serves dynamic hubs (<see cref="IDynamicHubs"/>) on one Switchboard at <c>{BasePath}/{hub}</c>. Compiled hubs' routes
+    /// are literal paths and win, so a dynamic hub is reached at the same path a compiled one would be.
+    /// </summary>
+    internal UniversalHubHostBuilder AddDynamicHubs(DynamicHubOptions dynamicOptions)
+    {
+        DynamicHubBoard.Register();
+        this.builder.Services.AddSingleton(dynamicOptions);
+        this.builder.Services.TryAddSingleton<DynamicHubRegistry>();
+        this.builder.Services.TryAddSingleton<IDynamicHubs>(sp => sp.GetRequiredService<DynamicHubRegistry>());
+
+        var options = this.options;
+        this.builder.Configure(server => server.MapSwitchboard<DynamicHubBoard>(
+            UniversalHubProtocol.HubPath(options.BasePath, $"{{{DynamicHubBoard.RouteParameter}}}")
+        ));
         return this;
     }
 }

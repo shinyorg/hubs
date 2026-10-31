@@ -59,14 +59,11 @@ public static class MultipeerExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         MultipeerProtocol.ValidateServiceType(serviceType);
-        if (options.Transports.Count > 0)
-            throw new InvalidOperationException("Multipeer is already set up for this hub client");
-
         var mc = new MultipeerClientOptions(serviceType);
         configure?.Invoke(mc);
 
         options.ServiceActions.Add(services => services.AddMultipeerLink());
-        options.Transports.Add(sp => new MultipeerClientTransport(
+        options.AddTransport(HubTransports.Multipeer, "Multipeer", sp => new MultipeerClientTransport(
             sp.GetRequiredService<IMultipeerLink>(),
             mc,
             sp.GetService<ILoggerFactory>()

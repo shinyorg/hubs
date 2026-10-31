@@ -483,6 +483,31 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     }
 
 
+    /// <summary>
+    /// A call whose result is left as the host's serializer wrote it - for a proxy dispatched by name, which never sees the
+    /// values' types
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    protected Task<ReadOnlyMemory<byte>> InvokeSerializedCore(string method, BleHubArgumentWriter arguments, CancellationToken cancellationToken)
+    {
+        this.AssertConnected();
+        return this.InvokeRaw(method, arguments.ToArray(), cancellationToken);
+    }
+
+
+    /// <summary>
+    /// A stream whose items are left as the host's serializer wrote them
+    /// </summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    protected IAsyncEnumerable<ReadOnlyMemory<byte>> StreamSerializedCore(string method, BleHubArgumentWriter arguments, CancellationToken cancellationToken)
+    {
+        this.AssertConnected();
+        return this.connection?.External is { } external
+            ? this.ExternalStream(external, method, arguments.ToArray(), cancellationToken)
+            : this.protocol.Stream(method, arguments.ToArray(), cancellationToken);
+    }
+
+
     Task<ReadOnlyMemory<byte>> InvokeRaw(string method, byte[] arguments, CancellationToken cancellationToken)
         => this.connection?.External is { } external
             ? this.ExternalInvoke(external, method, arguments, cancellationToken)

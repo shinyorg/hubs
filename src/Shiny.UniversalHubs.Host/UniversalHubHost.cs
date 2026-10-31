@@ -94,7 +94,18 @@ internal sealed class UniversalHubHost(
     public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
 
     HttpServer Server => (HttpServer)(services.GetService(typeof(HttpServer)) ?? throw new InvalidOperationException("No HttpServer is registered - call AddShinyHttpServer"));
-    IReadOnlyList<IHubBinding> Hubs => ((IEnumerable<IHubBinding>)services.GetService(typeof(IEnumerable<IHubBinding>))!).ToList();
+    /// <summary>
+    /// Every hub: the compiled ones, then any dynamic hubs added while the app runs
+    /// </summary>
+    internal IReadOnlyList<IHubBinding> Hubs
+    {
+        get
+        {
+            var compiled = (IEnumerable<IHubBinding>)services.GetService(typeof(IEnumerable<IHubBinding>))!;
+            var dynamic = (services.GetService(typeof(DynamicHubRegistry)) as DynamicHubRegistry)?.Bindings ?? [];
+            return compiled.Concat(dynamic).ToList();
+        }
+    }
 
     // transports beyond BLE and HTTP, from add-on packages (Shiny.UniversalHubs.Multipeer)
     IReadOnlyList<IUniversalHubTransport> Extras => ((IEnumerable<IUniversalHubTransport>)services.GetService(typeof(IEnumerable<IUniversalHubTransport>))!).ToList();
@@ -113,7 +124,7 @@ internal sealed class UniversalHubHost(
     public HubTransports GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Find<THub>());
 
 
-    HubTransports RunningOn(IHubBinding hub) => this.Extras.Aggregate(
+    internal HubTransports RunningOn(IHubBinding hub) => this.Extras.Aggregate(
         (hub.IsBleRunning ? HubTransports.Ble : HubTransports.None) | (hub.IsHttpRunning ? HubTransports.Http : HubTransports.None),
         (all, transport) => transport.IsRunning(hub) ? all | transport.Transport : all
     );
@@ -124,7 +135,7 @@ internal sealed class UniversalHubHost(
            ?? throw new InvalidOperationException($"{typeof(THub).Name} is not served by UniversalHubs - add it with AddHub");
 
 
-    async Task<HubTransports> StartHubs(IReadOnlyList<IHubBinding> hubs, HubTransports transports, CancellationToken cancellationToken)
+    internal async Task<HubTransports> StartHubs(IReadOnlyList<IHubBinding> hubs, HubTransports transports, CancellationToken cancellationToken)
     {
         if (transports == HubTransports.None)
             throw new ArgumentException("Pick at least one transport", nameof(transports));
@@ -144,7 +155,7 @@ internal sealed class UniversalHubHost(
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        logger?.LogWarning(ex, "Bluetooth hosting of {Hub} did not start", hub.HubType.Name);
+                        logger?.LogWarning(ex, "Bluetooth hosting of {Hub} did not start", hub.Name);
                         errors.Add(ex);
                         break;  // the radio is shared - one failure is every failure
                     }
@@ -206,7 +217,7 @@ internal sealed class UniversalHubHost(
     }
 
 
-    async Task StopHubs(IReadOnlyList<IHubBinding> hubs, string? reason, bool all)
+    internal async Task StopHubs(IReadOnlyList<IHubBinding> hubs, string? reason, bool all)
     {
         await this.gate.WaitAsync().ConfigureAwait(false);
         try
@@ -253,6 +264,17 @@ internal sealed class UniversalHubHost(
     internal void OnFileTransferred(BleHubFileTransferredEventArgs args) => this.FileTransferred?.Invoke(this, args);
 
 
+    /// <summary>
+    /// A client left its hub - its file and media tokens go with it
+    /// </summary>
+    internal void ForgetClient(string connectionId)
+    {
+        fileTokens.Remove(connectionId);
+        mediaTokens.Remove(connectionId);
+        PeerLinkPeers.Remove(connectionId);   // after OnDisconnectedAsync, which still sees the peer
+    }
+
+
     async Task StartHttp(IReadOnlyList<IHubBinding> hubs, CancellationToken cancellationToken)
     {
         var server = this.Server;
@@ -265,7 +287,7 @@ internal sealed class UniversalHubHost(
             hub.IsHttpRunning = true;
 
         await this.Readvertise(cancellationToken).ConfigureAwait(false);
-        logger?.LogInformation("HTTP hosting {Hubs} on {Urls}", String.Join(", ", hubs.Select(x => x.HubType.Name)), String.Join(", ", server.ListenUrls));
+        logger?.LogInformation("HTTP hosting {Hubs} on {Urls}", String.Join(", ", hubs.Select(x => x.Name)), String.Join(", ", server.ListenUrls));
     }
 
 
@@ -285,7 +307,7 @@ internal sealed class UniversalHubHost(
             }
             catch (Exception ex)
             {
-                logger?.LogWarning(ex, "Could not hang up {Hub} clients", hub.HubType.Name);
+                logger?.LogWarning(ex, "Could not hang up {Hub} clients", hub.Name);
             }
         }
 

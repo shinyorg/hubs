@@ -61,6 +61,11 @@ public class GameSession
     /// </summary>
     public HubTransports Transports { get; private set; }
 
+    /// <summary>
+    /// Host: what it was asked to host over - Transports is what of that started
+    /// </summary>
+    public HubTransports Requested { get; private set; }
+
     public event EventHandler<GameState>? StateChanged;
     public event EventHandler<(string From, string Emoji)>? EmoteReceived;
 
@@ -80,7 +85,7 @@ public class GameSession
 
     // ---------- host ----------
 
-    public async Task StartHosting(string playerName, string? avatarPath)
+    public async Task StartHosting(string playerName, string? avatarPath, HubTransports over)
     {
         Directory.CreateDirectory(HostFilesDirectory);
         var hostAvatar = Path.Combine(HostFilesDirectory, HostAvatarFile);
@@ -95,8 +100,9 @@ public class GameSession
         await this.Game.Start(playerName, avatarPath == null ? null : HostAvatarFile);
 
         // BLE for nearby phones (on a plane), Wi-Fi for anyone on the same network (at home) - either one is enough.
-        // Only the game starts: the chat is already running and stays running.
-        this.Transports = await this.host.StartHub<GameHub>(HubTransports.All);
+        // People → More options → "Broadcast over" picks which. Only the game starts: the chat is already running.
+        this.Requested = over;
+        this.Transports = await this.host.StartHub<GameHub>(over);
 
         this.IsHost = true;
         this.IsActive = true;
@@ -186,7 +192,7 @@ public class GameSession
 
     // ---------- client ----------
 
-    public async Task JoinHost(HubHostInfo hostInfo, string playerName, string? avatarPath, bool preferBluetooth)
+    public async Task JoinHost(HubHostInfo hostInfo, string playerName, string? avatarPath, PlayerSettings settings)
     {
         // pushes arrive before Join returns - they must not be read as this device's last role (a past host would look
         // up the remote host's avatar in its own files)
@@ -198,10 +204,8 @@ public class GameSession
         if (Directory.Exists(ClientCacheDirectory))
             Directory.Delete(ClientCacheDirectory, true);
 
-        await this.client.Connect(hostInfo, new HubConnectOptions(playerName, AppInfo.Current.VersionString)
-        {
-            Prefer = preferBluetooth ? HubTransports.Ble : HubTransports.Http
-        });
+        // Join → "Connect over" - Auto, or only the one picked
+        await this.client.Connect(hostInfo, settings.Route(new HubConnectOptions(playerName, AppInfo.Current.VersionString)));
         this.Transports = this.client.Transport;
         try
         {

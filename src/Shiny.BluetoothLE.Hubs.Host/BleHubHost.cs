@@ -41,7 +41,7 @@ public interface IBleHubHost
 }
 
 
-internal sealed class BleHubHost : IBleHubHost, IDisposable
+internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
 {
     readonly IBleHostingManager hosting;
     readonly BleHubHostOptions hostOptions;
@@ -49,7 +49,14 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
     readonly ILogger<BleHubHost>? logger;
     readonly LocalHubAdvertisement? localAdvertisement;
     readonly string serviceUuid;
-    readonly Dictionary<Type, HubRuntime> runtimes = new();
+    readonly BleHubProtocolOptions protocolOptions;
+    readonly IBleHubSerializer serializer;
+    readonly ILoggerFactory? loggerFactory;
+
+    // every hub by characteristic UUID - handler hubs come and go while the app runs
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, HubRuntime> runtimes = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<Type, HubRuntime> typed = new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, HandlerHandle> handlers = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<HubRuntime, IGattCharacteristic> characteristics = new();
     readonly SemaphoreSlim startLock = new(1, 1);
     L2CapInstance? fileServer;
@@ -72,6 +79,9 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
         this.localAdvertisement = localAdvertisement;
         this.hostOptions = hostOptions;
         this.services = services;
+        this.protocolOptions = options;
+        this.serializer = serializer;
+        this.loggerFactory = loggerFactory;
         this.logger = loggerFactory?.CreateLogger<BleHubHost>();
         this.serviceUuid = BleUuid.Normalize(hostOptions.ServiceUuid, nameof(hostOptions.ServiceUuid));
 
@@ -87,7 +97,8 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
                 HostName = hostOptions.LocalName
             };
             runtime.Notify = (peer, frame, ct) => this.Notify(runtime, peer, frame, ct);
-            this.runtimes.Add(reg.HubType, runtime);
+            this.runtimes[reg.CharacteristicUuid] = runtime;
+            this.typed.Add(reg.HubType, runtime);
         }
     }
 
@@ -105,14 +116,14 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
     public event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
 
 
-    internal HubRuntime GetRuntime(Type hubType) => this.runtimes.TryGetValue(hubType, out var runtime)
+    internal HubRuntime GetRuntime(Type hubType) => this.typed.TryGetValue(hubType, out var runtime)
         ? runtime
         : throw new InvalidOperationException($"{hubType.Name} is not registered - add it with AddBleHubServer(server => server.AddHub<{hubType.Name}>(...))");
 
 
     public Task Start(CancellationToken cancellationToken = default)
     {
-        if (this.runtimes.Count == 0)
+        if (this.runtimes.IsEmpty)
             throw new InvalidOperationException("No hubs are registered - add them with AddBleHubServer");
 
         return this.StartHubs(this.runtimes.Values.ToList(), cancellationToken);
@@ -142,6 +153,66 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
         {
             this.startLock.Release();
         }
+    }
+
+
+    // ---- IBleHubHandlerHost: hubs added while the app runs ----
+
+    public IReadOnlyList<IBleHubHandle> Handlers => this.handlers.Values.ToList();
+
+
+    public IBleHubHandle Add(string characteristicUuid, string name, BleHubOptions options, IBleHubHandler handler)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(handler);
+        var uuid = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
+
+        var registration = new BleHubRegistration(typeof(HandlerHub), uuid, options);
+        var runtime = new HubRuntime(
+            registration,
+            new HandlerDispatcher(handler),
+            this.services,
+            this.protocolOptions,
+            this.serializer,
+            this.loggerFactory?.CreateLogger($"Shiny.BluetoothLE.Hubs.{name}"),
+            name,
+            () => new HandlerHub(handler)
+        )
+        {
+            HostName = this.hostOptions.LocalName,
+            FileTransferPsm = this.FileTransferPsm,
+            FileTransferSecure = this.fileTransferSecure,
+            MediaChannelPsm = this.mediaPsm,
+            MediaChannelSecure = this.mediaSecure,
+            MediaMaxPacketSize = this.mediaMaxPacketSize
+        };
+        runtime.Notify = (peer, frame, ct) => this.Notify(runtime, peer, frame, ct);
+
+        if (!this.runtimes.TryAdd(uuid, runtime))
+            throw new InvalidOperationException($"Characteristic {uuid} is already used by another hub - each hub needs its own");
+
+        var handle = new HandlerHandle(runtime, this, handler);
+        this.handlers[uuid] = handle;
+        this.logger?.LogInformation("Added hub {Hub} on characteristic {Characteristic}", name, uuid);
+        return handle;
+    }
+
+
+    public async Task Remove(string characteristicUuid, string? reason = null)
+    {
+        var uuid = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
+        if (!this.handlers.TryGetValue(uuid, out var handle))
+            throw new InvalidOperationException($"No hub was added on characteristic {uuid}");
+
+        var disconnect = new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub removed");
+        await this.StopHubs([handle.Runtime], disconnect).ConfigureAwait(false);
+
+        // anyone still connected over another transport goes too
+        await handle.Runtime.DisconnectAll(disconnect).ConfigureAwait(false);
+        this.handlers.TryRemove(uuid, out _);
+        this.runtimes.TryRemove(uuid, out _);
+        this.logger?.LogInformation("Removed hub {Hub}", handle.Name);
     }
 
 
@@ -185,7 +256,7 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
                 }
 
                 await this.UpdateAdvertising().ConfigureAwait(false);
-                this.logger?.LogInformation("Started hub(s) {Hubs}", String.Join(", ", starting.Select(x => x.Registration.HubType.Name)));
+                this.logger?.LogInformation("Started hub(s) {Hubs}", String.Join(", ", starting.Select(x => x.Name)));
             }
             catch
             {
@@ -225,7 +296,7 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
             if (!this.IsRunning)
                 await this.StopInfrastructure().ConfigureAwait(false);
 
-            this.logger?.LogInformation("Stopped hub(s) {Hubs}: {Reason}", String.Join(", ", stopping.Select(x => x.Registration.HubType.Name)), disconnect.Description);
+            this.logger?.LogInformation("Stopped hub(s) {Hubs}: {Reason}", String.Join(", ", stopping.Select(x => x.Name)), disconnect.Description);
         }
         finally
         {
@@ -240,7 +311,11 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
             runtime.IsRunning = false;
 
         this.RemoveServiceWhenUnused();
-        _ = this.StopInfrastructure();
+
+        // a host that never started has nothing on the radio to stop - and may be on a device without a usable one
+        if (this.infrastructureRunning)
+            _ = this.StopInfrastructure();
+
         this.startLock.Dispose();
     }
 
@@ -248,7 +323,24 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
     async Task EnsureService()
     {
         if (this.serviceAdded)
-            return;
+        {
+            if (this.runtimes.Values.All(this.characteristics.ContainsKey))
+                return;
+
+            // a hub added since the service went up has no characteristic in it, and a GATT service can't gain one - rebuild
+            // it. BLE clients of the other hubs lose their subscriptions with it, so they're asked to reconnect first.
+            var rebuild = new HubDisconnect(HubDisconnectReason.ServerShutdown, "The host's hubs changed - reconnect");
+            await Task.WhenAll(this.runtimes.Values.SelectMany(rt => rt.Peers
+                .Where(x => x.Channel == null)
+                .Select(x => rt.Disconnect(x.Id, rebuild))
+                .ToList()
+            )).ConfigureAwait(false);
+
+            this.hosting.RemoveService(this.serviceUuid);
+            this.serviceAdded = false;
+            this.characteristics.Clear();
+            this.logger?.LogInformation("Rebuilding the GATT service for a new hub");
+        }
 
         // a previous run that crashed may have left the service behind
         this.hosting.RemoveService(this.serviceUuid);
@@ -386,9 +478,16 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
         .FirstOrDefault(x => x != null);
 
 
+    bool fileTransferSecure;
+    ushort mediaPsm;
+    bool mediaSecure;
+    int mediaMaxPacketSize;
+
+
     void SetFileTransfer(ushort psm, bool secure)
     {
         this.FileTransferPsm = psm;
+        this.fileTransferSecure = secure;
         foreach (var runtime in this.runtimes.Values)
         {
             runtime.FileTransferPsm = psm;
@@ -459,6 +558,9 @@ internal sealed class BleHubHost : IBleHubHost, IDisposable
 
     void SetMediaChannels(ushort psm, bool secure, int maxPacketSize)
     {
+        this.mediaPsm = psm;
+        this.mediaSecure = secure;
+        this.mediaMaxPacketSize = maxPacketSize;
         foreach (var runtime in this.runtimes.Values)
         {
             runtime.MediaChannelPsm = psm;

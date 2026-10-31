@@ -35,8 +35,8 @@ public static class UniversalServerExtensions
 
         var server = new UniversalServerBuilder();
         configure(server);
-        if (server.Hubs.Count == 0)
-            throw new InvalidOperationException("A universal server needs at least one hub - call AddHub");
+        if (server.Hubs.Count == 0 && server.DynamicHubs == null)
+            throw new InvalidOperationException("A universal server needs at least one hub - call AddHub (or AllowDynamicHubs to add them while the app runs)");
         if (String.IsNullOrWhiteSpace(server.Endpoint))
             throw new InvalidOperationException("A universal server needs an endpoint");
 
@@ -50,6 +50,8 @@ public static class UniversalServerExtensions
                 ble.Protocol(c);
             foreach (var hub in server.Hubs)
                 hub.AddBle(ble);
+            if (server.DynamicHubs != null)
+                ble.AllowHandlerHubs();
         });
 
         var serverExisted = services.Any(x => x.ServiceType == typeof(HttpServerOptions));
@@ -72,6 +74,8 @@ public static class UniversalServerExtensions
             });
             foreach (var hub in server.Hubs)
                 hub.AddHttp(switchboard);
+            if (server.DynamicHubs != null)
+                switchboard.AddDynamicHubs(server.DynamicHubs);
         }, autoStart: false); // IUniversalHubHost starts and stops it
 
         // transports from add-on packages (Shiny.UniversalHubs.Multipeer's server.Multipeer(...))
@@ -96,6 +100,7 @@ public sealed class UniversalServerBuilder
     internal List<Action<UniversalHubHostOptions>> HttpActions { get; } = new();
     internal List<Action<ShinyHttpServerBuilder>> HttpServerActions { get; } = new();
     internal List<UniversalHubRegistration> Hubs { get; } = new();
+    internal DynamicHubOptions? DynamicHubs { get; private set; }
 
     /// <summary>
     /// Registrations an add-on transport makes once the server is set up
@@ -174,6 +179,26 @@ public sealed class UniversalServerBuilder
             }),
             switchboard => switchboard.AddHub<THub>(mdnsServiceType, options.AllowTunnel)
         ));
+        return this;
+    }
+
+
+    /// <summary>
+    /// Lets hubs be defined while the app runs - by a downloaded web app, say - through <see cref="IDynamicHubs"/>. They
+    /// are served over every transport beside the compiled hubs, and the server may start with no compiled hubs at all.
+    /// What they may use is fixed here, because the platforms fix it when the app is built: the mDNS service types (iOS
+    /// lists them in NSBonjourServices) and how many there may be.
+    /// </summary>
+    public UniversalServerBuilder AllowDynamicHubs(Action<DynamicHubOptions>? configure = null)
+    {
+        var options = this.DynamicHubs ?? new DynamicHubOptions();
+        configure?.Invoke(options);
+        foreach (var type in options.ServiceTypes)
+            UniversalHubProtocol.ValidateServiceType(type);
+        if (options.MaxHubs < 1)
+            throw new InvalidOperationException("MaxHubs must be at least 1");
+
+        this.DynamicHubs = options;
         return this;
     }
 

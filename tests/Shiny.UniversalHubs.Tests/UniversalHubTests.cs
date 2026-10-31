@@ -375,7 +375,8 @@ public class UniversalHubTests : IAsyncLifetime
 
     sealed record FakeBinding(string CharacteristicUuid, string? ServiceType, bool AllowTunnel = false) : IHubBinding
     {
-        public Type HubType => typeof(TestHub);
+        public Type? HubType => typeof(TestHub);
+        public string Name => "Fake";
         public IBleHubTransportEndpoint Endpoint => throw new NotSupportedException();
         public bool IsHttpRunning { get; set; }
         public bool IsBleRunning => false;
@@ -659,7 +660,7 @@ public class UniversalHubTests : IAsyncLifetime
     [InlineData(DisconnectReason.ServerShutdown, HubDisconnectReason.ServerShutdown)]
     [InlineData(DisconnectReason.Faulted, HubDisconnectReason.ConnectionFailed)]
     public void HostMapsHowALineClosed(DisconnectReason line, HubDisconnectReason expected)
-        => Assert.Equal(new HubDisconnect(expected, "why"), HubBoard<TestHub>.ToHubDisconnect(new DisconnectContext(line, "why", null)));
+        => Assert.Equal(new HubDisconnect(expected, "why"), HubLines.ToHubDisconnect(new DisconnectContext(line, "why", null)));
 
 
     [Theory]
@@ -682,7 +683,7 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Equal(disconnect, HubJson.ReadHangUp(message));
         // whichever way the line reports the close, the host's own reason wins
         Assert.Equal(disconnect, SwitchboardTransport.ToHubDisconnect(LineCloseReason.HungUp, message));
-        Assert.Equal(disconnect, HubBoard<TestHub>.ToHubDisconnect(new DisconnectContext(DisconnectReason.HungUp, message, null)));
+        Assert.Equal(disconnect, HubLines.ToHubDisconnect(new DisconnectContext(DisconnectReason.HungUp, message, null)));
         Assert.Null(HubJson.ReadHangUp("plain text"));
         Assert.Null(HubJson.ReadHangUp("""{"reason":99}"""));
     }

@@ -16,6 +16,8 @@
         <PackageVersion Include="Shiny.Net.HttpServer.Testing" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE.Hosting" Version="$(ShinyVersion)"/>
+        <PackageVersion Include="Xamarin.GooglePlayServices.Nearby" Version="119.5.0"/>
+        <PackageVersion Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.0"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Maui.Shell" Version="7.0.3"/>
         <PackageVersion Include="Shiny.Maui.Controls" Version="2.1.0-beta-0002"/>

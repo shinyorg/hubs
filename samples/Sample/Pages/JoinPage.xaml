@@ -13,8 +13,8 @@
         </HorizontalStackLayout>
 
         <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
-            <Label Text="Prefer Bluetooth when a game is on both" VerticalOptions="Center" />
-            <Switch Grid.Column="1" IsToggled="{Binding PreferBluetooth}" />
+            <Label Text="Connect over" VerticalOptions="Center" />
+            <Picker Grid.Column="1" ItemsSource="{Binding ConnectChoices}" SelectedItem="{Binding ConnectChoice}" WidthRequest="110" />
         </Grid>
 
         <CollectionView Grid.Row="2"

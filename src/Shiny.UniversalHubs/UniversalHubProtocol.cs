@@ -20,7 +20,14 @@ public enum HubTransports
     /// </summary>
     Multipeer = 4,
 
-    All = Ble | Http | Multipeer
+    /// <summary>
+    /// Google's Nearby Connections (Bluetooth, BLE, Wi-Fi LAN, Wi-Fi Direct, hotspot and Wi-Fi Aware, with no network
+    /// needed) - Android, iOS and macOS, and only once the Shiny.UniversalHubs.Nearby package is set up. Without it, asking
+    /// for it does nothing.
+    /// </summary>
+    Nearby = 8,
+
+    All = Ble | Http | Multipeer | Nearby
 }
 
 
