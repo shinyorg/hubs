@@ -14,8 +14,10 @@ namespace Shiny.UniversalHubs;
 /// Carries one hub connection over a Switchboard line. Calls go through hub.invoke / hub.stream, pushes arrive as
 /// hub.push, and files use the host's plain HTTP routes.
 /// </summary>
-internal sealed class SwitchboardTransport : IBleHubClientTransport
+internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTransportKind
 {
+    public HubTransports Transport => HubTransports.Http;
+
     readonly IBleHubClientTransportEvents events;
     readonly HttpClient http;
     readonly SwitchboardLine line;

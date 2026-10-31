@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <!--
+            net10.0 carries the transport-free core (tested against an in-memory link) and reports Multipeer as unavailable.
+            The Apple targets add the MultipeerConnectivity link. macOS too, for AppKit apps (samples/Sample.MacOS).
+        -->
+        <TargetFrameworks>net10.0;net10.0-ios;net10.0-maccatalyst;net10.0-macos</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.UniversalHubs</RootNamespace>
+        <Description>Shiny.UniversalHubs over Apple's MultipeerConnectivity - Apple devices host and join universal hubs over Wi-Fi, peer-to-peer Wi-Fi or Bluetooth with no network needed, beside BLE and HTTP</Description>
+        <PackageTags>$(PackageTags) multipeer multipeerconnectivity awdl peer-to-peer offline</PackageTags>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
+        <ProjectReference Include="..\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+    </ItemGroup>
+
+    <ItemGroup Condition="!$(TargetFramework.Contains('-'))">
+        <Compile Remove="Platforms\Apple\**\*.cs" />
+    </ItemGroup>
+</Project>

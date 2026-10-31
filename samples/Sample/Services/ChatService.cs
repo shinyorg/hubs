@@ -452,6 +452,7 @@ public partial class Conversation(string id, string name, bool isVisiting) : Obs
         {
             HubTransports.Ble => "🔵 here over Bluetooth",
             HubTransports.Http => "📶 here over Wi-Fi / internet",
+            HubTransports.Multipeer => "📡 here over Multipeer",
             _ => "here"
         };
         this.OnlineChanged?.Invoke(this, EventArgs.Empty);

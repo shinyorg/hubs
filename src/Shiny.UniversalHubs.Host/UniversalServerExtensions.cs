@@ -74,6 +74,10 @@ public static class UniversalServerExtensions
                 hub.AddHttp(switchboard);
         }, autoStart: false); // IUniversalHubHost starts and stops it
 
+        // transports from add-on packages (Shiny.UniversalHubs.Multipeer's server.Multipeer(...))
+        foreach (var c in server.ServiceActions)
+            c(services);
+
         return services;
     }
 }
@@ -92,6 +96,11 @@ public sealed class UniversalServerBuilder
     internal List<Action<UniversalHubHostOptions>> HttpActions { get; } = new();
     internal List<Action<ShinyHttpServerBuilder>> HttpServerActions { get; } = new();
     internal List<UniversalHubRegistration> Hubs { get; } = new();
+
+    /// <summary>
+    /// Registrations an add-on transport makes once the server is set up
+    /// </summary>
+    internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
 
     /// <summary>
     /// The HTTP base path. Each hub is served at <c>{Endpoint}/{characteristicUuid}</c> and files at <c>{Endpoint}/files</c>.
@@ -141,7 +150,7 @@ public sealed class UniversalServerBuilder
     /// (AddUniversalHubClient), and iOS hosts list it in NSBonjourServices. Hubs that share a type share one advertisement.
     /// </param>
     /// <param name="configure">
-    /// This hub's rules: MaxClients (counted across both transports), ValidateClient, and AllowTunnel
+    /// This hub's rules: MaxClients (counted across every transport), ValidateClient, and AllowTunnel
     /// </param>
     public UniversalServerBuilder AddHub<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THub>(
         string characteristicUuid,

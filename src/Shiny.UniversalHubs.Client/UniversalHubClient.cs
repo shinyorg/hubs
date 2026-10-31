@@ -9,8 +9,8 @@ using Shiny.Net.HttpServer.Discovery;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A hub client that reaches its host over Wi-Fi or BLE. Everything from IBleHubClient works the same on either - the
-/// generated proxy (<see cref="IBleHubClient{TContract}.Hub"/>), events, Disconnected and the file methods.
+/// A hub client that reaches its host over Wi-Fi, Multipeer or BLE. Everything from IBleHubClient works the same on any of
+/// them - the generated proxy (<see cref="IBleHubClient{TContract}.Hub"/>), events, Disconnected and the file methods.
 /// </summary>
 public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> where TContract : class
 {
@@ -20,15 +20,15 @@ public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> w
     HubTransports Transport { get; }
 
     /// <summary>
-    /// Watches for hosts over BLE and mDNS at once. A host seen both ways is one <see cref="HubHostInfo"/>, raised again
-    /// whenever either side changes. Dispose the subscription to stop.
-    /// A transport that can't scan (Bluetooth off, no Wi-Fi) is skipped; the other keeps going.
+    /// Watches for hosts over BLE, mDNS and Multipeer at once. A host seen several ways is one <see cref="HubHostInfo"/>,
+    /// raised again whenever any side changes. Dispose the subscription to stop.
+    /// A transport that can't scan (Bluetooth off, no Wi-Fi, Multipeer not set up) is skipped; the others keep going.
     /// </summary>
     IObservable<HubHostInfo> DiscoverAll(HubTransports transports = HubTransports.All);
 
     /// <summary>
     /// Connects over <see cref="HubConnectOptions.Prefer"/> when the host is reachable that way, and falls back to the other
-    /// transport when that fails. A host refusing the client (full, ValidateClient) is not retried.
+    /// transports (Wi-Fi, Multipeer, BLE) when that fails. A host refusing the client (full, ValidateClient) is not retried.
     /// </summary>
     Task Connect(HubHostInfo host, HubConnectOptions? options = null, CancellationToken cancellationToken = default);
 }
@@ -39,6 +39,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
     readonly IBleHubClient<TContract> inner;
     readonly BleHubClient client;
     readonly Lazy<IHttpServerLocator?> locator;
+    readonly Lazy<IReadOnlyList<IUniversalHubClientTransport>> extras;
     readonly UniversalHubClientOptions options;
     readonly ILoggerFactory? loggerFactory;
     readonly ILogger? logger;
@@ -48,12 +49,14 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         IBleHubClient<TContract> inner,
         Func<IHttpServerLocator?> locator,
         UniversalHubClientOptions options,
-        ILoggerFactory? loggerFactory = null
+        ILoggerFactory? loggerFactory = null,
+        Func<IReadOnlyList<IUniversalHubClientTransport>>? extras = null
     )
     {
         this.inner = inner;
         this.client = (BleHubClient)(object)inner;
         this.locator = new(locator);
+        this.extras = new(extras ?? (() => []));
         this.options = options;
         this.loggerFactory = loggerFactory;
         this.logger = loggerFactory?.CreateLogger<UniversalHubClient<TContract>>();
@@ -62,7 +65,12 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     public HubTransports Transport => this.inner.Status != BleHubClientStatus.Connected
         ? HubTransports.None
-        : this.client.ExternalTransport != null ? HubTransports.Http : HubTransports.Ble;
+        : this.client.ExternalTransport switch
+        {
+            null => HubTransports.Ble,
+            IHubTransportKind kind => kind.Transport,
+            _ => HubTransports.Http
+        };
 
 
     public IObservable<HubHostInfo> DiscoverAll(HubTransports transports = HubTransports.All) => Observable.Create<HubHostInfo>(async (observer, ct) =>
@@ -83,6 +91,22 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
                     hosts[key] = updated;
             }
             observer.OnNext(updated);
+        }
+
+        var extraScans = new List<IDisposable>();
+        foreach (var extra in this.extras.Value.Where(x => transports.HasFlag(x.Transport)))
+        {
+            try
+            {
+                extraScans.Add(extra.Discover(this.client).Subscribe(
+                    seen => Update(seen.Name, seen.Name, x => seen.Apply(seen.HostId == null ? x : x with { HostId = seen.HostId })),
+                    ex => this.logger?.LogWarning(ex, "{Transport} discovery stopped", extra.Transport)
+                ));
+            }
+            catch (Exception ex)
+            {
+                this.logger?.LogWarning(ex, "{Transport} discovery is unavailable", extra.Transport);
+            }
         }
 
         IDisposable? bleScan = null;
@@ -141,6 +165,8 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         finally
         {
             bleScan?.Dispose();
+            foreach (var scan in extraScans)
+                scan.Dispose();
         }
     });
 
@@ -150,22 +176,29 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         ArgumentNullException.ThrowIfNull(host);
         options ??= new HubConnectOptions();
 
-        var order = options.Prefer == HubTransports.Ble
-            ? new[] { HubTransports.Ble, HubTransports.Http }
-            : [HubTransports.Http, HubTransports.Ble];
+        var order = options.Order.Where(x => options.Allowed.HasFlag(x) && host.Transports.HasFlag(x));
 
         var errors = new List<Exception>();
         foreach (var transport in order)
         {
-            if (!options.Allowed.HasFlag(transport) || !host.Transports.HasFlag(transport))
-                continue;
-
             try
             {
-                if (transport == HubTransports.Http)
-                    await this.ConnectHttpOrRediscover(host.Http!, options, cancellationToken).ConfigureAwait(false);
-                else
-                    await this.inner.Connect(host.Ble!, options.ToBle(), cancellationToken).ConfigureAwait(false);
+                switch (transport)
+                {
+                    case HubTransports.Http:
+                        await this.ConnectHttpOrRediscover(host.Http!, options, cancellationToken).ConfigureAwait(false);
+                        break;
+
+                    case HubTransports.Ble:
+                        await this.inner.Connect(host.Ble!, options.ToBle(), cancellationToken).ConfigureAwait(false);
+                        break;
+
+                    default:
+                        var extra = this.extras.Value.FirstOrDefault(x => x.Transport == transport)
+                                    ?? throw new BleHubException($"{transport} is not set up on this client");
+                        await extra.Connect(this.client, host, options.ToBle(), cancellationToken).ConfigureAwait(false);
+                        break;
+                }
 
                 this.logger?.LogInformation("Connected to {Host} over {Transport}", host.Name, transport);
                 return;

@@ -15,6 +15,8 @@
 	<array>
 		<string>_unigame._tcp</string>
 		<string>_unichat._tcp</string>
+		<string>_unihub-mc._tcp</string>
+		<string>_unihub-mc._udp</string>
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>The microphone carries your voice on calls</string>

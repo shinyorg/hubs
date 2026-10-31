@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Switchboard;
 
@@ -6,13 +7,13 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// A client connected to a hub, over either transport
 /// </summary>
-/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over Wi-Fi</param>
-/// <param name="Transport">How the client is connected - <see cref="HubTransports.Ble"/> or <see cref="HubTransports.Http"/></param>
+/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over Wi-Fi, <c>mc:{id}</c> over Multipeer</param>
+/// <param name="Transport">How the client is connected - <see cref="HubTransports.Ble"/>, <see cref="HubTransports.Http"/> or <see cref="HubTransports.Multipeer"/></param>
 /// <param name="Client">The client's handshake details and per connection state</param>
 public sealed record HubConnection(string Id, HubTransports Transport, BleHubConnectedClient Client)
 {
     /// <summary>
-    /// Your own state for this connection, kept for as long as it is connected - the same bag on both transports
+    /// Your own state for this connection, kept for as long as it is connected - the same bag on every transport
     /// (<see cref="BleHubConnectedClient.Items"/>). Not to be confused with <see cref="BleHubConnectedClient.Properties"/>,
     /// the read-only values the client sent in its handshake.
     /// </summary>
@@ -32,22 +33,39 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     public CallerContext? Http { get; init; }
 
     /// <summary>
+    /// The MultipeerConnectivity peer the client is connected through - null on the other transports
+    /// </summary>
+    public MultipeerPeer? Multipeer { get; init; }
+
+    /// <summary>
     /// Prefixed to the Switchboard line id to make a Wi-Fi connection id
     /// </summary>
     internal const string HttpPrefix = "sb:";
 
     /// <summary>
-    /// Which transport a connection id belongs to. Wi-Fi ids are <c>sb:{lineId}</c>; anything else is a BLE peripheral.
+    /// Prefixed to the session id to make a Multipeer connection id
+    /// </summary>
+    internal const string MultipeerPrefix = "mc:";
+
+    /// <summary>
+    /// Which transport a connection id belongs to. Wi-Fi ids are <c>sb:{lineId}</c>, Multipeer ids <c>mc:{id}</c>; anything
+    /// else is a BLE peripheral.
     /// </summary>
     public static HubTransports GetTransport(string connectionId)
-        => connectionId.StartsWith(HttpPrefix, StringComparison.Ordinal) ? HubTransports.Http : HubTransports.Ble;
+    {
+        if (connectionId.StartsWith(HttpPrefix, StringComparison.Ordinal))
+            return HubTransports.Http;
+
+        return connectionId.StartsWith(MultipeerPrefix, StringComparison.Ordinal) ? HubTransports.Multipeer : HubTransports.Ble;
+    }
 
     public static HubConnection From(BleHubConnectedClient client)
     {
         var transport = GetTransport(client.Id);
         return new(client.Id, transport, client)
         {
-            Http = transport == HubTransports.Http ? HttpCall.Current : null
+            Http = transport == HubTransports.Http ? HttpCall.Current : null,
+            Multipeer = transport == HubTransports.Multipeer ? MultipeerPeers.Find(client.Id) : null
         };
     }
 
@@ -104,4 +122,24 @@ internal static class HttpCall
         get => current.Value;
         set => current.Value = value;
     }
+}
+
+
+/// <summary>
+/// A client's MultipeerConnectivity peer
+/// </summary>
+/// <param name="DisplayName">The name the client's device gave its peer - the hub's own client name is <see cref="BleHubConnectedClient.Name"/></param>
+public sealed record MultipeerPeer(string DisplayName);
+
+
+/// <summary>
+/// The Multipeer peer behind each Multipeer connection id, kept by Shiny.UniversalHubs.Multipeer while it is connected
+/// </summary>
+internal static class MultipeerPeers
+{
+    static readonly ConcurrentDictionary<string, MultipeerPeer> peers = new(StringComparer.Ordinal);
+
+    public static void Add(string connectionId, MultipeerPeer peer) => peers[connectionId] = peer;
+    public static void Remove(string connectionId) => peers.TryRemove(connectionId, out _);
+    public static MultipeerPeer? Find(string connectionId) => peers.TryGetValue(connectionId, out var peer) ? peer : null;
 }

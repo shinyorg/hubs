@@ -49,12 +49,16 @@ public static class UniversalHubClientExtensions
         services.AddBleHubClient<TContract>(characteristicUuid, o => o.ServiceUuid = options.ServiceUuid);
         services.AddHttpServerLocator();
 
+        foreach (var c in options.ServiceActions)
+            c(services);
+
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
             sp.GetRequiredService<IBleHubClient<TContract>>(),
             // resolved on first discovery, so connecting to a known host needs no mDNS stack
             () => sp.GetService<IHttpServerLocator>(),
             options,
-            sp.GetService<ILoggerFactory>()
+            sp.GetService<ILoggerFactory>(),
+            () => options.Transports.Select(x => x(sp)).ToList()
         ));
         return services;
     }

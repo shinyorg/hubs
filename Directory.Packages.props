@@ -2,7 +2,7 @@
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
         <HttpServerVersion>2.2.0</HttpServerVersion>
-        <ShinyVersion>6.1.1</ShinyVersion>
+        <ShinyVersion>6.5.1</ShinyVersion>
         <!-- pinned rather than taken from the installed MAUI workload; the AppKit backend (Microsoft.Maui.Platforms.MacOS) needs 10.0.70+ -->
         <MauiVersion>10.0.110</MauiVersion>
         <!-- not on nuget.org yet: built from ~/Desktop/dev/actors. Bump to the published version once it ships. -->

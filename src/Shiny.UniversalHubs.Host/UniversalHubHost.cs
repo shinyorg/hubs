@@ -9,7 +9,7 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// Starts and stops hosting. Every hub at once (<see cref="Start"/> / <see cref="Stop"/>), or one hub at a time
 /// (<see cref="StartHub{THub}"/> / <see cref="StopHub{THub}"/>) - an always-on hub beside one that only runs on demand.
-/// Either way a hub is the same hub on both transports: BLE and HTTP clients share Clients, Groups, MaxClients and
+/// Either way a hub is the same hub on every transport: BLE, HTTP and Multipeer clients share Clients, Groups, MaxClients and
 /// IHubContext.
 /// </summary>
 public interface IUniversalHubHost
@@ -42,7 +42,7 @@ public interface IUniversalHubHost
     Task<HubTransports> StartHub<THub>(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default) where THub : class;
 
     /// <summary>
-    /// Stops only <typeparamref name="THub"/> on both transports; its clients are told why. The HTTP server stops with the
+    /// Stops only <typeparamref name="THub"/> on every transport; its clients are told why. The HTTP server stops with the
     /// last hub hosted over HTTP.
     /// </summary>
     Task StopHub<THub>(string? reason = null) where THub : class;
@@ -84,9 +84,10 @@ internal sealed class UniversalHubHost(
     public string? HostName => bleOptions.LocalName;
     public string HostId => options.HostId;
 
-    public HubTransports RunningTransports =>
-        (bleHost.IsRunning ? HubTransports.Ble : HubTransports.None)
-        | (this.IsHttpRunning ? HubTransports.Http : HubTransports.None);
+    public HubTransports RunningTransports => this.Extras.Aggregate(
+        (bleHost.IsRunning ? HubTransports.Ble : HubTransports.None) | (this.IsHttpRunning ? HubTransports.Http : HubTransports.None),
+        (all, transport) => this.Hubs.Any(transport.IsRunning) ? all | transport.Transport : all
+    );
 
     public IReadOnlyList<string> ListenUrls => this.IsHttpRunning ? this.Server.ListenUrls : [];
 
@@ -94,6 +95,9 @@ internal sealed class UniversalHubHost(
 
     HttpServer Server => (HttpServer)(services.GetService(typeof(HttpServer)) ?? throw new InvalidOperationException("No HttpServer is registered - call AddShinyHttpServer"));
     IReadOnlyList<IHubBinding> Hubs => ((IEnumerable<IHubBinding>)services.GetService(typeof(IEnumerable<IHubBinding>))!).ToList();
+
+    // transports beyond BLE and HTTP, from add-on packages (Shiny.UniversalHubs.Multipeer)
+    IReadOnlyList<IUniversalHubTransport> Extras => ((IEnumerable<IUniversalHubTransport>)services.GetService(typeof(IEnumerable<IUniversalHubTransport>))!).ToList();
 
 
     public Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default)
@@ -106,12 +110,13 @@ internal sealed class UniversalHubHost(
 
     public Task StopHub<THub>(string? reason = null) where THub : class => this.StopHubs([this.Find<THub>()], reason, all: false);
 
-    public HubTransports GetRunningTransports<THub>() where THub : class
-    {
-        var hub = this.Find<THub>();
-        return (hub.IsBleRunning ? HubTransports.Ble : HubTransports.None)
-               | (hub.IsHttpRunning ? HubTransports.Http : HubTransports.None);
-    }
+    public HubTransports GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Find<THub>());
+
+
+    HubTransports RunningOn(IHubBinding hub) => this.Extras.Aggregate(
+        (hub.IsBleRunning ? HubTransports.Ble : HubTransports.None) | (hub.IsHttpRunning ? HubTransports.Http : HubTransports.None),
+        (all, transport) => transport.IsRunning(hub) ? all | transport.Transport : all
+    );
 
 
     IHubBinding Find<THub>() where THub : class
@@ -159,15 +164,38 @@ internal sealed class UniversalHubHost(
                 }
             }
 
-            var running = hubs.Aggregate(
-                HubTransports.All,
-                (all, hub) => all & ((hub.IsBleRunning ? HubTransports.Ble : HubTransports.None) | (hub.IsHttpRunning ? HubTransports.Http : HubTransports.None))
-            );
+            var toStart = this.Extras
+                .Where(x => transports.HasFlag(x.Transport))
+                .Select(x => (Transport: x, Hubs: hubs.Where(h => !x.IsRunning(h)).ToList()))
+                .Where(x => x.Hubs.Count > 0);
+
+            foreach (var (transport, stopped) in toStart)
+            {
+                try
+                {
+                    await transport.Start(stopped, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // an add-on transport this platform doesn't have (Multipeer on Android) is expected, not a problem
+                    if (ex is PlatformNotSupportedException)
+                        logger?.LogDebug("{Transport} hosting is not available here: {Message}", transport.Transport, ex.Message);
+                    else
+                        logger?.LogWarning(ex, "{Transport} hosting did not start", transport.Transport);
+                    errors.Add(ex);
+                }
+            }
+
+            var running = hubs.Aggregate(HubTransports.All, (all, hub) => all & this.RunningOn(hub));
             if ((running & transports) == HubTransports.None)
             {
-                throw errors.Count == 1
-                    ? errors[0]
-                    : new AggregateException("No transport could start", errors);
+                throw errors.Count switch
+                {
+                    // eg. Multipeer alone, without Shiny.UniversalHubs.Multipeer set up
+                    0 => new InvalidOperationException($"None of {transports} is set up on this host"),
+                    1 => errors[0],
+                    _ => new AggregateException("No transport could start", errors)
+                };
             }
             return running & transports;
         }
@@ -186,6 +214,22 @@ internal sealed class UniversalHubHost(
             var httpHubs = hubs.Where(x => x.IsHttpRunning).ToList();
             if (httpHubs.Count > 0)
                 await this.StopHttp(httpHubs, reason).ConfigureAwait(false);
+
+            var toStop = this.Extras
+                .Select(x => (Transport: x, Hubs: hubs.Where(x.IsRunning).ToList()))
+                .Where(x => x.Hubs.Count > 0);
+
+            foreach (var (transport, running) in toStop)
+            {
+                try
+                {
+                    await transport.Stop(running, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason)).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogWarning(ex, "{Transport} hosting did not stop cleanly", transport.Transport);
+                }
+            }
 
             // stopping a hub over BLE also disconnects anyone left on another transport
             if (all)

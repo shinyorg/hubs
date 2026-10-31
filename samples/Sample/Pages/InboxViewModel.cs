@@ -83,7 +83,8 @@ public partial class InboxViewModel(
             : "Others can reach you over " + String.Join(" + ", new[]
             {
                 over.HasFlag(HubTransports.Ble) ? "🔵 Bluetooth" : null,
-                over.HasFlag(HubTransports.Http) ? "📶 Wi-Fi" : null
+                over.HasFlag(HubTransports.Http) ? "📶 Wi-Fi" : null,
+                over.HasFlag(HubTransports.Multipeer) ? "📡 Multipeer" : null
             }.Where(x => x != null));
 
         this.People.Clear();

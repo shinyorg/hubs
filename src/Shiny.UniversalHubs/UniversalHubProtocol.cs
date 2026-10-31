@@ -13,7 +13,14 @@ public enum HubTransports
     None = 0,
     Ble = 1,
     Http = 2,
-    All = Ble | Http
+
+    /// <summary>
+    /// Apple's MultipeerConnectivity (Wi-Fi, peer-to-peer Wi-Fi and Bluetooth, with no network needed) - Apple devices
+    /// only, and only once the Shiny.UniversalHubs.Multipeer package is set up. Without it, asking for it does nothing.
+    /// </summary>
+    Multipeer = 4,
+
+    All = Ble | Http | Multipeer
 }
 
 

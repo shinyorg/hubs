@@ -12,12 +12,15 @@ Both kinds of client share the same hub, groups and pushes.
 - **Files**: L2CAP over BLE, plain HTTP over Wi-Fi, behind the same `UploadFile` / `DownloadFile`.
 - **Media channels**: blehubs' ordered packet pipe beside each hub connection works over Wi-Fi too (a WebSocket), so live
   audio and video run on either transport. The sample uses it for FaceTime-style calls.
+- **Multipeer** (optional, Apple only): add `Shiny.UniversalHubs.Multipeer` and iPhones, iPads and Macs also reach each
+  other over Apple's MultipeerConnectivity, at Wi-Fi speed with no shared network at all. See [Multipeer](#multipeer-apple-devices-no-network).
 
 | Package | What it is |
 |---|---|
 | `Shiny.UniversalHubs.Host` | `AddUniversalHubs().AddHub<THub>()`, `IUniversalHubHost` |
 | `Shiny.UniversalHubs.Client` | `AddUniversalHubClient<TContract>()`, `IUniversalHubClient<TContract>` |
 | `Shiny.UniversalHubs` | The shared Wi-Fi wire protocol. Comes with both. |
+| `Shiny.UniversalHubs.Multipeer` | `server.Multipeer(...)` and `o.Multipeer(...)`: the MultipeerConnectivity transport for iOS, Mac Catalyst and macOS |
 
 ## Host
 
@@ -145,19 +148,20 @@ services.AddUniversalServer(server => server
 ### Disconnect reasons
 
 Every disconnect carries a `HubDisconnect`: a `HubDisconnectReason` you can switch on, plus an optional message. It
-means the same thing on both transports, and the host and the client see the same value:
+means the same thing on every transport, and the host and the client see the same value:
 
-| Reason | BLE | HTTP |
-|---|---|---|
-| `ClientDisconnect` | the client called `Disconnect()` (it says goodbye before unsubscribing) | the client closed its line |
-| `ClientTimeout` | an unsubscribe without a goodbye, or the client sweep | the line dropped and its resume window ran out |
-| `ServerDisconnect` | `Context.Abort` / `IHubContext.Disconnect` | the same |
-| `ServerShutdown` | `IUniversalHubHost.Stop`, `IHubContext.Stop` | the same |
-| `ConnectionFailed` | the link failed | the line faulted |
+| Reason | BLE | HTTP | Multipeer |
+|---|---|---|---|
+| `ClientDisconnect` | the client called `Disconnect()` (it says goodbye before unsubscribing) | the client closed its line | the client said goodbye, then ended its session |
+| `ClientTimeout` | an unsubscribe without a goodbye, or the client sweep | the line dropped and its resume window ran out | the session ended without a goodbye |
+| `ServerDisconnect` | `Context.Abort` / `IHubContext.Disconnect` | the same | the same |
+| `ServerShutdown` | `IUniversalHubHost.Stop`, `IHubContext.Stop` | the same | the same |
+| `ConnectionFailed` | the link failed | the line faulted | the connect failed |
 
 - **Host:** `UniversalHub.OnDisconnectedAsync(connection, disconnect)` and `IHubContext.ClientDisconnected` carry it.
 - **Client:** `Disconnected`, `StatusChanged` (`e.Disconnect`) and `BleHubDisconnectedException.Disconnect` carry it.
-- **Short drops:** a brief HTTP drop that resumes isn't a disconnect at all.
+- **Short drops:** a brief HTTP drop that resumes isn't a disconnect at all. Multipeer has no resume: a dropped session
+  is a `ClientTimeout`.
 
 ## Client
 
@@ -175,15 +179,15 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
     async Task Join(HubHostInfo host)
     {
         await client.Connect(host, new HubConnectOptions("Allan") { Prefer = HubTransports.Http });
-        // client.Transport is Http or Ble
+        // client.Transport is Http, Multipeer or Ble
         await client.Hub.MakeMove(4);
     }
 }
 ```
 
-- `Prefer` is tried first when the host is reachable both ways, and the other transport is the fallback. `Allowed`
-  limits which transports may be used at all.
-- A refusal (host full, `ValidateClient`, not running) is not retried on the other transport.
+- `Prefer` is tried first when the host is reachable more than one way. The rest follow in the order Wi-Fi, Multipeer,
+  BLE. `Allowed` limits which transports may be used at all.
+- A refusal (host full, `ValidateClient`, not running) is not retried on another transport.
 - A host that restarted listens on a new port, and one that was killed never sent mDNS its goodbye, so discovery can
   still hold its old address. When no address answers, the client looks the host up again by name
   (`UniversalHubClientOptions.HttpRediscoverTimeout`, 3 seconds) and retries where it is now, before falling back to BLE.
@@ -217,27 +221,66 @@ if (client.CanOpenMediaChannel)
 - Through a tunnel, a hub's channels open only if that hub allows tunnels.
 - On devices, the WebSocket uses its own sockets, because the platform HTTP handlers can't upgrade.
 
+## Multipeer (Apple devices, no network)
+
+`Shiny.UniversalHubs.Multipeer` adds Apple's MultipeerConnectivity as a third transport. MultipeerConnectivity picks the
+radio itself: the Wi-Fi network if both devices are on one, peer-to-peer Wi-Fi (AWDL) if not, Bluetooth if Wi-Fi is off.
+Two iPhones on a plane get Wi-Fi bandwidth instead of BLE's, and no MTU. Android can't use it: Android players keep using
+Wi-Fi or BLE against the same host, in the same hub.
+
+```csharp
+// host - one Multipeer service type per host, like the BLE service UUID
+services.AddUniversalServer(server => server
+    .Multipeer("mygame-mc")
+    .AddHub<GameHub>(CharacteristicUuid, "_mygame._tcp"));
+
+// client
+services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp", o => o.Multipeer("mygame-mc"));
+```
+
+- **The service type** is 1-15 lowercase letters, digits and hyphens, and must not be the name in a hub's mDNS type
+  (`mygame` for `_mygame._tcp`): Multipeer advertises over Bonjour too. Every running hub is listed in the one
+  advertisement, with the same keys as the mDNS TXT record.
+- **Info.plist** needs `_mygame-mc._tcp` and `_mygame-mc._udp` in `NSBonjourServices`, and an
+  `NSLocalNetworkUsageDescription`. Without them iOS finds nothing and says nothing. The library logs a warning at start
+  when either is missing.
+- **`HubTransports.All` includes Multipeer.** `Start()` hosts over it when the package is set up and skips it where
+  MultipeerConnectivity doesn't exist (Android, Windows, Linux), so the same registration works in a cross-platform app.
+- **Discovery and connect:** `DiscoverAll` merges Multipeer hosts with BLE and mDNS ones by name
+  (`HubHostInfo.Multipeer`). `Connect` tries Multipeer after Wi-Fi and before BLE.
+- **One session per hub connection.** The host accepts each invitation into its own `MCSession`, so MultipeerConnectivity's
+  8-peer limit never applies and clients never connect to each other. Sessions are always encrypted.
+- **What the hub sees:** connection ids are `mc:{id}`, `connection.Transport` is `Multipeer`, and `connection.Multipeer`
+  has the peer's display name (`MultipeerClientOptions.DisplayName`).
+- **Values travel as binary**, exactly as `IBleHubSerializer` wrote them, like BLE. Any serializer works, not only JSON.
+- **Renames work** (`client.Rename`, `HostRenamed`), as they do over BLE.
+- **Files** move as Multipeer resources, under the same `EnableFileTransfers` and `AuthorizeFile` rules as HTTP.
+  **Media channels** ride the session as reliable, ordered messages.
+- **No resume.** MultipeerConnectivity sessions end when the app goes to the background. A dropped session is a
+  disconnect (`ClientTimeout`); reconnect as you would over BLE.
+
 ## Platform setup
 
 | | Host | Client |
 |---|---|---|
-| iOS | `NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`, `NSBonjourServices` = your hubs' mDNS service types | the same, plus `NSAppTransportSecurity` / `NSAllowsLocalNetworking` (games are plain HTTP on the LAN) |
+| iOS / macOS | `NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`, `NSBonjourServices` = your hubs' mDNS service types, plus `_{type}._tcp` and `_{type}._udp` for the Multipeer service type | the same, plus `NSAppTransportSecurity` / `NSAllowsLocalNetworking` (games are plain HTTP on the LAN) |
 | Android | BLE permissions, `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE` | the same, plus `android:usesCleartextTraffic="true"` |
 
 ## Things to know
 
 - **Plane, hotel and public Wi-Fi usually isolate clients from each other.** mDNS and device-to-device traffic are
-  blocked there, which is why BLE is the fallback.
+  blocked there, which is why BLE is the fallback. Between Apple devices, Multipeer works there too.
 - Hosting runs while the app is in the foreground, the same as BLE hosting.
-- Hub values are carried as JSON over Wi-Fi. They are re-framed, never re-serialized, so `IBleHubSerializer` must produce
-  JSON (the default does).
+- Hub values are carried as JSON over HTTP. They are re-framed, never re-serialized, so `IBleHubSerializer` must produce
+  JSON (the default does). BLE and Multipeer carry them as-is.
 - The host still needs a BLE hosting stack registered (`AddBluetoothLeHosting`) even if Bluetooth is off. Wi-Fi-only
   hosting works on a device whose Bluetooth is off or unavailable.
 - An mDNS TXT record fits about six hubs per host.
 
 ## Sample
 
-`samples/Sample` is the Shiny.BluetoothLE.Hubs tic-tac-toe game, hosting over both transports, plus an always-on chat:
+`samples/Sample` is the Shiny.BluetoothLE.Hubs tic-tac-toe game, hosting over every transport (BLE, Wi-Fi, and
+Multipeer between iPhones and Macs), plus an always-on chat:
 
 - **Game:** each hosted game is its own Shiny.Actors `GameActor`. `GameHub` runs only while hosting
   (`StartHub`/`StopHub<GameHub>`). The join list shows how each game is reachable, and the game screen says which
@@ -275,3 +318,7 @@ dotnet build samples/Sample.MacOS -t:Run
 
 > Shiny.Actors isn't on nuget.org yet; the sample references a local build (`ActorsVersion` in
 > `Directory.Packages.props`) until it is.
+
+## Commercial Support
+
+Shipping this to production? [ShinySoft Technologies](https://shinysoft.biz), the company that builds and maintains the Shiny libraries, offers priority issue response, support agreements, architecture reviews and private office hours. See [Commercial Support](https://shinylib.net/foundation/support/?utm_source=github&utm_medium=readme#commercial-support) or [get in touch](https://shinysoft.biz/contact?utm_source=github&utm_medium=readme). Community support through GitHub issues and discussions stays free.

@@ -22,6 +22,7 @@ public static class MauiProgram
     const string GameMdnsServiceType = "_unigame._tcp";
     const string ChatHubCharacteristicUuid = "37625851-7287-4de0-92f8-0b8a25e755ec";
     const string ChatMdnsServiceType = "_unichat._tcp";
+    const string MultipeerServiceType = "unihub-mc";
 
 
     public static MauiApp CreateMauiApp()
@@ -58,6 +59,7 @@ public static class MauiProgram
         // ---- host: the same universal server as the phone app ----
         builder.Services.AddUniversalServer(server => server
             .ServiceUuid(ServiceUuid)
+            .Multipeer(MultipeerServiceType)   // iPhones reach the Mac with no shared network
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
                 ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
@@ -82,9 +84,17 @@ public static class MauiProgram
             })
         );
 
-        // ---- client: finds hosts over BLE and mDNS ----
-        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
+        // ---- client: finds hosts over BLE, mDNS and Multipeer ----
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
+        {
+            o.ServiceUuid = ServiceUuid;
+            o.Multipeer(MultipeerServiceType);
+        });
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
+        {
+            o.ServiceUuid = ServiceUuid;
+            o.Multipeer(MultipeerServiceType);
+        });
 
         // calls, as on the phones
         builder.Services.AddHubCalls(calls => calls.Host<ChatHub>().Client<IChatHub>());

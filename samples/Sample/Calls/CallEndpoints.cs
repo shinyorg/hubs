@@ -144,7 +144,8 @@ internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
 
     void Attach(string connectionId, IBleHubMediaChannel channel)
     {
-        var profile = HubConnection.GetTransport(connectionId) == HubTransports.Http ? CallProfile.Wifi : CallProfile.Ble;
+        // Multipeer has Wi-Fi bandwidth, so only BLE gets the low-bandwidth profile
+        var profile = HubConnection.GetTransport(connectionId) == HubTransports.Ble ? CallProfile.Ble : CallProfile.Wifi;
         var link = new MediaLink(channel, connectionId, profile, this.logger);
         link.KeyFrameNeeded += this.OnKeyFrameNeeded;
 

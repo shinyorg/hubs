@@ -1,15 +1,16 @@
+using Microsoft.Extensions.DependencyInjection;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A host found over BLE, Wi-Fi or both. <see cref="UniversalHubClient{TContract}.DiscoverAll"/> raises a fresh snapshot
-/// whenever either side changes; when <see cref="Transports"/> is None the host has gone.
+/// A host found over BLE, Wi-Fi, Multipeer or several of them. <see cref="UniversalHubClient{TContract}.DiscoverAll"/>
+/// raises a fresh snapshot whenever any side changes; when <see cref="Transports"/> is None the host has gone.
 /// </summary>
-/// <param name="Key">Stable for one host across both transports - its advertised name</param>
+/// <param name="Key">Stable for one host across every transport - its advertised name</param>
 /// <param name="Name">The host's name</param>
-/// <param name="HostId">From mDNS, when the host has been seen on Wi-Fi</param>
+/// <param name="HostId">From mDNS or Multipeer, when the host has been seen there</param>
 /// <param name="Ble">Set while the host is seen over BLE</param>
 /// <param name="Http">Set while the host is seen over mDNS</param>
 public sealed record HubHostInfo(
@@ -20,9 +21,15 @@ public sealed record HubHostInfo(
     DiscoveredHttpServer? Http
 )
 {
+    /// <summary>
+    /// Set while the host is seen over MultipeerConnectivity (Shiny.UniversalHubs.Multipeer)
+    /// </summary>
+    public MultipeerHost? Multipeer { get; init; }
+
     public HubTransports Transports =>
         (this.Ble != null ? HubTransports.Ble : HubTransports.None)
-        | (this.Http != null ? HubTransports.Http : HubTransports.None);
+        | (this.Http != null ? HubTransports.Http : HubTransports.None)
+        | (this.Multipeer != null ? HubTransports.Multipeer : HubTransports.None);
 
     /// <summary>
     /// Signal strength, when seen over BLE
@@ -65,14 +72,30 @@ public sealed record HubConnectOptions(
 )
 {
     /// <summary>
-    /// Tried first when the host is reachable both ways. Wi-Fi by default: more range, more bandwidth, no MTU.
+    /// Tried first when the host is reachable more than one way. Wi-Fi by default: more range, more bandwidth, no MTU.
+    /// The rest follow in the order Wi-Fi, Multipeer, BLE.
     /// </summary>
     public HubTransports Prefer { get; init; } = HubTransports.Http;
 
     /// <summary>
-    /// Transports that may be used at all - the other one is the fallback when the preferred one fails
+    /// Transports that may be used at all - the others are the fallback when the preferred one fails
     /// </summary>
     public HubTransports Allowed { get; init; } = HubTransports.All;
+
+    /// <summary>
+    /// The order transports are tried in: <see cref="Prefer"/>, then Wi-Fi, Multipeer and BLE. Wi-Fi comes first among the
+    /// rest because Android peers can use it too; Multipeer beats BLE because it is Wi-Fi fast with no network at all.
+    /// </summary>
+    internal IReadOnlyList<HubTransports> Order
+    {
+        get
+        {
+            HubTransports[] order = [HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble];
+            return order.Contains(this.Prefer)
+                ? [this.Prefer, .. order.Where(x => x != this.Prefer)]
+                : order;
+        }
+    }
 
     internal BleHubConnectOptions ToBle() => new(this.Name, this.AppVersion, this.Properties);
 }
@@ -111,4 +134,65 @@ public class UniversalHubClientOptions
     /// The HTTP stack for Wi-Fi connections - tests swap in an in-memory handler
     /// </summary>
     public Func<HttpMessageHandler>? HttpMessageHandlerFactory { get; set; }
+
+    /// <summary>
+    /// Transports beyond BLE and HTTP, from add-on packages (Shiny.UniversalHubs.Multipeer's <c>o.Multipeer(...)</c>)
+    /// </summary>
+    internal List<Func<IServiceProvider, IUniversalHubClientTransport>> Transports { get; } = new();
+
+    /// <summary>
+    /// Registrations those add-on transports need
+    /// </summary>
+    internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
+}
+
+
+/// <summary>
+/// A host seen over MultipeerConnectivity. The peer itself stays inside Shiny.UniversalHubs.Multipeer.
+/// </summary>
+/// <param name="DisplayName">The host's Multipeer display name</param>
+/// <param name="Info">What it advertises - the same keys as its mDNS TXT record (<see cref="UniversalHubProtocol.TxtHubs"/>, ...)</param>
+public sealed record MultipeerHost(string DisplayName, IReadOnlyDictionary<string, string> Info)
+{
+    /// <summary>
+    /// The native peer (an MCPeerID) - only the Multipeer package knows what to do with it
+    /// </summary>
+    internal object? Peer { get; init; }
+}
+
+
+/// <summary>
+/// A transport beyond BLE and HTTP that a universal hub client can discover hosts over and connect through
+/// </summary>
+internal interface IUniversalHubClientTransport
+{
+    HubTransports Transport { get; }
+
+    /// <summary>
+    /// Hosts of <paramref name="client"/>'s hub as they come and go. Errors end only this transport's discovery.
+    /// </summary>
+    IObservable<HubHostSighting> Discover(BleHubClient client);
+
+    /// <summary>
+    /// Connects <paramref name="client"/> to <paramref name="host"/> - through <see cref="BleHubClient.ConnectExternal"/>
+    /// </summary>
+    Task Connect(BleHubClient client, HubHostInfo host, BleHubConnectOptions options, CancellationToken cancellationToken);
+}
+
+
+/// <summary>
+/// A host appearing on, changing on, or leaving one transport
+/// </summary>
+/// <param name="Name">The host's name - how it is merged with what the other transports see</param>
+/// <param name="HostId">The host's id, when the transport knows it</param>
+/// <param name="Apply">Puts what this transport sees into the merged host: sets its endpoint when found, clears it when lost</param>
+internal sealed record HubHostSighting(string Name, string? HostId, Func<HubHostInfo, HubHostInfo> Apply);
+
+
+/// <summary>
+/// Implemented by each external client transport, so the client can say which one a connection is on
+/// </summary>
+internal interface IHubTransportKind
+{
+    HubTransports Transport { get; }
 }

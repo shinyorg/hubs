@@ -77,6 +77,7 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
         log.Add($"connected-request:{connection.Http?.HttpContext?.Request.Method}");
         connection.Properties["greeting"] = $"hello {connection.Client.Name}";
         log.Add($"connected-via:{connection.Transport}:{connection.Id}");
+        log.Add($"connected-peer:{connection.Multipeer?.DisplayName}");
         return Task.CompletedTask;
     }
 
@@ -86,6 +87,7 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
         log.Add($"reason:{connection.Client.Name}:{disconnect.Reason}");
         log.Add($"disconnected-via:{connection.Transport}:{connection.Id}");
         log.Add($"disconnected-http:{(connection.Http == null ? "none" : "set")}");
+        log.Add($"disconnected-peer:{connection.Multipeer?.DisplayName}");
         return Task.CompletedTask;
     }
 

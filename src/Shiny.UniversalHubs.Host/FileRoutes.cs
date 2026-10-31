@@ -147,16 +147,23 @@ internal static class FileRoutes
         if (client == null)
             return (StatusCodes.Status401Unauthorized, "A file token from a connected hub client is required");
 
+        path = ResolvePath(ft, name);
+        return path == null ? (StatusCodes.Status400BadRequest, "Invalid file name") : null;
+    }
+
+
+    /// <summary>
+    /// The full path of <paramref name="name"/> inside the file transfer directory, or null when it is not a plain file
+    /// name there (empty, a path, traversal). Every transport uses this.
+    /// </summary>
+    internal static string? ResolvePath(BleHubFileTransferOptions ft, string? name)
+    {
         if (String.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(['/', '\\']) >= 0 || Path.GetFileName(name) != name)
-            return (StatusCodes.Status400BadRequest, "Invalid file name");
+            return null;
 
         var root = Path.GetFullPath(ft.RootDirectory);
         var full = Path.GetFullPath(Path.Combine(root, name));
-        if (!full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            return (StatusCodes.Status400BadRequest, "Invalid file name");
-
-        path = full;
-        return null;
+        return full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? full : null;
     }
 
 

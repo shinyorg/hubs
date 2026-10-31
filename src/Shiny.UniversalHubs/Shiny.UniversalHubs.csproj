@@ -9,6 +9,7 @@
         <ProjectReference Include="..\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Host" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Client" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Multipeer" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
     </ItemGroup>
 </Project>

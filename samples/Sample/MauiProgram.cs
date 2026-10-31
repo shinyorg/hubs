@@ -35,6 +35,13 @@ public static class MauiProgram
     public const string ChatHubCharacteristicUuid = "37625851-7287-4de0-92f8-0b8a25e755ec";
     public const string ChatMdnsServiceType = "_unichat._tcp";
 
+    /// <summary>
+    /// The MultipeerConnectivity service type: one per host, like the BLE service, so both hubs are listed in its one
+    /// advertisement. iPhones and Macs reach each other through it with no shared network. NSBonjourServices lists
+    /// _unihub-mc._tcp and _unihub-mc._udp. On Android it does nothing - Android peers use Wi-Fi or BLE.
+    /// </summary>
+    public const string MultipeerServiceType = "unihub-mc";
+
 
     public static MauiApp CreateMauiApp()
     {
@@ -64,9 +71,10 @@ public static class MauiProgram
         // every chat conversation and every hosted game is an actor - conversations are kept on disk, games in memory
         builder.Services.AddShinyActors(actors => actors.UseFileStorage(Path.Combine(FileSystem.AppDataDirectory, "actors")));
 
-        // ---- host: a universal server - GameHub served over BLE and HTTP at once (adds the BLE hosting stack too) ----
+        // ---- host: a universal server - GameHub served over BLE, HTTP and Multipeer at once (adds the BLE hosting stack too) ----
         builder.Services.AddUniversalServer(server => server
             .ServiceUuid(ServiceUuid)   // the one BLE service every hub lives in - clients use the same one
+            .Multipeer(MultipeerServiceType)   // Apple to Apple with no network: Wi-Fi speed instead of BLE
             .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
             {
                 ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
@@ -92,9 +100,17 @@ public static class MauiProgram
             })   // started with the app, and left running
         );
 
-        // ---- client: discovers hosts over BLE and mDNS, connects over whichever works (adds the BLE stack too) ----
-        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o => o.ServiceUuid = ServiceUuid);
+        // ---- client: discovers hosts over BLE, mDNS and Multipeer, connects over whichever works (adds the BLE stack too) ----
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
+        {
+            o.ServiceUuid = ServiceUuid;
+            o.Multipeer(MultipeerServiceType);
+        });
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
+        {
+            o.ServiceUuid = ServiceUuid;
+            o.Multipeer(MultipeerServiceType);
+        });
 
         // ---- calls: FaceTime the person in a chat, over Wi-Fi or Bluetooth ----
         builder.Services.AddHubCalls(calls => calls

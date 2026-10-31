@@ -48,13 +48,19 @@ public partial class GameViewModel : ObservableObject,
 
     public string Transport => (this.session.IsHost, this.session.Transports) switch
     {
-        (true, HubTransports.All) => "Hosting over Wi-Fi and Bluetooth",
-        (true, HubTransports.Http) => "Hosting over Wi-Fi only (Bluetooth is unavailable)",
-        (true, HubTransports.Ble) => "Hosting over Bluetooth only (no Wi-Fi network)",
-        (false, HubTransports.Http) => "Connected over Wi-Fi",
-        (false, HubTransports.Ble) => "Connected over Bluetooth",
-        _ => ""
+        (_, HubTransports.None) => "",
+        (true, var over) when !over.HasFlag(HubTransports.Ble) => $"Hosting over {Describe(over)} (Bluetooth is unavailable)",
+        (true, var over) => $"Hosting over {Describe(over)}",
+        (false, var over) => $"Connected over {Describe(over)}"
     };
+
+    // Multipeer is Apple to Apple - Wi-Fi, peer-to-peer Wi-Fi or Bluetooth, whichever the OS picks
+    static string Describe(HubTransports over) => String.Join(" and ", new[]
+    {
+        over.HasFlag(HubTransports.Http) ? "Wi-Fi" : null,
+        over.HasFlag(HubTransports.Multipeer) ? "Multipeer" : null,
+        over.HasFlag(HubTransports.Ble) ? "Bluetooth" : null
+    }.Where(x => x != null));
     public string[] Emotes { get; } = ["👍", "😂", "😱", "🔥", "🤝"];
 
     [ObservableProperty] public partial string Status { get; set; } = "";

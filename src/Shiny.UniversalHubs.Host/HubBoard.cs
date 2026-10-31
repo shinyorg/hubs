@@ -68,6 +68,11 @@ internal interface IHubBinding
     Type HubType { get; }
 
     /// <summary>
+    /// The blehubs seam every non-BLE transport serves this hub through
+    /// </summary>
+    IBleHubTransportEndpoint Endpoint { get; }
+
+    /// <summary>
     /// The mDNS service type this hub is advertised under, null for the host's default
     /// </summary>
     string? ServiceType { get; }
@@ -133,6 +138,7 @@ internal sealed class HubBinding<THub> : IHubBinding where THub : class
             {
                 fileTokens.Remove(e.Client.Id);
                 mediaTokens.Remove(e.Client.Id);
+                MultipeerPeers.Remove(e.Client.Id);   // after OnDisconnectedAsync, which still sees the peer
             };
             return context.TransportEndpoint;
         });

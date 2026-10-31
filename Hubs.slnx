@@ -22,6 +22,7 @@
   <Project Path="src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj" />
+  <Project Path="src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj" />
   <Project Path="tests/Shiny.BluetoothLE.Hubs.Tests/Shiny.BluetoothLE.Hubs.Tests.csproj" />
   <Project Path="tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj" />
 </Solution>

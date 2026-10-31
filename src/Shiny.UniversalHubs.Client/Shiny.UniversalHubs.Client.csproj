@@ -12,5 +12,7 @@
         <PackageReference Include="Shiny.Net.HttpServer.Switchboard.Client" />
         <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+        <!-- the add-on Multipeer transport plugs into the internal transport seams -->
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Multipeer" />
     </ItemGroup>
 </Project>

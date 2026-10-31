@@ -4,7 +4,8 @@ This repo holds every hub library:
 - **Shiny.BluetoothLE.Hubs** (`src/Shiny.BluetoothLE.Hubs*`): SignalR-style hubs over Bluetooth LE. Hub logic, the
   wire protocol, the source generator, media channels and L2CAP files.
 - **Shiny.UniversalHubs** (`src/Shiny.UniversalHubs*`): the same hubs over Wi-Fi as well, through
-  **Shiny.Net.HttpServer.Switchboard** and mDNS.
+  **Shiny.Net.HttpServer.Switchboard** and mDNS, and between Apple devices over **MultipeerConnectivity**
+  (`Shiny.UniversalHubs.Multipeer`).
 
 The two were separate repos until 2026-10-23. blehubs' history stays in `~/Desktop/dev/blehubs`, which is no longer
 developed. Everything happens here, and all packages ship together.
@@ -24,9 +25,13 @@ developed. Everything happens here, and all packages ship together.
 - `src/Shiny.UniversalHubs`: the shared Wi-Fi wire protocol (`UniversalHubProtocol`, `HubJson`).
 - `src/Shiny.UniversalHubs.Host`: the hub Switchboard, `IUniversalHubHost`, file and media routes, mDNS.
 - `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, merged discovery, `SwitchboardTransport`.
+- `src/Shiny.UniversalHubs.Multipeer`: the MultipeerConnectivity transport, host and client (PLAN.md §10). Everything
+  but `Platforms/Apple/AppleMultipeerLink.cs` is plain .NET behind `IMultipeerLink`; it plugs into the internal add-on
+  seams (`IUniversalHubTransport`, `IUniversalHubClientTransport`) through `InternalsVisibleTo`.
 - `tests/Shiny.BluetoothLE.Hubs.Tests`: the generated proxy against a real `HubRuntime` through an in-memory radio, the
   real `BleHubHost` against `FakeHostingManager`, codecs and generator diagnostics.
-- `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport.
+- `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport,
+  and over `FakeMultipeerNetwork` (in-memory MultipeerConnectivity) for Multipeer.
 - `skills/shiny-ble-hubs`, `skills/shiny-universal-hubs`: the published Claude Code skills.
 - `samples/Sample`: MAUI, iOS and Android. `samples/Sample/Calls` is the FaceTime-style call: app code over media
   channels, Shiny.Audio's `IAudioDuplex` and the camera's `VideoEncoder` / `RemoteVideoView`, not a package.
@@ -47,21 +52,29 @@ developed. Everything happens here, and all packages ship together.
 - **Targets.** `Shiny.BluetoothLE.Hubs` and `Shiny.UniversalHubs` are `net10.0`. The host and client packages
   multi-target `net10.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`) so `AddBleHubServer` /
   `AddBleHubClient` register the platform BLE stacks. Keep platform code to those `#if` registration blocks.
+  `Shiny.UniversalHubs.Multipeer` targets `net10.0`, `-ios`, `-maccatalyst` and `-macos` (CI installs the `macos`
+  workload for it); its only platform code is the Apple link.
 - **Registration is one call per side.** `AddBleHubServer(server => ...)` / `AddUniversalServer(server => ...)` once,
   and `AddBleHubClient<T>` / `AddUniversalHubClient<T>` per contract. New settings go on the builders or options, not
   new `Configure*` methods. Registration mistakes throw at registration.
 - **Hubs are foreground only.** No background BLE: no auto-connect, no state restoration.
-- **Two versioned wires.**
+- **Three versioned wires.**
   - BLE: `FrameCodec.ProtocolVersion` and the `FrameKind` values. Never renumber a `FrameKind`.
   - Wi-Fi: `UniversalHubProtocol.Version` covers the reserved method names, envelopes, handshake records, TXT keys and
     the file and media routes.
+  - Multipeer: `MultipeerProtocol.Version` covers the message layout, the `MultipeerMessageKind` values (never
+    renumber), the control records, the advertisement keys and the file resource names.
   - A breaking change bumps the version, and the handshake refuses mismatches. Hub methods and events travel by name,
     so renaming one breaks deployed clients. Additive optional fields don't bump.
 - **Transport-free cores.** `HubRuntime` (host) and `HubClientProtocol` / `BleHubClient.ConnectTransport` (client) don't
   know about BLE; `BleHubHost` and `BleHubClient.Connect` are thin adapters. Keep logic in the cores, testable without
   hardware.
 - **Disconnect is cooperative** (iOS peripherals can't drop a central). Host-side disconnects send a `Disconnect` frame
-  over BLE and a `HubHangUp` over Wi-Fi.
+  over BLE, a `HubHangUp` over Wi-Fi and a `Disconnect` message over Multipeer.
+- **Add-on transports stay add-ons.** A transport beyond BLE and HTTP goes in its own package behind
+  `IUniversalHubTransport` / `IUniversalHubClientTransport`, registered from the builders (`ServiceActions`,
+  `Transports`). Where it can't run it throws `PlatformNotSupportedException` from `Start` (skipped quietly) and returns
+  nothing from `Discover`, so one registration works in a cross-platform app.
 - **Ordering:** whole messages per peer under a lock; client pushes raised one at a time in order; a client is
   registered and `OnConnectedAsync` has run before the handshake reply; `Context.Abort()` takes effect after the reply.
 - **One BLE service UUID, per-hub start/stop.** Every hub is a characteristic in one service. Never bring back per-hub

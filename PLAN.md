@@ -16,6 +16,7 @@ since 2026-10-23 and is referenced by project:
 | `Shiny.UniversalHubs` | Wire protocol: `UniversalHubProtocol`, handshake records, `HubJson` (value re-framing and envelopes), `HubTransports` |
 | `Shiny.UniversalHubs.Host` | `AddUniversalHubs().AddHub<THub>()`, `IUniversalHubHost`, the hub Switchboard, file routes, mDNS advertising |
 | `Shiny.UniversalHubs.Client` | `AddUniversalHubClient<T>()`, `IUniversalHubClient<T>`, merged discovery, the Switchboard transport, preference and fallback |
+| `Shiny.UniversalHubs.Multipeer` | The MultipeerConnectivity transport (§10): `server.Multipeer(...)`, `o.Multipeer(...)`, host and client in one. `net10.0` (the transport-free core) plus iOS, Mac Catalyst and macOS |
 
 ## 2. What blehubs provides (its transport seams)
 
@@ -225,6 +226,7 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
 | Call codecs (2026-10-23) | Both: H.264 (hardware) when both sides have it, JPEG frames otherwise. No common codec answers with audio rather than refusing. PCM16 over Wi-Fi, IMA ADPCM over BLE |
 | Call pacing (2026-10-23) | Latest-wins video with key-frame recovery, audio first and capped at 200 ms queued: a slow link costs frames, never latency |
 | Where calls live (2026-10-23) | The libraries gain capabilities (media channels, duplex voice, live video encode and view). The call itself is sample code, not a package |
+| Multipeer (2026-10-30) | A third transport in its own package, Apple only (§10). It plugs into the same blehubs seams as HTTP, through internal add-on seams in the host and client packages. `HubTransports.All` includes it; where it can't run it is skipped |
 | BLE service UUID (2026-10-09) | One for every hub (`server.ServiceUuid`, blehubs' default unless set); hubs are characteristics. Two 128-bit UUIDs overflow a 31-byte advertisement: Android refuses to advertise, iOS hides the second in an overflow area Android can't see. The cost: a BLE scan can't tell which hubs a host runs |
 
 ## 6. Status
@@ -318,6 +320,23 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   Incremental builds of `Sample.MacOS` can skip recompiling the linked sample files: use `--no-incremental` after editing
   `samples/Sample`.
 
+- **2026-10-30**: **Multipeer transport** (§10): `Shiny.UniversalHubs.Multipeer`.
+  - Host and client packages gained internal add-on seams: `IUniversalHubTransport` (the host starts and stops it with
+    BLE and HTTP), `IUniversalHubClientTransport` (discovery and connect), `UniversalServerBuilder.ServiceActions` and
+    `UniversalHubClientOptions.Transports`. BLE and HTTP were left as they were rather than moved onto the seam.
+  - `HubTransports.Multipeer` (4), included in `All`. `HubHostInfo.Multipeer`, `HubConnection.Multipeer` /
+    `MultipeerPeer`, `mc:` connection ids. `HubConnectOptions` tries `Prefer` first, then Wi-Fi, Multipeer, BLE.
+  - `FileRoutes.ResolvePath` is shared, so Multipeer files obey the same name rules as HTTP.
+  - Sample: iOS and macOS host and join over Multipeer (`unihub-mc`); labels and the calls profile know it. Android gets
+    the same registration and skips it.
+  - CI installs the `macos` workload (the package targets `net10.0-macos`).
+  - Tests: 46 new, on an in-memory Multipeer network (`FakeMultipeerNetwork`) beside real HTTP clients. 123 + 144 tests.
+  - **Verified on real MultipeerConnectivity**, in one process on a Mac (two peers over Bonjour): discovery, invitation,
+    encrypted session, handshake, calls, 20 ordered pushes, rename, a 300 KB upload and download (byte-identical),
+    a media channel, client disconnect (`ClientDisconnect`), reconnect, host stop (`ServerShutdown` with its message).
+    200 round trips took 31 ms.
+  - **Not yet verified:** two physical devices, AWDL and Bluetooth-only links, iOS. See §7.
+
 ## 7. Verifying on hardware
 
 You need two physical devices. Run the sample on both and check:
@@ -358,6 +377,19 @@ You need two physical devices. Run the sample on both and check:
   - It lists and joins the phones' games and chats, over Bluetooth or Wi-Fi.
   - Run it from Finder, `open` or `-t:Run`, not by executing the binary from a terminal. macOS charges the Bluetooth
     permission to the terminal, whose Info.plist has no `NSBluetoothAlwaysUsageDescription`, and kills the app.
+- **Multipeer** (two iPhones, or an iPhone and the Mac):
+  - **No network:** Wi-Fi on but not joined to any network on both. The join list shows 📡 and the game says
+    "Connected over Multipeer". Pushes, avatars and a call work.
+  - **Bluetooth only:** Wi-Fi off on both. Multipeer still connects (over Bluetooth), slower.
+  - **Same network:** the host appears once, with 📶 and 📡; joining picks Wi-Fi. "Prefer Bluetooth" picks BLE, not
+    Multipeer.
+  - **Mixed:** an Android player over Wi-Fi or BLE and an iPhone over Multipeer in the same game. Both see every move.
+  - **Discovery stopped before joining:** join a host after leaving the join list - the invitation must still go out
+    through the browser that found it.
+  - **Two hubs on one host:** chat and a game at once from the same phone (two sessions to the same host peer).
+  - **Background** one side mid-game: the other sees `ClientTimeout` (no resume), and rejoining works.
+  - **Missing plist entries** log a warning at start.
+  - Console: `xcrun devicectl device process launch --console` shows `Multipeer session ... Connected`.
 
 ## 8. Future
 
@@ -365,7 +397,10 @@ You need two physical devices. Run the sample on both and check:
 - A browser spectator page talking to the hub Switchboard directly
 - Upload and download progress events on the host for Wi-Fi files
 - Wi-Fi hosting on devices with no BLE hosting stack (Windows)
-- Client and host renames over Wi-Fi (blehubs `IBleHubConnection.Rename`, `IBleHubHost.Rename` / `HostRenamed`)
+- Client and host renames over Wi-Fi (blehubs `IBleHubConnection.Rename`, `IBleHubHost.Rename` / `HostRenamed`).
+  Multipeer already carries both.
+- Multipeer: a host rename reaches connected clients, but the advertised display name stays until the next re-advertise
+- Android ↔ iOS without a network: Wi-Fi Aware (iOS 26+, Android 8+) as another add-on transport
 
 ## 9. Calls: audio and video, like FaceTime (2026-10-23)
 
@@ -499,3 +534,95 @@ call.State / StateChanged / Ended (CallEnd(reason, message)) / IsMuted / IsCamer
 call.AttachVideo(cameraView, remoteVideoView);      // starts the encoder on the camera, renders the remote side
 await call.HangUp();
 ```
+
+
+## 10. Multipeer (2026-10-30)
+
+**Goal:** Apple devices with no shared network (a plane, a park, a car) get Wi-Fi bandwidth instead of BLE. Apple's
+MultipeerConnectivity picks the radio itself: the Wi-Fi network, peer-to-peer Wi-Fi (AWDL) or Bluetooth. It only
+connects Apple devices, so Android players keep using HTTP or BLE against the same host and the same hub.
+
+### 10.1 How it plugs in
+
+- **The hub side is unchanged.** Like HTTP, Multipeer reaches each hub through blehubs' `IBleHubTransportEndpoint` and
+  carries pushes through `IBleHubPeerChannel` (§2), so `Clients`, groups, `MaxClients`, `ValidateClient` and
+  `IHubContext` span all three transports. The client uses `BleHubClient.ConnectExternal`.
+- **Add-on seams** (internal, `InternalsVisibleTo` the Multipeer package):
+  - Host: `IUniversalHubTransport` (`Start` / `Stop` / `IsRunning` per hub). `UniversalHubHost` starts each registered
+    one when `transports` includes its flag, counts it in `RunningTransports` / `GetRunningTransports`, and stops it after
+    HTTP and before BLE. One that throws `PlatformNotSupportedException` is skipped quietly. `IHubBinding.Endpoint`
+    gives it the hub.
+  - Client: `IUniversalHubClientTransport` (`Discover` as `HubHostSighting`s merged by name, `Connect`).
+    `IHubTransportKind` says which transport `ExternalTransport` is.
+  - Registration: `UniversalServerBuilder.ServiceActions` and `UniversalHubClientOptions.ServiceActions` / `Transports`,
+    so registration stays one call per side (`server.Multipeer(...)`, `o.Multipeer(...)`).
+- **`IMultipeerLink`** is the radio: advertise, browse, invite. `AppleMultipeerLink` wraps MultipeerConnectivity; the
+  tests use `FakeMultipeerNetwork`. Everything above it is plain .NET and runs in the tests.
+
+### 10.2 Discovery
+
+- One advertisement per host under the Multipeer service type, like the one BLE service: `discoveryInfo` has the mDNS
+  TXT keys (`proto` = `MultipeerProtocol.Version`, `hostId`, `name`, `hubs`). It is replaced when the running hubs change.
+- The service type must differ from every hub's mDNS type name: MultipeerConnectivity advertises over Bonjour as
+  `_{type}._tcp`, and NSBonjourServices needs that and `_{type}._udp`.
+- The host's `MCPeerID` is archived in `NSUserDefaults` and reused while its display name is the same, so browsers don't
+  list a relaunched host twice.
+- Clients filter by `hubs` and `proto` and merge by `name` with BLE and mDNS. Invitations go out through the browser
+  that found the peer, with that browser's `MCPeerID` (`MultipeerClientOptions.DisplayName`).
+
+### 10.3 Sessions
+
+- **One `MCSession` per hub connection.** The host accepts every invitation into a new session. No 8-peer limit, and
+  clients never mesh with each other. A phone in the chat and a game has two sessions with the same host.
+- `MCEncryptionPreference.Required`, no identity.
+- Connection ids are `mc:{guid}`. `MultipeerPeers` maps them to the peer's display name for `HubConnection.Multipeer`.
+- Messages are reliable and ordered. The host and client each send under a lock, so a session's messages leave in
+  order; MultipeerConnectivity delivers them in order on its delegate queue.
+
+### 10.4 Wire (`MultipeerProtocol.Version` = 1)
+
+```
+[0] version  [1] kind  [2..5] message id (LE)  [6] name length  [7..] name (UTF-8)  [...] payload
+```
+
+| Kind | Direction | Name | Payload |
+|---|---|---|---|
+| `Handshake` 0x01 | → host | characteristic UUID | `HubHandshake` (JSON), `Protocol` = Multipeer version |
+| `HandshakeReply` 0x02 | → client | | `MultipeerHandshakeReply` (accepted, reason, host name/id, files, media packet size) |
+| `Invoke` 0x10 / `Stream` 0x11 | → host | method | arguments, as `IBleHubSerializer` wrote them |
+| `Cancel` 0x12 | → host | | (the id of the call) |
+| `Rename` 0x13 / `HostRenamed` 0x31 | both | | `MultipeerRename` |
+| `Completion` 0x20 / `StreamItem` 0x21 / `StreamEnd` 0x22 | → client | | the result / item, raw |
+| `Error` 0x23 | → client | | `MultipeerError` (type, message): `BleHubRemoteException` |
+| `Push` 0x30 | → client | event | arguments, raw |
+| `Disconnect` 0x40 | both | | `HubHangUp`: host → why the hub ended it; client → it is leaving |
+| `FileRequest` 0x50 / `FileReply` 0x51 / `FileDone` 0x52 | | | `MultipeerFileRequest` / `MultipeerFileReply` (HTTP status codes) / `MultipeerFileDone` |
+| `MediaOpen` 0x60 / `MediaOpened` 0x61 / `MediaPacket` 0x62 / `MediaClose` 0x63 | | | one packet per `MediaPacket` |
+
+- **Values are binary**, not re-framed JSON: any `IBleHubSerializer` works, as over BLE.
+- **Errors** carry the same types and wording as BLE and HTTP (`HubMethodNotFound`, "Handshake required",
+  `BleHubRemoteException.RenameRefused`).
+- **Handshake refusals:** another protocol version, a hub that isn't running here, the hub's own rules. The host ends a
+  refused session after two seconds if the client doesn't.
+- **Disconnect:** the host sends `Disconnect` and ends the session two seconds later if the client hasn't. The client
+  sends `Disconnect`, waits 250 ms, then ends it. A session that ends without one is `ClientTimeout` on both sides.
+- **Files** are Multipeer resources named `hubfile-{id}`. Upload: request → reply → resource → `FileDone` (size checked,
+  overwrite rule checked again, moved into place). Download: request (the client waits for the resource first) → reply
+  with the length → resource. The receiving side copies MC's temp file before the callback returns, because MC deletes it.
+  `FileTransferred` is raised on the host like HTTP's.
+- **Media channels** are `MediaPacket` messages on the session, reliable and ordered like L2CAP and the WebSocket, so the
+  calls' signalling can share them. One per connection; opening again replaces it.
+
+### 10.5 Decisions
+
+| Question | Decision |
+|---|---|
+| Package | Its own, `Shiny.UniversalHubs.Multipeer`, host and client together. Apps that don't use it never need the plist entries |
+| In `HubTransports.All` | Yes. It only runs once the package is set up, and is skipped where MultipeerConnectivity doesn't exist |
+| Connect order | `Prefer`, then Wi-Fi, Multipeer, BLE: Wi-Fi serves Android peers too; Multipeer beats BLE everywhere it works |
+| Wire | Binary messages with the hub's own bytes, not the Wi-Fi JSON envelopes. Its own version |
+| Session topology | One session per hub connection (§10.3) |
+| Files | Multipeer resources, not chunked messages: MultipeerConnectivity does the flow control |
+| Media | Reliable messages rather than MC streams: ordered like the other transports, and no NSStream run-loop plumbing. Revisit if latency on a real link says otherwise |
+| A standalone Shiny MultipeerConnectivity package | Not now. The radio wrapper is internal to this package until something else needs it |
+| Android ↔ iOS | Out of scope: MultipeerConnectivity is Apple-only. Wi-Fi Aware is the candidate (§8) |

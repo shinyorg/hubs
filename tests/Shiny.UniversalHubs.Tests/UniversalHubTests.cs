@@ -259,6 +259,7 @@ public class UniversalHubTests : IAsyncLifetime
 
     [Theory]
     [InlineData("sb:f8bf8a8b3ec3252c", HubTransports.Http)]
+    [InlineData("mc:5f1e2d3c4b5a69788796a5b4c3d2e1f0", HubTransports.Multipeer)]
     [InlineData("6E400001-B5A3-F393-E0A9-E50E24DCCA9E", HubTransports.Ble)]
     [InlineData("AA:BB:CC:DD:EE:FF", HubTransports.Ble)]
     public void ConnectionIdsMapToTheirTransport(string connectionId, HubTransports expected)
@@ -375,6 +376,7 @@ public class UniversalHubTests : IAsyncLifetime
     sealed record FakeBinding(string CharacteristicUuid, string? ServiceType, bool AllowTunnel = false) : IHubBinding
     {
         public Type HubType => typeof(TestHub);
+        public IBleHubTransportEndpoint Endpoint => throw new NotSupportedException();
         public bool IsHttpRunning { get; set; }
         public bool IsBleRunning => false;
         public Task StartBle(CancellationToken cancellationToken) => Task.CompletedTask;
