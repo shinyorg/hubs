@@ -109,7 +109,7 @@ internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContr
 
 /// <summary>
 /// The host side of one hub: takes a link per client media channel, keeps the host's own calls on it, and relays
-/// calls between clients (PLAN.md §9.3)
+/// calls between clients.
 /// </summary>
 internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
 {

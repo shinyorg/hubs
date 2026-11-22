@@ -13,9 +13,8 @@ developed. Everything happens here, and all packages ship together.
 
 - **Related repos:** httpserver (`~/Desktop/dev/httpserver`), consumed from NuGet. Versions are in
   `Directory.Packages.props`.
-- **Design docs:**
-  - `PLAN.md`: UniversalHubs (wire protocol over Wi-Fi, decisions, status, the calls sample)
-  - `PLAN.BluetoothLE.Hubs.md`: BluetoothLE Hubs (GATT layout, framing, generator, media channels, status)
+- **Docs:** `README.md` covers both libraries and is every package's NuGet readme. The design detail lives on the docs
+  site (https://shinylib.net/blehubs/ and https://shinylib.net/universalhubs/, `how-it-works` in each).
 
 ## Layout
 
@@ -28,10 +27,10 @@ developed. Everything happens here, and all packages ship together.
   host package and `PeerHubTransport` in the client package).
 - `src/Shiny.UniversalHubs.Host`: the hub Switchboard, `IUniversalHubHost`, file and media routes, mDNS.
 - `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, merged discovery, `SwitchboardTransport`.
-- `src/Shiny.UniversalHubs.Multipeer`: the MultipeerConnectivity transport, host and client (PLAN.md §10). Everything
+- `src/Shiny.UniversalHubs.Multipeer`: the MultipeerConnectivity transport, host and client. Everything
   but `Platforms/Apple/AppleMultipeerLink.cs` is plain .NET behind `IMultipeerLink`; it plugs into the internal add-on
   seams (`IUniversalHubTransport`, `IUniversalHubClientTransport`) through `InternalsVisibleTo`.
-- `src/Shiny.UniversalHubs.Nearby`: the Nearby Connections transport (PLAN.md §12). `NearbyLink` (channels, framing,
+- `src/Shiny.UniversalHubs.Nearby`: the Nearby Connections transport. `NearbyLink` (channels, framing,
   files) is plain .NET behind `INearbyRadio`; the radios are `Platforms/Android` (Google Play services) and
   `Platforms/Apple` (`[LibraryImport]` into the native bridge).
 - `native/ShinyNearbyBridge`: Google's NearbyConnections Swift package behind `@_cdecl` C functions. `build.sh` makes
@@ -103,22 +102,20 @@ developed. Everything happens here, and all packages ship together.
   `OutputItemType="Analyzer" ReferenceOutputAssembly="false"`: project references don't carry analyzers the way the
   package does.
 - New user-facing mistakes get an `SBH0xx` diagnostic plus a `GeneratorTests` case, documented in
-  `PLAN.BluetoothLE.Hubs.md`, the `shiny-ble-hubs` skill and `README.BluetoothLE.Hubs.md`.
+  the `shiny-ble-hubs` skill and the docs site's `blehubs/contracts.mdx`.
 
 ## Required updates for EVERY fix & feature
 
 A change is not "done" until these are in sync, for whichever library it touches:
 
-1. **Readmes** (each is also its packages' NuGet readme):
-   - `README.md`: UniversalHubs
-   - `README.BluetoothLE.Hubs.md`: BluetoothLE Hubs (`PackageReadmeSource` in `src/Directory.Build.props`)
-2. **Design docs**: `PLAN.md` / `PLAN.BluetoothLE.Hubs.md`: design sections, decisions and status.
-3. **Tests**: every behavior change gets a test in `tests/Shiny.BluetoothLE.Hubs.Tests` or `tests/Shiny.UniversalHubs.Tests`.
-4. **Skills** (`skills/<name>/SKILL.md` + `reference/api-reference.md`): update the trigger keywords when a new public
+1. **Readme**: `README.md` covers both libraries (the package table, then UniversalHubs) and is every package's NuGet
+   readme.
+2. **Tests**: every behavior change gets a test in `tests/Shiny.BluetoothLE.Hubs.Tests` or `tests/Shiny.UniversalHubs.Tests`.
+3. **Skills** (`skills/<name>/SKILL.md` + `reference/api-reference.md`): update the trigger keywords when a new public
    API is introduced. Hub behavior belongs in `shiny-ble-hubs`; `shiny-universal-hubs` points at it. Both sync to
    `shinyorg/skills` (plugin `shiny`) through `.github/workflows/sync-skills.yml` when a release ships. The docs site lists them in
    `src/content/docs/foundation/ai-skills.mdx` and `src/components/AiSkill.astro`.
-5. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight):
+4. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight):
    - **BluetoothLE Hubs** (https://shinylib.net/blehubs/): `src/content/docs/blehubs/*.mdx`: `index`, `contracts`,
      `hosting`, `client`, `files` (L2CAP and media channels), `how-it-works`.
    - **Universal Hubs** (https://shinylib.net/universalhubs/): `src/content/docs/universalhubs/*.mdx`: `index`,
@@ -149,7 +146,7 @@ fixed sleeps.
 ## Verifying on hardware
 
 Unit tests prove nothing about radios or real networks. BLE needs **two physical devices**: the iOS simulator has no
-Bluetooth and Android emulators are unreliable. Run the sample on both and work through PLAN.md §7. Exercise both
+Bluetooth and Android emulators are unreliable. Run the sample on both and work through each transport. Exercise both
 directions (iOS ↔ Android, phone ↔ Mac), over Wi-Fi and over Bluetooth only. When BLE misbehaves, compare against a
 generic tool (nRF Connect) to separate "the OS can't" from "the library doesn't".
 

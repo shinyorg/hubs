@@ -1,7 +1,6 @@
 <Project>
     <ItemGroup Condition="'$(IsPackable)' != 'false'">
         <None Include="$(MSBuildThisFileDirectory)nuget.png" Pack="true" PackagePath="icon.png" Visible="false" />
-        <!-- the Shiny.BluetoothLE.Hubs packages set PackageReadmeSource to their own readme -->
         <None Include="$(MSBuildThisFileDirectory)$(PackageReadmeSource)" Pack="true" PackagePath="README.md" Visible="false" />
     </ItemGroup>
 </Project>

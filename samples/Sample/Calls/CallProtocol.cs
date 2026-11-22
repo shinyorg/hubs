@@ -139,7 +139,7 @@ internal readonly record struct VideoPacket(
 /// <code>
 /// [version u8][type u8][callId 16 bytes] body
 /// </code>
-/// Strings are <c>[u16 length][UTF-8]</c>. See PLAN.md §9.3.
+/// Strings are <c>[u16 length][UTF-8]</c>.
 /// </summary>
 internal static class CallProtocol
 {

@@ -1,29 +1,45 @@
-# Shiny.UniversalHubs
+# Shiny Hubs
 
-**[Shiny.BluetoothLE.Hubs](README.BluetoothLE.Hubs.md) over Wi-Fi as well as Bluetooth LE.** Both libraries live in this
-repo and release together. Write the hub
-once. Players on a plane connect over BLE. At home they connect over Wi-Fi, which has more range and bandwidth and no MTU.
-Both kinds of client share the same hub, groups and pushes.
+**SignalR-style hubs between nearby devices.** Write a hub once and serve it over Bluetooth LE, Wi-Fi,
+MultipeerConnectivity and Nearby Connections at the same time. Every client shares the same hub, groups and pushes, so
+players on a plane connect over BLE, and at home they connect over Wi-Fi, which has more range and bandwidth and no MTU.
 
-- **Host**: one `UniversalHub<T>` is served over GATT and over a [Shiny.Net.HttpServer](https://github.com/shinyorg/httpserver)
-  Switchboard (SSE + POST, with resume), and advertised over mDNS under your app's service type.
+This repo holds two libraries that release together, with one version for every package:
+
+- **Shiny.BluetoothLE.Hubs**: the hubs themselves, over Bluetooth LE. Contracts, a source-generated client proxy, typed
+  host-to-client pushes, groups, streaming, per-hub start/stop, L2CAP file transfers and media channels. See
+  [BluetoothLE Hubs](https://shinylib.net/blehubs/).
+- **Shiny.UniversalHubs**: the same hubs over Wi-Fi as well as Bluetooth LE, plus the optional Multipeer and Nearby
+  transports. See [Universal Hubs](https://shinylib.net/universalhubs/). The rest of this readme covers it.
+
+## Packages
+
+Every package targets .NET 11 (`net11.0`), with platform builds where they need one.
+
+| Package | NuGet | Platforms | What it is |
+|---|---|---|---|
+| `Shiny.BluetoothLE.Hubs` | [![NuGet](https://img.shields.io/nuget/v/Shiny.BluetoothLE.Hubs.svg)](https://www.nuget.org/packages/Shiny.BluetoothLE.Hubs) | .NET | The shared protocol (framing, chunking, the argument codec), `[BleHubClient]`, `IBleHubMediaChannel`, and the source generator that writes the proxies, dispatchers and pushes. Comes with the host and client packages. |
+| `Shiny.BluetoothLE.Hubs.Host` | [![NuGet](https://img.shields.io/nuget/v/Shiny.BluetoothLE.Hubs.Host.svg)](https://www.nuget.org/packages/Shiny.BluetoothLE.Hubs.Host) | .NET, Android, iOS, Mac Catalyst | Hubs served over a BLE GATT server: `AddBleHubServer(server => ...)`, `BleHub<T>`, `IBleHubHost`, `IHubContext<THub>`, plus L2CAP file transfers and media channels. |
+| `Shiny.BluetoothLE.Hubs.Client` | [![NuGet](https://img.shields.io/nuget/v/Shiny.BluetoothLE.Hubs.Client.svg)](https://www.nuget.org/packages/Shiny.BluetoothLE.Hubs.Client) | .NET, Android, iOS, Mac Catalyst | Discovers BLE hub hosts and calls them through the generated, strongly typed proxy: `AddBleHubClient<TContract>()`. |
+| `Shiny.UniversalHubs.Host` | [![NuGet](https://img.shields.io/nuget/v/Shiny.UniversalHubs.Host.svg)](https://www.nuget.org/packages/Shiny.UniversalHubs.Host) | .NET, Android, iOS, Mac Catalyst | Serves your hubs over Wi-Fi (a [Shiny.Net.HttpServer](https://github.com/shinyorg/httpserver) Switchboard) beside BLE, and advertises them over mDNS: `AddUniversalServer(server => ...)`, `IUniversalHubHost`, dynamic hubs. |
+| `Shiny.UniversalHubs.Client` | [![NuGet](https://img.shields.io/nuget/v/Shiny.UniversalHubs.Client.svg)](https://www.nuget.org/packages/Shiny.UniversalHubs.Client) | .NET, Android, iOS, Mac Catalyst | Finds hosts over BLE and mDNS (and Multipeer and Nearby when added) in one list, and connects over whichever is available, Wi-Fi first: `AddUniversalHubClient<TContract>()`, `IUniversalHubClient<TContract>`, dynamic hub clients. |
+| `Shiny.UniversalHubs` | [![NuGet](https://img.shields.io/nuget/v/Shiny.UniversalHubs.svg)](https://www.nuget.org/packages/Shiny.UniversalHubs) | .NET | The shared Wi-Fi wire protocol and the peer-link core that Multipeer and Nearby share. Comes with the host and client packages. |
+| `Shiny.UniversalHubs.Multipeer` | [![NuGet](https://img.shields.io/nuget/v/Shiny.UniversalHubs.Multipeer.svg)](https://www.nuget.org/packages/Shiny.UniversalHubs.Multipeer) | iOS, Mac Catalyst, macOS | Optional. Apple devices host and join hubs over Apple's MultipeerConnectivity (Wi-Fi, peer-to-peer Wi-Fi or Bluetooth) with no shared network: `server.Multipeer(...)`, `o.Multipeer(...)`. See [Multipeer](#multipeer-apple-devices-no-network). |
+| `Shiny.UniversalHubs.Nearby` | [![NuGet](https://img.shields.io/nuget/v/Shiny.UniversalHubs.Nearby.svg)](https://www.nuget.org/packages/Shiny.UniversalHubs.Nearby) | Android, iOS, macOS | Optional. Android phones, iPhones and Macs host and join hubs over Google's Nearby Connections (Bluetooth, Wi-Fi LAN, Wi-Fi Direct, hotspots, Wi-Fi Aware) with no shared network: `server.Nearby(...)`, `o.Nearby(...)`. See [Nearby](#nearby-android-ios-and-macos-no-network). |
+
+The Multipeer and Nearby packages also build for plain .NET, where they report their transport as unavailable, so one
+registration works in a cross-platform app.
+
+## Universal Hubs
+
+- **Host**: one hub is served over GATT and over a Shiny.Net.HttpServer Switchboard (SSE + POST, with resume), and
+  advertised over mDNS under your app's service type.
 - **Client**: one discovery list merges BLE scanning and mDNS browsing. Connect prefers Wi-Fi and falls back to BLE. The
   generated proxy, events, `Disconnected` and file methods work the same on either transport.
 - **Files**: L2CAP over BLE, plain HTTP over Wi-Fi, behind the same `UploadFile` / `DownloadFile`.
-- **Media channels**: blehubs' ordered packet pipe beside each hub connection works over Wi-Fi too (a WebSocket), so live
+- **Media channels**: the ordered packet pipe beside each hub connection works over Wi-Fi too (a WebSocket), so live
   audio and video run on either transport. The sample uses it for FaceTime-style calls.
-- **Multipeer** (optional, Apple only): add `Shiny.UniversalHubs.Multipeer` and iPhones, iPads and Macs also reach each
-  other over Apple's MultipeerConnectivity, at Wi-Fi speed with no shared network at all. See [Multipeer](#multipeer-apple-devices-no-network).
-- **Nearby** (optional, Android, iOS and macOS): add `Shiny.UniversalHubs.Nearby` and Android phones, iPhones and Macs
-  reach each other over Google's Nearby Connections with no shared network. See [Nearby](#nearby-android-ios-and-macos-no-network).
-
-| Package | What it is |
-|---|---|
-| `Shiny.UniversalHubs.Host` | `AddUniversalHubs().AddHub<THub>()`, `IUniversalHubHost` |
-| `Shiny.UniversalHubs.Client` | `AddUniversalHubClient<TContract>()`, `IUniversalHubClient<TContract>` |
-| `Shiny.UniversalHubs` | The shared Wi-Fi wire protocol. Comes with both. |
-| `Shiny.UniversalHubs.Multipeer` | `server.Multipeer(...)` and `o.Multipeer(...)`: the MultipeerConnectivity transport for iOS, Mac Catalyst and macOS |
-| `Shiny.UniversalHubs.Nearby` | `server.Nearby(...)` and `o.Nearby(...)`: the Nearby Connections transport for Android, iOS and macOS |
+- **Multipeer** and **Nearby** (optional): devices reach each other with no shared network at all.
 
 ## Host
 
@@ -260,7 +276,7 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
 
 ## Media channels
 
-A media channel is [BluetoothLE Hubs'](README.BluetoothLE.Hubs.md) ordered, two-way packet pipe beside a hub
+A media channel is [BluetoothLE Hubs'](https://shinylib.net/blehubs/files/) ordered, two-way packet pipe beside a hub
 connection, for live audio and video. Over BLE it's an L2CAP channel. Over Wi-Fi this library carries it as a WebSocket
 at `{Endpoint}/media`. The API is blehubs' own, and it works the same on either transport:
 
@@ -426,9 +442,6 @@ dotnet build samples/Sample -f net11.0-android -t:Run
 dotnet build samples/Sample -f net11.0-ios -t:Run
 dotnet build samples/Sample.MacOS -t:Run
 ```
-
-> Shiny.Actors isn't on nuget.org yet; the sample references a local build (`ActorsVersion` in
-> `Directory.Packages.props`) until it is.
 
 ## Commercial Support
 
