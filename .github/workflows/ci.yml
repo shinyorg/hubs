@@ -1,11 +1,16 @@
-name: Build
+name: CI
 
+# Every push to main, and every pull request into it: build and test the packages the way a release builds them,
+# without publishing. Releases come from tags - see release.yml. Toolchain pins match release.yml - bump them together.
 on:
   workflow_dispatch:
-  pull_request:
   push:
-    branches:
-      - v*
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -13,26 +18,23 @@ concurrency:
 
 jobs:
   build:
-    permissions:
-      id-token: write   # required for NuGet trusted publishing (OIDC)
-      contents: read
-
-    # macOS because the libraries also target iOS and Mac Catalyst (Xcode only exists here).
+    # macOS because the libraries also target iOS, Mac Catalyst and macOS (Xcode only exists here).
     # Build.slnf is the libraries and tests only - the samples aren't built in CI.
     runs-on: xcode-27
 
     steps:
     - name: Checkout
       uses: actions/checkout@v7
-      with:
-          fetch-depth: 0   # Nerdbank.GitVersioning needs the history
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v6
       with:
-          dotnet-version: '10.0.400'
-          # macos: Shiny.UniversalHubs.Multipeer and .Nearby also target net10.0-macos (AppKit apps)
+          dotnet-version: '11.0.100'
+          # macos: Shiny.UniversalHubs.Multipeer and .Nearby also target net11.0-macos (AppKit apps)
           workloads: maui-ios, maui-android, maui-maccatalyst, macos
+
+    - name: Select Xcode 27.1
+      run: sudo xcode-select -s /Applications/Xcode_27.1.app/Contents/Developer && xcodebuild -version
 
     # Shiny.UniversalHubs.Nearby carries Google's NearbyConnections for iOS and macOS as a native framework. It only
     # changes with native/ShinyNearbyBridge, so it is cached on that folder's contents.
@@ -50,7 +52,7 @@ jobs:
       run: native/ShinyNearbyBridge/build.sh
 
     - name: Build
-      run: dotnet build Build.slnf /restore -m -property:Configuration=Release -property:PublicRelease=true
+      run: dotnet build Build.slnf /restore -m -property:Configuration=Release
 
     - name: Test Shiny.BluetoothLE.Hubs
       run: dotnet test tests/Shiny.BluetoothLE.Hubs.Tests --no-build -property:Configuration=Release
@@ -64,14 +66,3 @@ jobs:
         name: nugets
         path: ${{ github.workspace }}/artifacts
         retention-days: 5
-
-    - name: NuGet Login (OIDC)
-      id: nuget-login
-      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/preview' || startsWith(github.ref, 'refs/heads/v')) }}
-      uses: NuGet/login@v1
-      with:
-        user: aritchie
-
-    - name: Publish NuGets
-      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/preview' || startsWith(github.ref, 'refs/heads/v')) }}
-      run: dotnet nuget push "**/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate

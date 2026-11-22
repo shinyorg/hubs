@@ -19,6 +19,7 @@ namespace Sample.Pages;
 [ShellMap<InboxPage>("Inbox")]
 public partial class InboxViewModel(
     ShellServices shell,
+    IPlatform platform,
     ChatService chat,
     CallService calls,
     PlayerSettings settings,
@@ -178,7 +179,7 @@ public partial class InboxViewModel(
 
     // ---------- the list ----------
 
-    void OnConversationsChanged(object? sender, NotifyCollectionChangedEventArgs e) => shell.MainThread.BeginInvokeOnMainThread(() =>
+    void OnConversationsChanged(object? sender, NotifyCollectionChangedEventArgs e) => platform.InvokeOnMainThread(() =>
     {
         foreach (var conversation in chat.Conversations)
             this.Track(conversation);
@@ -223,7 +224,7 @@ public partial class InboxViewModel(
                 }
                 else if (!paused && scan == null)
                 {
-                    scan = client.DiscoverAll().Subscribe(found => shell.MainThread.BeginInvokeOnMainThread(() => this.OnFound(found)));
+                    scan = client.DiscoverAll().Subscribe(found => platform.InvokeOnMainThread(() => this.OnFound(found)));
                 }
 
                 if (!paused)
@@ -257,7 +258,7 @@ public partial class InboxViewModel(
         var hosts = this.People.Where(x => x.Host is { Ble: null, Http: not null }).Select(x => x.Host!).ToList();
         var alive = await Task.WhenAll(hosts.Select(async host => (Host: host, Alive: await IsAlive(host, ct))));
         var now = DateTimeOffset.UtcNow;
-        shell.MainThread.BeginInvokeOnMainThread(() =>
+        platform.InvokeOnMainThread(() =>
         {
             foreach (var (host, isAlive) in alive)
             {
@@ -456,7 +457,7 @@ public partial class InboxViewModel(
     // ---------- sharing on the internet ----------
 
     // the address changes every time a free tunnel reconnects - always show the live one
-    void OnTunnelChanged(object? sender, PropertyChangedEventArgs e) => shell.MainThread.BeginInvokeOnMainThread(() =>
+    void OnTunnelChanged(object? sender, PropertyChangedEventArgs e) => platform.InvokeOnMainThread(() =>
     {
         this.PublicUrl = chat.Tunnel.PublicUrl;
         this.IsSharing = chat.Tunnel.State is QuickTunnelState.Connected or QuickTunnelState.Reconnecting or QuickTunnelState.Connecting;

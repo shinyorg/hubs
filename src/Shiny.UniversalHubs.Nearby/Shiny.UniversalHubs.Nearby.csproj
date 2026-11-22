@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <!--
-            net10.0 carries the transport-free core (tested against an in-memory link) and reports Nearby as unavailable.
+            net11.0 carries the transport-free core (tested against an in-memory link) and reports Nearby as unavailable.
             Android adds the Google Play services link; iOS and macOS the native NearbyConnections bridge (native/ShinyNearbyBridge).
         -->
-        <TargetFrameworks>net10.0;net10.0-android;net10.0-ios;net10.0-macos</TargetFrameworks>
+        <TargetFrameworks>net11.0;net11.0-android;net11.0-ios;net11.0-macos</TargetFrameworks>
         <IsAotCompatible>true</IsAotCompatible>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <RootNamespace>Shiny.UniversalHubs</RootNamespace>

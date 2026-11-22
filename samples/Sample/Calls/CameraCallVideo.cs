@@ -1,3 +1,4 @@
+using Shiny.Controls.Analysis;
 using Shiny.Controls.Camera;
 using Shiny.Maui.Controls.Camera;
 

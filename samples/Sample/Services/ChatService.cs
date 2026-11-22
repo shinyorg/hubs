@@ -31,7 +31,7 @@ public class ChatService
     readonly INotificationManager notifications;
     readonly PlayerSettings settings;
     readonly QuickTunnel tunnel;
-    readonly IMainThread mainThread;
+    readonly IPlatform platform;
     readonly ILogger<ChatService> logger;
     Conversation? remote;
     int nextNotificationId = 1000;
@@ -46,7 +46,7 @@ public class ChatService
         INotificationManager notifications,
         PlayerSettings settings,
         QuickTunnel tunnel,
-        IMainThread mainThread,
+        IPlatform platform,
         ILogger<ChatService> logger
     )
     {
@@ -58,7 +58,7 @@ public class ChatService
         this.notifications = notifications;
         this.settings = settings;
         this.tunnel = tunnel;
-        this.mainThread = mainThread;
+        this.platform = platform;
         this.logger = logger;
 
         // the owner's answers arrive as pushes on the proxy - a photo or file is fetched before the line is shown
@@ -70,7 +70,7 @@ public class ChatService
         client.Disconnected += (_, disconnect) =>
         {
             if (this.remote is { } conversation)
-                this.mainThread.BeginInvokeOnMainThread(() => conversation.SetOffline(disconnect));
+                this.platform.InvokeOnMainThread(() => conversation.SetOffline(disconnect));
         };
     }
 
@@ -180,7 +180,7 @@ public class ChatService
 
         var name = connection.Client.Name ?? "Visitor";
         await this.actors.Get<IConversationActor>(id).Open(name, isVisiting: false);
-        await this.mainThread.InvokeOnMainThreadAsync(() =>
+        await this.platform.InvokeOnMainThreadAsync(() =>
         {
             var conversation = this.Find(id);
             if (conversation == null)
@@ -207,7 +207,7 @@ public class ChatService
     public void OnVisitorDisconnected(HubConnection connection, HubDisconnect disconnect)
     {
         if (connection.Properties.TryGetValue("conversation", out var id))
-            this.mainThread.BeginInvokeOnMainThread(() => this.Find((string)id)?.SetOffline(disconnect));
+            this.platform.InvokeOnMainThread(() => this.Find((string)id)?.SetOffline(disconnect));
     }
 
 
@@ -387,7 +387,7 @@ public class ChatService
         if (await this.History(conversation).Add(line) == null)
             return;
 
-        this.mainThread.BeginInvokeOnMainThread(() =>
+        this.platform.InvokeOnMainThread(() =>
         {
             conversation.LastText = line.File == null ? line.Text : (line.IsImage ? "📷 Photo" : "📎 " + DisplayName(line.File));
             if (fromPeer && this.Viewing != conversation.Id)

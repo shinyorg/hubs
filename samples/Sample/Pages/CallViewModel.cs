@@ -11,7 +11,7 @@ namespace Sample.Pages;
 /// The call screen: ringing, then the other person full screen with this device's camera in the corner
 /// </summary>
 [ShellMap<CallPage>("Call")]
-public partial class CallViewModel(CallService calls, ShellServices shell) : ObservableObject, IPageLifecycleAware
+public partial class CallViewModel(CallService calls, ShellServices shell, IPlatform platform) : ObservableObject, IPageLifecycleAware
 {
     public IHubCall? Call { get; private set; }
 
@@ -72,7 +72,7 @@ public partial class CallViewModel(CallService calls, ShellServices shell) : Obs
     }
 
 
-    void OnStateChanged(object? sender, CallState state) => shell.MainThread.BeginInvokeOnMainThread(async () =>
+    void OnStateChanged(object? sender, CallState state) => platform.InvokeOnMainThread(async () =>
     {
         this.Update();
         if (state == CallState.Ended)
@@ -84,10 +84,10 @@ public partial class CallViewModel(CallService calls, ShellServices shell) : Obs
 
 
     void OnMicrophoneLost(object? sender, EventArgs e)
-        => shell.MainThread.BeginInvokeOnMainThread(() => this.MicrophoneName = "Default mic");
+        => platform.InvokeOnMainThread(() => this.MicrophoneName = "Default mic");
 
 
-    void OnRemoteMediaChanged(object? sender, EventArgs e) => shell.MainThread.BeginInvokeOnMainThread(this.Update);
+    void OnRemoteMediaChanged(object? sender, EventArgs e) => platform.InvokeOnMainThread(this.Update);
 
 
     void Update()

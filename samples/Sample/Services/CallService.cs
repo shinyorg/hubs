@@ -22,7 +22,7 @@ public class CallService
     readonly DuplexCallAudio audio;
 
 
-    public CallService(IHubCalls calls, HubCallsOptions options, DuplexCallAudio audio, ShellServices shell, PlayerSettings settings, ILogger<CallService> logger)
+    public CallService(IHubCalls calls, HubCallsOptions options, DuplexCallAudio audio, ShellServices shell, IPlatform platform, PlayerSettings settings, ILogger<CallService> logger)
     {
         this.calls = calls;
         this.options = options;
@@ -31,7 +31,7 @@ public class CallService
         this.settings = settings;
         this.logger = logger;
 
-        calls.Incoming += (_, call) => shell.MainThread.BeginInvokeOnMainThread(() => _ = this.Show(call));
+        calls.Incoming += (_, call) => platform.InvokeOnMainThread(() => _ = this.Show(call));
         this.ApplyVideoCodec();
     }
 

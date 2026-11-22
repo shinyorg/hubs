@@ -46,8 +46,8 @@ developed. Everything happens here, and all packages ship together.
 - `samples/Sample`: MAUI, iOS and Android. `samples/Sample/Calls` is the FaceTime-style call: app code over media
   channels, Shiny.Audio's `IAudioDuplex` and the camera's `VideoEncoder` / `RemoteVideoView`, not a package.
 - `samples/Sample.MacOS`: the same app on macOS (maui-labs AppKit). It links all of `samples/Sample` (App, AppShell,
-  Pages, Hub, Game, Services, Calls), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny.Maui.Shell's
-  `IMainThread`). Only `MauiProgram` and the app delegate are Mac-only. Build it with `--no-incremental` after editing
+  Pages, Hub, Game, Services, Calls), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny's
+  `IPlatform`: `InvokeOnMainThread` / `InvokeOnMainThreadAsync`). Only `MauiProgram` and the app delegate are Mac-only. Build it with `--no-incremental` after editing
   `samples/Sample`: incremental builds can skip the linked files.
 
 ## Rules
@@ -59,11 +59,11 @@ developed. Everything happens here, and all packages ship together.
 - **AOT/trim safe, no reflection.** Dispatch, proxies and pushes come from the generator; arguments are serialized one
   by one with their static type through `IBleHubSerializer`. Wi-Fi JSON goes through the source-generated
   `UniversalHubJsonContext` or `JsonElement`. New public generics that DI constructs need `[DynamicallyAccessedMembers]`.
-- **Targets.** `Shiny.BluetoothLE.Hubs` and `Shiny.UniversalHubs` are `net10.0`. The host and client packages
-  multi-target `net10.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`) so `AddBleHubServer` /
+- **Targets.** `Shiny.BluetoothLE.Hubs` and `Shiny.UniversalHubs` are `net11.0`. The host and client packages
+  multi-target `net11.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`) so `AddBleHubServer` /
   `AddBleHubClient` register the platform BLE stacks. Keep platform code to those `#if` registration blocks.
-  `Shiny.UniversalHubs.Multipeer` targets `net10.0`, `-ios`, `-maccatalyst` and `-macos` (CI installs the `macos`
-  workload for it); its only platform code is the Apple link. `Shiny.UniversalHubs.Nearby` targets `net10.0`,
+  `Shiny.UniversalHubs.Multipeer` targets `net11.0`, `-ios`, `-maccatalyst` and `-macos` (CI installs the `macos`
+  workload for it); its only platform code is the Apple link. `Shiny.UniversalHubs.Nearby` targets `net11.0`,
   `-android`, `-ios` and `-macos`; its iOS / macOS builds are binding projects (an empty `ApiDefinition.cs`) only so the
   SDK packs the xcframework beside the assembly. It lifts `Xamarin.AndroidX.Fragment.Ktx` to 1.9 because Google Play
   services' `androidx.fragment` 1.9 absorbed it (MAUI apps otherwise fail D8 with duplicate classes).
@@ -116,7 +116,7 @@ A change is not "done" until these are in sync, for whichever library it touches
 3. **Tests**: every behavior change gets a test in `tests/Shiny.BluetoothLE.Hubs.Tests` or `tests/Shiny.UniversalHubs.Tests`.
 4. **Skills** (`skills/<name>/SKILL.md` + `reference/api-reference.md`): update the trigger keywords when a new public
    API is introduced. Hub behavior belongs in `shiny-ble-hubs`; `shiny-universal-hubs` points at it. Both sync to
-   `shinyorg/skills` (plugin `shiny`) through `.github/workflows/sync-skills.yml`. The docs site lists them in
+   `shinyorg/skills` (plugin `shiny`) through `.github/workflows/sync-skills.yml` when a release ships. The docs site lists them in
    `src/content/docs/foundation/ai-skills.mdx` and `src/components/AiSkill.astro`.
 5. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight):
    - **BluetoothLE Hubs** (https://shinylib.net/blehubs/): `src/content/docs/blehubs/*.mdx`: `index`, `contracts`,
@@ -155,19 +155,27 @@ generic tool (nRF Connect) to separate "the OS can't" from "the library doesn't"
 
 ## Build & release
 
-- **Versioning**: Nerdbank.GitVersioning, one `version.json` for every package (BluetoothLE.Hubs and UniversalHubs
-  release together). `PublicRelease` is always on (`Directory.Build.props`), and `Directory.Build.targets` strips NBGV's
-  `+<commit>` from the informational version. **A version never carries the git commit hash**: no `-g<hash>` package
-  suffix and no `+<hash>` metadata. Keep it that way.
+- **Branches and versions**: `main` is the only working branch (`v1` is left as it is). Versions come from git tags,
+  not the repo: there is no `version.json` / Nerdbank.GitVersioning. Untagged builds are `0.0.0-dev`
+  (`Directory.Build.props`); BluetoothLE.Hubs and UniversalHubs share every version. **A version never carries the git
+  commit hash**: no `-g<hash>` package suffix and no `+<hash>` metadata
+  (`IncludeSourceRevisionInInformationalVersion=false`). Keep it that way.
+- **Releasing**: push a `v2.0.0` (or `v2.0.0-beta.1`) tag on a `main` commit, or run the **Release** workflow by hand
+  with a version (it creates the tag). `release.yml` builds the Nearby bridge, builds `Build.slnf` with
+  `-p:Version=<tag>`, runs both test suites, pushes every package to NuGet (trusted publishing through OIDC) and creates
+  a GitHub release with generated notes. A `-suffix` makes both prerelease. nuget.org's trusted-publishing policy must
+  list this repo for the `Shiny.BluetoothLE.Hubs*` packages too. When you tag, promote the `### <version> - TBD`
+  headings in both release-notes pages to the release date.
+- **CI**: `ci.yml` builds and tests every push / PR to `main` the way a release does (macOS runner, Nearby bridge
+  cached on its sources, `Build.slnf` in Release packing to `artifacts/`, both test suites) and publishes nothing. Its
+  runner and toolchain pins (.NET SDK, Xcode) match `release.yml`: bump them together. **The samples are not built in
+  CI**, so build them locally after API changes. Every package the libraries and tests use must be on nuget.org, or
+  restore fails.
 - **Package icon**: `nuget.png` packs as `icon.png` for every package.
-- **CI**: `.github/workflows/build.yml` runs on macOS. It builds the Nearby bridge (`native/ShinyNearbyBridge/build.sh`,
-  cached on its sources), then `Build.slnf` (every library and both test projects,
-  Release, which packs to `artifacts/`) and runs both test suites. **The samples are not built in CI**, so build them
-  locally after API changes. It publishes to NuGet through OIDC on pushes and manual runs (`workflow_dispatch`) on
-  `preview` / `v*`. nuget.org's trusted-publishing policy must list this repo for the `Shiny.BluetoothLE.Hubs*`
-  packages too. Every package the libraries and tests use must be on nuget.org, or CI restore fails.
-- **Skill sync**: `.github/workflows/sync-skills.yml` opens a PR against `shinyorg/skills` on branch
-  `update-skills-hubs` with every skill under `skills/`. It needs the `SKILLS_REPO_TOKEN` secret.
+- **Skill sync**: `skills/` syncs to `shinyorg/skills` only as the last job of a release (`release.yml` calls
+  `sync-skills.yml`), so the published skills always match a shipped version. It opens a PR on branch
+  `update-skills-hubs` and needs the `SKILLS_REPO_TOKEN` secret. Run **Sync Skills** by hand to re-sync without
+  releasing.
 
 ## Blog posts (only when explicitly requested)
 

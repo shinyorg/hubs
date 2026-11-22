@@ -1,14 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFramework>net11.0</TargetFramework>
         <IsAotCompatible>true</IsAotCompatible>
         <RootNamespace>Shiny.BluetoothLE.Hubs</RootNamespace>
         <Description>SignalR style hubs over Bluetooth LE - shared protocol and the hub source generator</Description>
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="Shiny.Extensions.Serialization" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
         <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Client" />
         <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Host" />
         <!-- dynamic hub clients normalize UUIDs the way AddBleHubClient does -->

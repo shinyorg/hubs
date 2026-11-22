@@ -16,14 +16,15 @@
         <RepositoryUrl>https://github.com/shinyorg/hubs</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
-        <!-- the platforms with a Shiny BLE stack - the packages register it there; plain net10.0 brings its own -->
-        <PlatformTargetFrameworks>net10.0;net10.0-android;net10.0-ios;net10.0-maccatalyst</PlatformTargetFrameworks>
+        <!-- the platforms with a Shiny BLE stack - the packages register it there; plain net11.0 brings its own -->
+        <PlatformTargetFrameworks>net11.0;net11.0-android;net11.0-ios;net11.0-maccatalyst</PlatformTargetFrameworks>
 
         <CI Condition="'$(GITHUB_ACTIONS)' == 'true'">true</CI>
         <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
 
-        <!-- never put the git commit hash in a version: no -g<hash> package suffix, no +<hash> informational version -->
-        <PublicRelease>true</PublicRelease>
+        <!-- local / CI builds only - release.yml stamps the real version from the v* tag with -p:Version -->
+        <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+        <!-- never put the git commit hash in a version: no +<hash> informational version -->
         <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     </PropertyGroup>
 

@@ -16,7 +16,7 @@ since 2026-10-23 and is referenced by project:
 | `Shiny.UniversalHubs` | Wire protocol: `UniversalHubProtocol`, handshake records, `HubJson` (value re-framing and envelopes), `HubTransports` |
 | `Shiny.UniversalHubs.Host` | `AddUniversalHubs().AddHub<THub>()`, `IUniversalHubHost`, the hub Switchboard, file routes, mDNS advertising |
 | `Shiny.UniversalHubs.Client` | `AddUniversalHubClient<T>()`, `IUniversalHubClient<T>`, merged discovery, the Switchboard transport, preference and fallback |
-| `Shiny.UniversalHubs.Multipeer` | The MultipeerConnectivity transport (§10): `server.Multipeer(...)`, `o.Multipeer(...)`, host and client in one. `net10.0` (the transport-free core) plus iOS, Mac Catalyst and macOS |
+| `Shiny.UniversalHubs.Multipeer` | The MultipeerConnectivity transport (§10): `server.Multipeer(...)`, `o.Multipeer(...)`, host and client in one. `net11.0` (the transport-free core) plus iOS, Mac Catalyst and macOS |
 
 ## 2. What blehubs provides (its transport seams)
 
@@ -153,9 +153,9 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - Both are idempotent in Shiny.
   - On Apple, blehubs' client registers an `AppleBleConfiguration` with iOS's background alerts off. A custom one has to
     be registered first, because Shiny uses `TryAdd` for it.
-  - This repo's packages still target `net10.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`), so
+  - This repo's packages still target `net11.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`), so
     the platform blehubs assets flow through.
-- **Plain `net10.0`:** it has no Shiny BLE stack, so the app (or a test) registers one. Unit tests run on `net10.0` and
+- **Plain `net11.0`:** it has no Shiny BLE stack, so the app (or a test) registers one. Unit tests run on `net11.0` and
   can't see these calls; the sample is what exercises them.
 
 ### 3.3 One hub at a time
@@ -332,7 +332,7 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   - `FileRoutes.ResolvePath` is shared, so Multipeer files obey the same name rules as HTTP.
   - Sample: iOS and macOS host and join over Multipeer (`unihub-mc`); labels and the calls profile know it. Android gets
     the same registration and skips it.
-  - CI installs the `macos` workload (the package targets `net10.0-macos`).
+  - CI installs the `macos` workload (the package targets `net11.0-macos`).
   - Tests: 46 new, on an in-memory Multipeer network (`FakeMultipeerNetwork`) beside real HTTP clients. 123 + 144 tests.
   - **Verified on real MultipeerConnectivity**, in one process on a Mac (two peers over Bonjour): discovery, invitation,
     encrypted session, handshake, calls, 20 ordered pushes, rename, a 300 KB upload and download (byte-identical),
@@ -364,6 +364,12 @@ Switchboard methods. Hand-registered reserved methods carry them by name, exactl
   joining a hub (compiled or dynamic) with no compiled contract. blehubs gained hidden `InvokeSerializedCore` /
   `StreamSerializedCore` and `AddBleHubClientCore`. First consumer: AppDeviceBridge's hubs bridge, letting a web app join
   hubs. Tests: `DynamicHubTests.ADynamicClientCallsADynamicHubByName`, `ADynamicClientCallsACompiledHubToo`.
+- **2026-11-22**: **2.0: tag releases, .NET 11.** Nerdbank.GitVersioning and `version.json` are gone: `main` is the working
+  branch and a `v*` tag (or a manual **Release** run) is the version (`release.yml`); `ci.yml` builds and tests `main`
+  and PRs without publishing, and skills sync only after a release. Untagged builds are `0.0.0-dev`. Every project
+  moved to `net11.0` (MAUI 11.0.10, Microsoft.Extensions 11.0.0, maui-labs `preview.14.26567.2`), Shiny 7.0.0 and
+  Shiny.Net.HttpServer 3.0.0. The core package dropped its explicit `Microsoft.Extensions.*.Abstractions` references
+  (`net11.0` provides them, NU1510).
 
 ## 7. Verifying on hardware
 
@@ -742,7 +748,7 @@ transport, with no generated dispatcher. Code: `src/Shiny.UniversalHubs.Host/Dyn
 **Goal:** Android phones get what Multipeer gives Apple devices: hub sessions with no shared network, above BLE's
 bandwidth, through Google's Nearby Connections (Bluetooth, BLE, Wi-Fi LAN, Wi-Fi Direct, hotspots, Wi-Fi Aware). The
 same library runs on iOS and macOS, so Android ↔ Apple works where the two share a medium. Package:
-`Shiny.UniversalHubs.Nearby` (`net10.0`, `-android`, `-ios`, `-macos`).
+`Shiny.UniversalHubs.Nearby` (`net11.0`, `-android`, `-ios`, `-macos`).
 
 ### 12.1 The shared peer-link core
 

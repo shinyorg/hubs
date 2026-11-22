@@ -330,7 +330,7 @@ it). It skips hub framing and the serializer: packets are raw bytes.
 ```
 Shiny.BluetoothLE.Hubs.slnx
 Directory.Build.props, Directory.Packages.props (central package management)
-src/Shiny.BluetoothLE.Hubs/                    net10.0: framing, arguments codec, serializer, options, [BleHubClient], exceptions
+src/Shiny.BluetoothLE.Hubs/                    net11.0: framing, arguments codec, serializer, options, [BleHubClient], exceptions
 src/Shiny.BluetoothLE.Hubs.SourceGenerators/   netstandard2.0 Roslyn generator (packed into the core package's analyzers folder)
 src/Shiny.BluetoothLE.Hubs.Host/               BleHub, IBleHubHost, IHubContext, groups, L2CAP file server
 src/Shiny.BluetoothLE.Hubs.Client/             BleHubClient, discovery, connection sharing, file transfer
@@ -338,7 +338,7 @@ tests/Shiny.BluetoothLE.Hubs.Tests/            xUnit: framing, codec, generated 
 samples/TicTacToe/                     .NET MAUI (iOS + Android), Shiny.Maui.Shell
 ```
 
-The core package targets `net10.0`. The host and client packages target `net10.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks` in Directory.Build.props) only so that `AddBleHubServer` / `AddBleHubClient` can register the platform BLE stacks (`AddBluetoothLeHosting()` / `AddBluetoothLE()`). The code is otherwise the same on every target and uses only the Shiny abstractions; on plain `net10.0` the app registers an `IBleHostingManager` / `IBleManager` itself.
+The core package targets `net11.0`. The host and client packages target `net11.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks` in Directory.Build.props) only so that `AddBleHubServer` / `AddBleHubClient` can register the platform BLE stacks (`AddBluetoothLeHosting()` / `AddBluetoothLE()`). The code is otherwise the same on every target and uses only the Shiny abstractions; on plain `net11.0` the app registers an `IBleHostingManager` / `IBleManager` itself.
 
 ## 8. Tic-tac-toe sample
 

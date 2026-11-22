@@ -18,6 +18,7 @@ public partial class GameViewModel : ObservableObject,
     INavigationConfirmation
 {
     readonly ShellServices shell;
+    readonly IPlatform platform;
     readonly GameSession session;
     readonly PlayerSettings settings;
     CancellationTokenSource? emoteTimer;
@@ -27,9 +28,10 @@ public partial class GameViewModel : ObservableObject,
     bool visible;
 
 
-    public GameViewModel(ShellServices shell, GameSession session, PlayerSettings settings)
+    public GameViewModel(ShellServices shell, IPlatform platform, GameSession session, PlayerSettings settings)
     {
         this.shell = shell;
+        this.platform = platform;
         this.session = session;
         this.settings = settings;
         for (var i = 0; i < 9; i++)
@@ -154,10 +156,10 @@ public partial class GameViewModel : ObservableObject,
 
     // hub pushes are raised on a background thread
     void OnStateChanged(object? sender, GameState state)
-        => this.shell.MainThread.BeginInvokeOnMainThread(() => this.Apply(state));
+        => this.platform.InvokeOnMainThread(() => this.Apply(state));
 
     void OnEmote(object? sender, (string From, string Emoji) e)
-        => this.shell.MainThread.BeginInvokeOnMainThread(() => this.ShowEmote($"{e.From} {e.Emoji}"));
+        => this.platform.InvokeOnMainThread(() => this.ShowEmote($"{e.From} {e.Emoji}"));
 
 
     [RelayCommand]
@@ -237,7 +239,7 @@ public partial class GameViewModel : ObservableObject,
     }
 
 
-    void OnSessionEnded(object? sender, string? reason) => this.shell.MainThread.BeginInvokeOnMainThread(async () =>
+    void OnSessionEnded(object? sender, string? reason) => this.platform.InvokeOnMainThread(async () =>
     {
         await this.shell.Dialogs.Alert("Game over", reason ?? "The connection to the host was lost");
         await this.shell.Navigator.PopToRoot();

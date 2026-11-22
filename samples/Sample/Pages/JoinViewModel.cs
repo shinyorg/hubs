@@ -11,6 +11,7 @@ namespace Sample.Pages;
 [ShellMap<JoinPage>("Join")]
 public partial class JoinViewModel(
     ShellServices shell,
+    IPlatform platform,
     IUniversalHubClient<IGameHub> client,
     PlayerSettings settings
 ) : ObservableObject, IPageLifecycleAware
@@ -33,8 +34,8 @@ public partial class JoinViewModel(
         this.scan = client
             .DiscoverAll()
             .Subscribe(
-                found => shell.MainThread.BeginInvokeOnMainThread(() => this.OnFound(found)),
-                ex => shell.MainThread.BeginInvokeOnMainThread(() => this.Status = ex.Message)
+                found => platform.InvokeOnMainThread(() => this.OnFound(found)),
+                ex => platform.InvokeOnMainThread(() => this.Status = ex.Message)
             );
     }
 

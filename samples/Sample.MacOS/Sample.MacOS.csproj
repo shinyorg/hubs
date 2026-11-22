@@ -6,7 +6,7 @@
         the XAML app, shell, pages, hubs, game and services are all linked - only startup is its own.
     -->
     <PropertyGroup>
-        <TargetFramework>net10.0-macos</TargetFramework>
+        <TargetFramework>net11.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
         <UseMaui>true</UseMaui>
         <SingleProject>true</SingleProject>

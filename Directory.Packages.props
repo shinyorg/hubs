@@ -1,12 +1,13 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <HttpServerVersion>2.2.0</HttpServerVersion>
-        <ShinyVersion>6.5.1</ShinyVersion>
-        <!-- pinned rather than taken from the installed MAUI workload; the AppKit backend (Microsoft.Maui.Platforms.MacOS) needs 10.0.70+ -->
-        <MauiVersion>10.0.110</MauiVersion>
-        <!-- not on nuget.org yet: built from ~/Desktop/dev/actors. Bump to the published version once it ships. -->
-        <ActorsVersion>1.0.0-beta.10.g151af7d1f3</ActorsVersion>
+        <HttpServerVersion>3.0.0</HttpServerVersion>
+        <ShinyVersion>7.0.0</ShinyVersion>
+        <!-- pinned rather than taken from the installed MAUI workload, so the AppKit backend (Microsoft.Maui.Platforms.MacOS) matches it -->
+        <MauiVersion>11.0.10</MauiVersion>
+        <MauiLabsVersion>0.1.0-preview.14.26567.2</MauiLabsVersion>
+        <MsftExtensionVersion>11.0.0</MsftExtensionVersion>
+        <ActorsVersion>1.0.0-beta.12</ActorsVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Shiny.Net.HttpServer" Version="$(HttpServerVersion)"/>
@@ -19,29 +20,28 @@
         <PackageVersion Include="Xamarin.GooglePlayServices.Nearby" Version="119.5.0"/>
         <PackageVersion Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.0"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.Maui.Shell" Version="7.0.3"/>
-        <PackageVersion Include="Shiny.Maui.Controls" Version="2.1.0-beta-0002"/>
+        <PackageVersion Include="Shiny.Maui.Shell" Version="8.0.0"/>
+        <PackageVersion Include="Shiny.Maui.Controls" Version="2.5.0"/>
         <!-- the sample's calls: IAudioDuplex (Shiny.Audio) and VideoEncoder / RemoteVideoView (camera) -->
-        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.1.0-beta-0002-g1d272c89bb"/>
-        <PackageVersion Include="Shiny.Audio" Version="3.0.0-beta-0034-g9c2041de24"/>
+        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.5.0"/>
+        <PackageVersion Include="Shiny.Audio" Version="3.0.0"/>
         <PackageVersion Include="Shiny.Actors" Version="$(ActorsVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Ssh" Version="$(HttpServerVersion)"/>
     </ItemGroup>
     <ItemGroup>
-        <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94"/>
         <!-- Shiny.BluetoothLE.Hubs: the argument codec, and the source generator -->
         <PackageVersion Include="Shiny.Extensions.Serialization" Version="6.0.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0"/>
-        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="0.1.0-preview.13.26512.5"/>
-        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="0.1.0-preview.13.26512.5"/>
+        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>
+        <PackageVersion Include="Microsoft.Maui.Platforms.MacOS.Essentials" Version="$(MauiLabsVersion)"/>
         <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10"/>
-        <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10"/>
-        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.10"/>
-        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.10"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="$(MsftExtensionVersion)"/>
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(MsftExtensionVersion)"/>
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="$(MsftExtensionVersion)"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="$(MsftExtensionVersion)"/>
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="$(MsftExtensionVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1"/>
         <PackageVersion Include="xunit.v3" Version="3.2.2"/>

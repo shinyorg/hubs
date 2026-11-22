@@ -56,7 +56,7 @@ services.AddUniversalServer(server => server
   for the server and `AddBluetoothLE` for clients. Calling them yourself as well is harmless. On Apple, the client's
   `AppleBleConfiguration` turns off iOS's background alerts (`NotifyOnConnection`, `NotifyOnDisconnection`,
   `NotifyOnNotification`), because hubs are used in the foreground. Call `AddBluetoothLE(appleConfig)` *before* the client
-  registration to use your own, because the first registration wins. On plain `net10.0` (Linux, tests), register an
+  registration to use your own, because the first registration wins. On plain `net11.0` (Linux, tests), register an
   `IBleHostingManager` / `IBleManager` yourself.
 - **Registration rules:** `AddUniversalServer` can only be called once and needs at least one hub (or
   [`AllowDynamicHubs`](#dynamic-hubs)). It doesn't start anything; `IUniversalHubHost` starts and stops both transports.
@@ -422,8 +422,8 @@ between iPhones and Macs, and Nearby between any of them), plus an always-on cha
     `AddBluetoothLeHosting`). It starts Shiny with `UseShiny()`, like the phones.
 
 ```
-dotnet build samples/Sample -f net10.0-android -t:Run
-dotnet build samples/Sample -f net10.0-ios -t:Run
+dotnet build samples/Sample -f net11.0-android -t:Run
+dotnet build samples/Sample -f net11.0-ios -t:Run
 dotnet build samples/Sample.MacOS -t:Run
 ```
 
