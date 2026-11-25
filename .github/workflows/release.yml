@@ -51,7 +51,7 @@ jobs:
 
     - name: Cache the Nearby bridge
       id: nearby-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: |
           native/ShinyNearbyBridge/build/ios
