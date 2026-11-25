@@ -36,6 +36,11 @@ internal interface IPeerHostTransport
     object CreatePeer(IPeerConnection connection);
 
     void Remove(PeerHostSession session);
+
+    /// <summary>
+    /// Every session the transport has open
+    /// </summary>
+    IEnumerable<PeerHostSession> Sessions { get; }
 }
 
 
@@ -54,7 +59,10 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     int closed;
 
 
-    public string ConnectionId { get; } = transport.ConnectionPrefix + Guid.NewGuid().ToString("N");
+    /// <summary>
+    /// The hub connection this session carries - a fresh id, or the held connection's when the session resumed one
+    /// </summary>
+    public string ConnectionId { get; private set; } = transport.ConnectionPrefix + Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// The hub this session hand-shook with, null before then
@@ -84,6 +92,10 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         {
             case PeerMessageKind.Handshake:
                 _ = this.Handshake(message);
+                break;
+
+            case PeerMessageKind.Resume:
+                _ = this.Resume(message);
                 break;
 
             case PeerMessageKind.Invoke:
@@ -163,8 +175,9 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
         // the hub forgets clients it disconnected itself - this only matters when the client left or the link dropped.
         // A connected client's peer is forgotten once the hub has run OnDisconnectedAsync (HubBinding).
+        // a session that drops without a goodbye leaves a resumable client held; one that was resumed elsewhere is ignored
         if (this.Binding is { } hub)
-            hub.Endpoint.Disconnected(this.ConnectionId, this.ending ?? new HubDisconnect(HubDisconnectReason.ClientTimeout));
+            hub.Endpoint.Disconnected(this.ConnectionId, this, this.ending ?? new HubDisconnect(HubDisconnectReason.ClientTimeout));
         else
             PeerLinkPeers.Remove(this.ConnectionId);
         transport.Remove(this);
@@ -266,12 +279,91 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             }
         }
 
+        // only a client that can come back is held
+        var token = rejection == null && handshake!.Resumable ? hub!.Endpoint.EnableResume(this.ConnectionId) : null;
+        this.Reply(message.Id, rejection, token, hub);
+        if (rejection != null)
+        {
+            this.Logger?.LogInformation("Refused {Peer}: {Reason}", connection.RemoteName, rejection);
+            _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => this.Close(), TaskScheduler.Default);
+        }
+    }
+
+
+    /// <summary>
+    /// A client whose session dropped, back on this new one with its resume token. Accepted, this session takes over the
+    /// held connection - its id, groups and Items - the reply goes out, then the pushes it missed.
+    /// </summary>
+    async Task Resume(PeerMessage message)
+    {
+        if (Interlocked.Exchange(ref this.handshaking, 1) == 1)
+        {
+            this.SendError(message.Id, nameof(BleHubProtocolException), "Already connected");
+            return;
+        }
+
+        PeerResume? resume = null;
+        try
+        {
+            resume = message.Read(PeerJsonContext.Default.PeerResume);
+        }
+        catch (Exception ex)
+        {
+            this.Logger?.LogDebug(ex, "Malformed resume from {Peer}", connection.RemoteName);
+        }
+
+        var hub = transport.FindRunning(message.Name);
+        string? rejection;
+        if (resume == null)
+            rejection = "Malformed resume";
+        else if (hub == null)
+            rejection = "Hub is not running";
+        else
+        {
+            try
+            {
+                rejection = await hub.Endpoint.Resume(resume.Token, transport.ConnectionPrefix, this, connectionId =>
+                {
+                    // under the hub's send lock: this session is the connection now, and its reply goes ahead of the replay
+                    this.ConnectionId = connectionId;
+                    this.Binding = hub;
+                    PeerLinkPeers.Add(connectionId, transport.CreatePeer(connection));
+                    this.Reply(message.Id, null, resume.Token, hub);
+                    return Task.CompletedTask;
+                }, this.lifetime.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                this.Logger?.LogWarning(ex, "Resume from {Peer} failed", connection.RemoteName);
+                rejection = ex.Message;
+            }
+        }
+
+        if (rejection == null)
+        {
+            // the session the client dropped from, if the host hasn't seen it end yet - it no longer speaks for anyone
+            foreach (var old in transport.Sessions.Where(x => !ReferenceEquals(x, this) && x.ConnectionId == this.ConnectionId).ToList())
+                old.Close();
+
+            this.Logger?.LogInformation("{Peer} resumed {Connection}", connection.RemoteName, this.ConnectionId);
+            return;
+        }
+
+        this.Logger?.LogInformation("Could not resume {Peer}: {Reason}", connection.RemoteName, rejection);
+        this.Reply(message.Id, rejection, null, hub);
+        _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => this.Close(), TaskScheduler.Default);
+    }
+
+
+    void Reply(uint id, string? rejection, string? resumeToken, IHubBinding? hub)
+    {
         var host = transport.Host;
+        var window = resumeToken != null && hub != null ? (int)Math.Ceiling(hub.Endpoint.ResumeWindow.TotalSeconds) : 0;
         try
         {
             this.Send(PeerProtocol.Encode(
                 PeerMessageKind.HandshakeReply,
-                message.Id,
+                id,
                 null,
                 new PeerHandshakeReply(
                     rejection == null,
@@ -279,7 +371,9 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
                     host.HostName,
                     host.HostId,
                     rejection == null && host.FilesEnabled,
-                    rejection == null ? host.MediaMaxPacketSize : null
+                    rejection == null ? host.MediaMaxPacketSize : null,
+                    window > 0 ? resumeToken : null,
+                    window > 0 ? window : null
                 ),
                 PeerJsonContext.Default.PeerHandshakeReply
             ));
@@ -287,12 +381,6 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         catch (Exception ex)
         {
             this.Logger?.LogDebug(ex, "Could not answer {Peer}'s handshake", connection.RemoteName);
-        }
-
-        if (rejection != null)
-        {
-            this.Logger?.LogInformation("Refused {Peer}: {Reason}", connection.RemoteName, rejection);
-            _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ => this.Close(), TaskScheduler.Default);
         }
     }
 

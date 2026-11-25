@@ -284,6 +284,80 @@ public class BleHubHostTests : IAsyncLifetime
 
 
     [Fact]
+    public async Task DroppedClientIsHeldAndResumesOnANewCentral()
+    {
+        // a quick sweep - it must leave the resumed client alone on its new central
+        this.Build(TimeSpan.FromMilliseconds(50));
+        await this.host.Start();
+        var ch = this.hosting.Characteristic(TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), this.serviceUuid, TestChar);
+        var central = new FakeCentral("c1");
+        ch.Notified = (id, frame) =>
+        {
+            if (id == central.Uuid)
+                client.ReceiveFrame(frame);
+        };
+        await ch.Subscribe(central);
+        await client.ConnectTransport(
+            (frame, _) => ch.Write(central, frame),
+            central.Mtu + BleConstants.AttHeaderSize,
+            new BleHubConnectOptions("Alice"),
+            CancellationToken.None,
+            relink: async _ =>
+            {
+                // back on a new central - Android gives a reconnecting phone a new random address
+                central = new FakeCentral("c1-again");
+                await ch.Subscribe(central);
+                return central.Mtu + BleConstants.AttHeaderSize;
+            }
+        );
+        var hub = (ITestHub)client;
+        var left = false;
+        this.testHub.ClientDisconnected += (_, _) => left = true;
+        var messages = new List<string>();
+        hub.Message += m => { lock (messages) messages.Add(m); };
+
+        await ch.Unsubscribe(new FakeCentral("c1"));
+        Assert.Single(this.testHub.ConnectedClients);
+        await this.testHub.Clients.All.Message("missed");
+
+        client.DropLink("out of range");
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && messages.Count == 1);
+        await Task.Delay(200);   // a few sweeps
+
+        Assert.False(left);
+        Assert.Equal(["missed"], messages);
+        Assert.Equal("c1", Assert.Single(this.testHub.ConnectedClients).Id);
+        Assert.Equal(new Payload("x", 1), await hub.Echo(new Payload("x", 1)));
+    }
+
+
+    [Fact]
+    public async Task HeldClientsAreToldNothingWhenTheHostStops()
+    {
+        this.Build();
+        await this.host.Start();
+        var ch = this.hosting.Characteristic(TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), this.serviceUuid, TestChar);
+        var central = new FakeCentral("c1");
+        ch.Notified = (id, frame) => client.ReceiveFrame(frame);
+        await ch.Subscribe(central);
+        await client.ConnectTransport((frame, _) => ch.Write(central, frame), central.Mtu + BleConstants.AttHeaderSize, new BleHubConnectOptions("Alice"), CancellationToken.None, relink: _ => Task.FromResult(central.Mtu + BleConstants.AttHeaderSize));
+        BleHubClientDisconnectedEventArgs? left = null;
+        this.testHub.ClientDisconnected += (_, e) => left = e;
+
+        await ch.Unsubscribe(central);
+        Assert.Null(left);
+
+        // a held client has no link to tell - stopping lets it go straight away
+        await this.host.Stop("bye");
+        await WaitFor(() => left != null);
+        Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "bye"), left!.Disconnect);
+        Assert.Empty(this.testHub.ConnectedClients);
+    }
+
+
+    [Fact]
     public async Task SweptClientIsATimeout()
     {
         this.Build(TimeSpan.FromMilliseconds(50));

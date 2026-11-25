@@ -12,9 +12,11 @@ internal static class ProtocolSerializer
     public static byte[] Serialize(RemoteError value) => JsonSerializer.SerializeToUtf8Bytes(value, BleHubProtocolJsonContext.Default.RemoteError);
     public static byte[] Serialize(DisconnectInfo value) => JsonSerializer.SerializeToUtf8Bytes(value, BleHubProtocolJsonContext.Default.DisconnectInfo);
     public static byte[] Serialize(RenameInfo value) => JsonSerializer.SerializeToUtf8Bytes(value, BleHubProtocolJsonContext.Default.RenameInfo);
+    public static byte[] Serialize(ResumeInfo value) => JsonSerializer.SerializeToUtf8Bytes(value, BleHubProtocolJsonContext.Default.ResumeInfo);
 
     public static HandshakeInfo ReadHandshake(ReadOnlyMemory<byte> data) => JsonSerializer.Deserialize(data.Span, BleHubProtocolJsonContext.Default.HandshakeInfo)!;
     public static HandshakeAck ReadHandshakeAck(ReadOnlyMemory<byte> data) => JsonSerializer.Deserialize(data.Span, BleHubProtocolJsonContext.Default.HandshakeAck)!;
+    public static ResumeInfo ReadResume(ReadOnlyMemory<byte> data) => JsonSerializer.Deserialize(data.Span, BleHubProtocolJsonContext.Default.ResumeInfo)!;
     public static RenameInfo ReadRename(ReadOnlyMemory<byte> data) => JsonSerializer.Deserialize(data.Span, BleHubProtocolJsonContext.Default.RenameInfo)!;
     public static RemoteError ReadError(ReadOnlyMemory<byte> data) => JsonSerializer.Deserialize(data.Span, BleHubProtocolJsonContext.Default.RemoteError)!;
 

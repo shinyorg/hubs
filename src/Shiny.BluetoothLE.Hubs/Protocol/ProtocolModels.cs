@@ -5,11 +5,14 @@ namespace Shiny.BluetoothLE.Hubs.Protocol;
 /// <summary>
 /// Sent by the client once it is subscribed to the outbox
 /// </summary>
+/// <param name="Resumable">The client can get back onto a dropped link (<see cref="FrameKind.Resume"/>), so the host may
+/// hold it rather than let it go. Absent from clients older than resume - they are never held.</param>
 public sealed record HandshakeInfo(
     int ProtocolVersion,
     string? Name,
     string? AppVersion,
-    Dictionary<string, string>? Properties
+    Dictionary<string, string>? Properties,
+    bool Resumable = false
 );
 
 /// <summary>
@@ -24,6 +27,8 @@ public sealed record HandshakeInfo(
 /// <param name="MediaChannelSecure">Whether the media L2CAP channel must be opened secure</param>
 /// <param name="MediaToken">This connection's media token - the client's first frame on the media channel (its UTF-8 bytes)</param>
 /// <param name="MediaMaxPacketSize">The largest media packet either side may send</param>
+/// <param name="ResumeToken">Secret proof of this connection: a client whose link drops sends it back (<see cref="FrameKind.Resume"/>) on a new link to carry on as the same connection. Null when the host doesn't hold dropped clients. Absent from hosts older than resume.</param>
+/// <param name="ResumeWindowSeconds">How long the host holds a dropped client for it to come back, 0 when it doesn't</param>
 public sealed record HandshakeAck(
     bool Accepted,
     string? Reason,
@@ -33,8 +38,20 @@ public sealed record HandshakeAck(
     ushort MediaChannelPsm = 0,
     bool MediaChannelSecure = false,
     string? MediaToken = null,
-    int MediaMaxPacketSize = 0
+    int MediaMaxPacketSize = 0,
+    string? ResumeToken = null,
+    int ResumeWindowSeconds = 0
 );
+
+
+/// <summary>
+/// A client whose link dropped, back on a new link (<see cref="FrameKind.Resume"/>). The host answers with a
+/// <see cref="HandshakeAck"/>: accepted, the client carries on as the same connection - same id, groups and Items - and
+/// the pushes it missed follow; refused (the window ran out, the token is unknown), it connects again from scratch.
+/// </summary>
+/// <param name="ProtocolVersion">The client's <see cref="FrameCodec.ProtocolVersion"/></param>
+/// <param name="Token">The <see cref="HandshakeAck.ResumeToken"/> the host gave this connection</param>
+public sealed record ResumeInfo(int ProtocolVersion, string Token);
 
 /// <summary>
 /// A handler failure relayed to the caller
@@ -72,4 +89,5 @@ public sealed record RenameInfo(string? Name);
 [JsonSerializable(typeof(RemoteError))]
 [JsonSerializable(typeof(DisconnectInfo))]
 [JsonSerializable(typeof(RenameInfo))]
+[JsonSerializable(typeof(ResumeInfo))]
 internal partial class BleHubProtocolJsonContext : JsonSerializerContext;

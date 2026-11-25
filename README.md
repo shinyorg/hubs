@@ -223,6 +223,35 @@ var result = await client.Hub.Invoke("Echo", [Encoding.UTF8.GetBytes("\"hi\"")])
 await foreach (var item in client.Hub.Stream("Count", [Encoding.UTF8.GetBytes("3")])) { }
 ```
 
+### Dropped links and resume
+
+A client whose link drops (out of range, its app went to the background, the host checked a text) comes back as the
+same connection on every transport: same connection id, groups and `Properties`, with the pushes it missed replayed.
+The hub never sees it leave.
+
+- **Wi-Fi:** the Switchboard line resumes on its own inside its resume window.
+- **BLE, Multipeer and Nearby:** the host holds a dropped client for `BleHubHostOptions.ResumeWindow` (30 seconds) and
+  keeps what is pushed to it (`ResumeBufferSize`, 128). The client reconnects by itself and hands back a secret resume
+  token; its status is `Reconnecting` until it is back. Only a client that says it can resume is held, so older clients
+  and ones with `AutomaticReconnect = false` leave as before.
+- **While held** the client still counts in `ConnectedClients` and `MaxClients`, and stays in its groups.
+  `OnDisconnectedAsync` runs (`ClientTimeout`) only if the window runs out, or if more is pushed than the buffer keeps.
+  A goodbye, `Context.Abort`/`Disconnect` and `Stop` are never held.
+- **Lost in a drop:** calls in flight fail on the client (`BleHubDisconnectedException`), and media channels and file
+  transfers close. Calls made while `Reconnecting` fail the same way.
+
+```csharp
+services.AddUniversalServer(server => server
+    .Ble(o => o.ResumeWindow = TimeSpan.FromSeconds(60))   // zero turns holding off for BLE, Multipeer and Nearby
+    .AddHub<GameHub>(...));
+
+client.StatusChanged += (_, e) =>
+{
+    // Reconnecting: e.Disconnect says why the link dropped. Connected again: back, nothing missed.
+    // Disconnected: it didn't get back in time (or the host let it go).
+};
+```
+
 ### Disconnect reasons
 
 Every disconnect carries a `HubDisconnect`: a `HubDisconnectReason` you can switch on, plus an optional message. It
@@ -231,15 +260,15 @@ means the same thing on every transport, and the host and the client see the sam
 | Reason | BLE | HTTP | Multipeer and Nearby |
 |---|---|---|---|
 | `ClientDisconnect` | the client called `Disconnect()` (it says goodbye before unsubscribing) | the client closed its line | the client said goodbye, then ended its session |
-| `ClientTimeout` | an unsubscribe without a goodbye, or the client sweep | the line dropped and its resume window ran out | the session ended without a goodbye |
+| `ClientTimeout` | an unsubscribe without a goodbye, or the client sweep - after the resume window, for a client that can resume | the line dropped and its resume window ran out | the session ended without a goodbye - after the resume window, for a client that can resume |
 | `ServerDisconnect` | `Context.Abort` / `IHubContext.Disconnect` | the same | the same |
 | `ServerShutdown` | `IUniversalHubHost.Stop`, `IHubContext.Stop` | the same | the same |
 | `ConnectionFailed` | the link failed | the line faulted | the connect failed |
 
 - **Host:** `UniversalHub.OnDisconnectedAsync(connection, disconnect)` and `IHubContext.ClientDisconnected` carry it.
 - **Client:** `Disconnected`, `StatusChanged` (`e.Disconnect`) and `BleHubDisconnectedException.Disconnect` carry it.
-- **Short drops:** a brief HTTP drop that resumes isn't a disconnect at all. Multipeer and Nearby have no resume: a
-  dropped session is a `ClientTimeout`.
+- **Short drops:** a drop the client resumes from isn't a disconnect at all, on any transport. See
+  [Dropped links and resume](#dropped-links-and-resume).
 
 ## Client
 
@@ -271,8 +300,10 @@ public class JoinViewModel(IUniversalHubClient<IGameHub> client)
   still hold its old address. When no address answers, the client looks the host up again by name
   (`UniversalHubClientOptions.HttpRediscoverTimeout`, 3 seconds) and retries where it is now, before falling back to BLE.
 - `IUniversalHubClient<T>` is an `IBleHubClient<T>`. `Discover()` and `Connect(BleHubHostInfo)` still give BLE-only behavior.
-- A short Wi-Fi drop is resumed: the line keeps its id and groups, and missed pushes are replayed. The hub sees no
-  disconnect. Turn this off with `UniversalHubClientOptions.AutomaticReconnect = false`.
+- A dropped link is resumed on every transport: the connection keeps its id and groups, and missed pushes are replayed.
+  The hub sees no disconnect. Over BLE, Multipeer and Nearby the client reconnects within the host's resume window and
+  is `Reconnecting` meanwhile. Turn this off with `UniversalHubClientOptions.AutomaticReconnect = false`. See
+  [Dropped links and resume](#dropped-links-and-resume).
 
 ## Media channels
 
@@ -335,8 +366,9 @@ services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp", o =
 - **Renames work** (`client.Rename`, `HostRenamed`), as they do over BLE.
 - **Files** move as Multipeer resources, under the same `EnableFileTransfers` and `AuthorizeFile` rules as HTTP.
   **Media channels** ride the session as reliable, ordered messages.
-- **No resume.** MultipeerConnectivity sessions end when the app goes to the background. A dropped session is a
-  disconnect (`ClientTimeout`); reconnect as you would over BLE.
+- **Resume.** MultipeerConnectivity sessions end when the app goes to the background or a peer goes out of range. The
+  client invites the host again and resumes as the same connection inside the host's resume window (see
+  [Dropped links and resume](#dropped-links-and-resume)); after that it is a `ClientTimeout`.
 
 ## Nearby (Android, iOS and macOS, no network)
 
@@ -382,7 +414,8 @@ services.AddUniversalHubClient<IGameHub>(CharacteristicUuid, "_mygame._tcp", o =
 - **Messages over 32 KB** (Nearby's limit on one payload) travel in pieces and arrive whole. **Files** are Nearby file
   payloads, under the same `EnableFileTransfers` and `AuthorizeFile` rules. **Media channels** ride the channel as
   ordered messages. Renames work, as over Multipeer.
-- **No resume**, as with Multipeer: a dropped connection is a `ClientTimeout`.
+- **Resume**, as with Multipeer: the client connects again and carries on as the same connection inside the host's
+  resume window; after that a dropped connection is a `ClientTimeout`.
 - **Building from source:** run `native/ShinyNearbyBridge/build.sh` once before building the package or an app for iOS
   or macOS. It builds NearbyConnections' C++ core, which takes a few minutes. Package users don't need it.
 

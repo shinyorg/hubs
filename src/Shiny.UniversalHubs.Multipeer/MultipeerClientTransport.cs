@@ -57,7 +57,15 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
         try
         {
             await client.ConnectExternal(
-                events => new PeerHubTransport(HubTransports.Multipeer, connection, events, client.CharacteristicUuid, loggerFactory?.CreateLogger<PeerHubTransport>()),
+                events => new PeerHubTransport(
+                    HubTransports.Multipeer,
+                    connection,
+                    events,
+                    client.CharacteristicUuid,
+                    loggerFactory?.CreateLogger<PeerHubTransport>(),
+                    // a resume invites the same peer again - its MCPeerID lasts as long as the host's process
+                    connectOptions.AutomaticReconnect ? ct => link.Connect(peer, options.InviteTimeout, ct) : null
+                ),
                 connectOptions,
                 cancellationToken
             ).ConfigureAwait(false);

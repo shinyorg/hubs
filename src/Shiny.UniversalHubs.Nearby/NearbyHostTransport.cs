@@ -21,7 +21,8 @@ internal sealed class NearbyHostTransport(
 {
     readonly SemaphoreSlim gate = new(1, 1);
     readonly List<IHubBinding> running = new();
-    readonly ConcurrentDictionary<string, PeerHostSession> sessions = new(StringComparer.Ordinal);
+    // keyed by the session itself: a session that resumes a held connection takes that connection's id
+    readonly ConcurrentDictionary<PeerHostSession, byte> sessions = new();
     IDisposable? advertisement;
 
 
@@ -104,7 +105,7 @@ internal sealed class NearbyHostTransport(
             this.gate.Release();
         }
 
-        var stopping = this.sessions.Values.Where(x => x.Binding != null && hubs.Contains(x.Binding)).ToList();
+        var stopping = this.sessions.Keys.Where(x => x.Binding != null && hubs.Contains(x.Binding)).ToList();
         await Task.WhenAll(stopping.Select(x => x.Binding!.Endpoint.Disconnect(x.ConnectionId, disconnect))).ConfigureAwait(false);
 
         bool any;
@@ -114,7 +115,7 @@ internal sealed class NearbyHostTransport(
         // nothing left to join - sessions still waiting to hand-shake have nowhere to go
         if (!any)
         {
-            foreach (var session in this.sessions.Values.Where(x => x.Binding == null))
+            foreach (var session in this.sessions.Keys.Where(x => x.Binding == null))
                 session.Close();
         }
     }
@@ -129,7 +130,9 @@ internal sealed class NearbyHostTransport(
 
     public object CreatePeer(IPeerConnection connection) => new NearbyPeer(connection.RemoteName);
 
-    public void Remove(PeerHostSession session) => this.sessions.TryRemove(session.ConnectionId, out _);
+    public void Remove(PeerHostSession session) => this.sessions.TryRemove(session, out _);
+
+    public IEnumerable<PeerHostSession> Sessions => this.sessions.Keys;
 
 
     // under the gate
@@ -157,7 +160,7 @@ internal sealed class NearbyHostTransport(
     void Accepted(IPeerConnection connection)
     {
         var session = new PeerHostSession(this, connection);
-        this.sessions[session.ConnectionId] = session;
+        this.sessions[session] = 0;
         logger?.LogDebug("Nearby session {Id} with {Peer}", session.ConnectionId, connection.RemoteName);
         connection.Start(session);
     }

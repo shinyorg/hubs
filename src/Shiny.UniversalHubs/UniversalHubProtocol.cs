@@ -130,11 +130,14 @@ public static partial class UniversalHubProtocol
 /// <summary>
 /// The client's first call on a line
 /// </summary>
+/// <param name="Resumable">Peer links (Multipeer, Nearby): the client can resume after a dropped session, so the host may
+/// hold it. Wi-Fi resumes on its own and ignores it. Absent from clients older than peer-link resume.</param>
 public sealed record HubHandshake(
     int Protocol,
     string? Name,
     string? AppVersion,
-    Dictionary<string, string>? Properties
+    Dictionary<string, string>? Properties,
+    bool Resumable = false
 );
 
 

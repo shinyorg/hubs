@@ -94,13 +94,14 @@ public class NearbyTests : IAsyncLifetime
     /// <summary>
     /// A hub client on a device of its own
     /// </summary>
-    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid, FakeNearbyRadio? device = null) where TContract : class
+    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid, FakeNearbyRadio? device = null, bool automaticReconnect = true) where TContract : class
     {
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<INearbyRadio>(device ?? this.network.CreateDevice())
             .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
             {
+                o.AutomaticReconnect = automaticReconnect;
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.Nearby(ServiceId, nb => nb.EndpointName = "Phone");
             })
@@ -120,9 +121,9 @@ public class NearbyTests : IAsyncLifetime
             .WaitAsync(TimeSpan.FromSeconds(5));
 
 
-    async Task<IUniversalHubClient<ITestHub>> Connect(string name = "Alice", FakeNearbyRadio? device = null)
+    async Task<IUniversalHubClient<ITestHub>> Connect(string name = "Alice", FakeNearbyRadio? device = null, bool automaticReconnect = true)
     {
-        var client = this.CreateClient<ITestHub>(CharacteristicUuid, device);
+        var client = this.CreateClient<ITestHub>(CharacteristicUuid, device, automaticReconnect);
         var found = await Find(client);
         await client.Connect(found, new HubConnectOptions(name, "1.0") { Allowed = HubTransports.Nearby });
         return client;
@@ -495,9 +496,9 @@ public class NearbyTests : IAsyncLifetime
 
 
     [Fact]
-    public async Task ALostConnectionIsAClientTimeoutOnBothEnds()
+    public async Task ALostConnectionIsAClientTimeoutOnBothEndsWithoutAutomaticReconnect()
     {
-        var client = await this.Connect();
+        var client = await this.Connect(automaticReconnect: false);
         HubDisconnect? disconnect = null;
         client.Disconnected += (_, d) => disconnect = d;
 
@@ -506,6 +507,34 @@ public class NearbyTests : IAsyncLifetime
         await WaitFor(() => disconnect != null);
         Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect!.Reason);
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ClientTimeout"));
+    }
+
+
+    [Fact]
+    public async Task ALostConnectionResumesAsTheSameConnection()
+    {
+        var client = await this.Connect();
+        var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
+        var id = Assert.Single(context.ConnectedClients).Id;
+        var messages = new List<string>();
+        HubDisconnect? disconnected = null;
+        client.Disconnected += (_, d) => disconnected = d;
+        client.Hub.Message += m => { lock (messages) messages.Add(m); };
+
+        this.network.Partitioned = true;
+        this.hostRadio.DropAll();
+        await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
+        await WaitFor(() => this.network.Connections.Count == 0);
+        await context.Clients.All.Message("while away");
+
+        this.network.Partitioned = false;
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && messages.Count == 1);
+
+        Assert.Equal(["while away"], messages);
+        Assert.Null(disconnected);
+        Assert.Equal(id, Assert.Single(context.ConnectedClients).Id);
+        Assert.Equal(new Payload("back", 1), await client.Hub.Echo(new Payload("back", 1)));
+        Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
     }
 
 

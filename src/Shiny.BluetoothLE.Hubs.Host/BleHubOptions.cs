@@ -43,6 +43,20 @@ public class BleHubHostOptions
     public TimeSpan ClientSweepInterval { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// How long a client whose link dropped (out of range, its app went to the background) is held for it to come back
+    /// as the same connection - same id, groups and Items, with the pushes it missed replayed. While it is held the hub
+    /// still counts it in ConnectedClients and MaxClients, and OnDisconnectedAsync only runs if the window runs out.
+    /// Covers BLE and the peer-to-peer transports (Multipeer, Nearby); Wi-Fi has its own resume. Zero turns it off.
+    /// </summary>
+    public TimeSpan ResumeWindow { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Pushes kept for a held client. One that misses more than this can't be given everything, so it is let go
+    /// (OnDisconnectedAsync runs) rather than resumed with a gap.
+    /// </summary>
+    public int ResumeBufferSize { get; set; } = 128;
+
+    /// <summary>
     /// L2CAP file transfer settings, null when disabled
     /// </summary>
     public BleHubFileTransferOptions? FileTransfers { get; private set; }

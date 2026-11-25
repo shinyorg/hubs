@@ -15,6 +15,8 @@ public class HubTests : IAsyncLifetime
     readonly BleHubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(10) };
     readonly BleHubOptions hubOptions = new() { MaxClients = 4 };
     readonly Dictionary<string, BleHubClient> clients = new();
+    // a client that resumed is reached on its new link, like a real central
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, BleHubClient> links = new();
     readonly IBleHubSerializer serializer = new ShinyJsonBleHubSerializer();
     ServiceProvider services = null!;
     HubRuntime runtime = null!;
@@ -44,7 +46,7 @@ public class HubTests : IAsyncLifetime
             Notify = (peer, frame, _) =>
             {
                 Assert.True(frame.Length <= FrameCodec.GetFrameSize(this.mtu));
-                this.clients[peer.Id].ReceiveFrame(frame);
+                (this.links.TryGetValue(peer.LinkId, out var onLink) ? onLink : this.clients[peer.Id]).ReceiveFrame(frame);
                 return Task.CompletedTask;
             }
         };
@@ -522,5 +524,201 @@ public class HubTests : IAsyncLifetime
         Assert.Equal(["n0", "n1", "host:NewHost", "n0", "n1"], seen);
         Assert.Equal("NewHost", client.HostName);
         await WaitFor(() => this.clients["peer-2"].HostName == "NewHost");
+    }
+
+
+    // ---- resume after a dropped link ----
+
+    sealed class Link(string id)
+    {
+        public string Id { get; set; } = id;
+        public int Relinks { get; set; }
+    }
+
+
+    /// <summary>
+    /// Connects like a BLE client whose every relink comes back on a new central - the way Android's random addresses do
+    /// </summary>
+    async Task<(ITestHub Hub, BleHubClient Client, Link Link)> ConnectResumable(string connectionId = "central-1", bool automaticReconnect = true)
+    {
+        var hub = this.CreateProxy(connectionId);
+        var client = this.clients[connectionId];
+        var link = new Link(connectionId);
+        await client.ConnectTransport(
+            (frame, _) =>
+            {
+                if (!this.runtime.OnFrame(link.Id, this.mtu, null, frame))
+                    throw new InvalidOperationException("GATT write failed");
+                return Task.CompletedTask;
+            },
+            this.mtu,
+            new BleHubConnectOptions("Alice", "1.0") { AutomaticReconnect = automaticReconnect },
+            CancellationToken.None,
+            relink: _ =>
+            {
+                link.Relinks++;
+                link.Id = $"{connectionId}-relink-{link.Relinks}";
+                this.links[link.Id] = client;
+                return Task.FromResult(this.mtu);
+            }
+        );
+        return (hub, client, link);
+    }
+
+
+    [Fact]
+    public async Task HeldClientResumesOnANewLinkAsTheSameConnection()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(5);
+        var (hub, client, link) = await this.ConnectResumable();
+        var statuses = new List<BleHubClientStatus>();
+        var messages = new List<string>();
+        HubDisconnect? disconnected = null;
+        client.StatusChanged += (_, e) => { lock (statuses) statuses.Add(e.Status); };
+        client.Disconnected += (_, d) => disconnected = d;
+        hub.Message += m => { lock (messages) messages.Add(m); };
+        IHubContext<TestHub> context = new HubContext<TestHub>(() => this.runtime);
+
+        // the host sees the central go first, and keeps the client
+        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        Assert.Single(context.ConnectedClients);
+        Assert.Equal(["central-1"], this.runtime.GetMembers("everyone"));
+        await context.Clients.All.Message("while you were away");
+        await context.Clients.Group("everyone").Message("and this");
+
+        client.DropLink("out of range");
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && messages.Count == 2);
+
+        Assert.Equal(["while you were away", "and this"], messages);
+        Assert.Equal([BleHubClientStatus.Reconnecting, BleHubClientStatus.Connected], statuses);
+        Assert.Null(disconnected);
+        Assert.Equal("central-1-relink-1", link.Id);
+
+        // same connection - id, groups - on the new central
+        Assert.Equal("central-1", Assert.Single(context.ConnectedClients).Id);
+        Assert.Same(this.runtime.FindClient("central-1"), this.runtime.FindClientOnLink("central-1-relink-1"));
+        Assert.Equal(["central-1"], this.runtime.GetMembers("everyone"));
+        Assert.Equal("Alice", await hub.WhoAmI());
+        Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
+
+        // and later pushes follow on the new link
+        await context.Clients.All.Message("welcome back");
+        await WaitFor(() => messages.Count == 3);
+    }
+
+
+    [Fact]
+    public async Task ClientResumesBeforeTheHostNoticesTheDrop()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(5);
+        var (hub, client, _) = await this.ConnectResumable();
+
+        client.DropLink("radio silence");
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && this.runtime.FindClientOnLink("central-1-relink-1") != null);
+
+        // the old central's unsubscribe arrives late - it no longer speaks for the client
+        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        await Task.Delay(100);
+
+        Assert.Equal("Alice", await hub.WhoAmI());
+        Assert.Single(this.runtime.Clients);
+        Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
+    }
+
+
+    [Fact]
+    public async Task HeldClientIsLetGoWhenTheWindowRunsOut()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromMilliseconds(300);
+        await this.ConnectResumable();
+
+        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        Assert.Single(this.runtime.Clients);
+        Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
+
+        await WaitFor(() => this.log.Entries.Contains("reason:Alice:ClientTimeout"));
+        Assert.Empty(this.runtime.Clients);
+        Assert.Empty(this.runtime.GetMembers("everyone"));
+    }
+
+
+    [Fact]
+    public async Task ClientDisconnectsWhenTheHostCannotResume()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(5);
+        var (_, client, _) = await this.ConnectResumable();
+        var disconnected = new TaskCompletionSource<HubDisconnect>();
+        client.Disconnected += (_, d) => disconnected.TrySetResult(d);
+
+        // the host let it go already (its window ran out while the client was away)
+        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
+        await this.runtime.Disconnect("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "gone"));
+
+        client.DropLink("out of range");
+        var disconnect = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect.Reason);
+        Assert.Contains("can't be resumed", disconnect.Message);
+        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+    }
+
+
+    [Fact]
+    public async Task ClientThatLeavesIsNotHeld()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(30);
+        var (_, client, _) = await this.ConnectResumable();
+
+        await client.Disconnect();
+
+        await WaitFor(() => this.log.Entries.Contains("reason:Alice:ClientDisconnect"));
+        Assert.Empty(this.runtime.Clients);
+    }
+
+
+    [Fact]
+    public async Task HeldClientThatMissesTooMuchIsLetGo()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(30);
+        this.runtime.ResumeBufferSize = 2;
+        await this.ConnectResumable();
+        IHubContext<TestHub> context = new HubContext<TestHub>(() => this.runtime);
+
+        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
+        for (var i = 0; i < 3; i++)
+            await context.Clients.All.Message($"m{i}");
+
+        await WaitFor(() => this.log.Entries.Contains("reason:Alice:ClientTimeout"));
+        Assert.Empty(this.runtime.Clients);
+    }
+
+
+    [Fact]
+    public async Task ClientWithoutAutomaticReconnectDisconnectsOnADrop()
+    {
+        this.runtime.ResumeWindow = TimeSpan.FromSeconds(5);
+        var (_, client, link) = await this.ConnectResumable(automaticReconnect: false);
+        var disconnected = new TaskCompletionSource<HubDisconnect>();
+        client.Disconnected += (_, d) => disconnected.TrySetResult(d);
+
+        client.DropLink("out of range");
+
+        Assert.Equal(HubDisconnectReason.ClientTimeout, (await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5))).Reason);
+        Assert.Equal(0, link.Relinks);
+    }
+
+
+    [Fact]
+    public async Task NoResumeTokenWhenTheHostDoesNotHoldClients()
+    {
+        // ResumeWindow defaults to zero on a bare runtime
+        var (_, client, link) = await this.ConnectResumable();
+        var disconnected = new TaskCompletionSource<HubDisconnect>();
+        client.Disconnected += (_, d) => disconnected.TrySetResult(d);
+
+        client.DropLink("out of range");
+
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, link.Relinks);
     }
 }

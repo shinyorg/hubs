@@ -96,6 +96,19 @@ internal sealed class HubClientProtocol(
     }
 
 
+    /// <summary>
+    /// Takes a held connection back on a new link. A host older than resume answers with an error (thrown as
+    /// <see cref="BleHubRemoteException"/>).
+    /// </summary>
+    public async Task<HandshakeAck> Resume(ResumeInfo info, CancellationToken cancellationToken)
+    {
+        var reply = await this.Call(FrameKind.Resume, null, ProtocolSerializer.Serialize(info), cancellationToken).ConfigureAwait(false);
+        return reply.Kind == FrameKind.HandshakeAck
+            ? ProtocolSerializer.ReadHandshakeAck(reply.Payload)
+            : throw Unexpected(reply);
+    }
+
+
     public async Task<ReadOnlyMemory<byte>> Invoke(string method, byte[] arguments, CancellationToken cancellationToken)
     {
         var reply = await this.Call(FrameKind.Invoke, method, arguments, cancellationToken).ConfigureAwait(false);

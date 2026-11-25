@@ -94,7 +94,9 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         {
             var runtime = new HubRuntime(reg, BleHubDispatchers.Get(reg.HubType), services, options, serializer, loggerFactory?.CreateLogger(reg.HubType.FullName!))
             {
-                HostName = hostOptions.LocalName
+                HostName = hostOptions.LocalName,
+                ResumeWindow = hostOptions.ResumeWindow,
+                ResumeBufferSize = hostOptions.ResumeBufferSize
             };
             runtime.Notify = (peer, frame, ct) => this.Notify(runtime, peer, frame, ct);
             this.runtimes[reg.CharacteristicUuid] = runtime;
@@ -181,6 +183,8 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         )
         {
             HostName = this.hostOptions.LocalName,
+            ResumeWindow = this.hostOptions.ResumeWindow,
+            ResumeBufferSize = this.hostOptions.ResumeBufferSize,
             FileTransferPsm = this.FileTransferPsm,
             FileTransferSecure = this.fileTransferSecure,
             MediaChannelPsm = this.mediaPsm,
@@ -459,10 +463,11 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
             {
                 var subscribed = ch.SubscribedCentrals.Select(x => x.Uuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 // clients on another transport aren't GATT subscribers - that transport reports when they leave
+                // links, not connection ids: a client that resumed is on a different central than it first connected through
                 foreach (var peer in runtime.Peers.Where(x => x.Channel == null).ToList())
                 {
-                    if (!subscribed.Contains(peer.Id))
-                        runtime.OnPeerGone(peer.Id, new HubDisconnect(HubDisconnectReason.ClientTimeout));
+                    if (!subscribed.Contains(peer.LinkId))
+                        runtime.OnPeerGone(peer.LinkId, new HubDisconnect(HubDisconnectReason.ClientTimeout));
                 }
             }
             catch (Exception ex)
@@ -473,8 +478,9 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
     }
 
 
+    // an L2CAP channel names the central it came from - the link, which a resumed client's connection id isn't
     BleHubConnectedClient? FindClient(string peerId) => this.runtimes.Values
-        .Select(x => x.FindClient(peerId))
+        .Select(x => x.FindClientOnLink(peerId))
         .FirstOrDefault(x => x != null);
 
 

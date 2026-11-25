@@ -100,6 +100,7 @@ public enum PeerMessageKind : byte
     Stream = 0x11,              // name = method, payload = arguments
     Cancel = 0x12,              // id = the call to cancel
     Rename = 0x13,              // payload = PeerRename
+    Resume = 0x14,              // name = characteristic UUID, payload = PeerResume - a dropped client back on a new session; answered with a HandshakeReply
     FileRequest = 0x50,         // payload = PeerFileRequest
     MediaOpen = 0x60,
 
@@ -134,7 +135,15 @@ internal sealed record PeerMessage(PeerMessageKind Kind, uint Id, string? Name, 
 /// <param name="HostId">Identifies the host across transports</param>
 /// <param name="Files">Whether the host serves file transfers</param>
 /// <param name="MediaMaxPacketSize">The largest media packet, null when the host has no media channels</param>
-public sealed record PeerHandshakeReply(bool Accepted, string? Reason, string? HostName, string? HostId, bool Files, int? MediaMaxPacketSize);
+/// <param name="ResumeToken">Secret proof of this connection, sent back in a <see cref="PeerResume"/> after the session drops. Null when the host won't hold the client (it doesn't hold dropped clients, or the client didn't say it could resume). Absent from hosts older than peer-link resume.</param>
+/// <param name="ResumeWindowSeconds">How long the host holds a dropped client</param>
+public sealed record PeerHandshakeReply(bool Accepted, string? Reason, string? HostName, string? HostId, bool Files, int? MediaMaxPacketSize, string? ResumeToken = null, int? ResumeWindowSeconds = null);
+
+/// <summary>
+/// A client whose session dropped, back on a new one (<see cref="PeerMessageKind.Resume"/>). Accepted, it carries on as the
+/// same connection - same id, groups and Items - and the pushes it missed follow the reply.
+/// </summary>
+public sealed record PeerResume(string Token);
 
 /// <summary>
 /// A hub failure relayed to the caller - becomes BleHubRemoteException on the client
@@ -168,6 +177,7 @@ public sealed record PeerFileDone(bool Succeeded, string? Message, long Bytes);
 [JsonSerializable(typeof(PeerHandshakeReply))]
 [JsonSerializable(typeof(PeerError))]
 [JsonSerializable(typeof(PeerRename))]
+[JsonSerializable(typeof(PeerResume))]
 [JsonSerializable(typeof(PeerFileRequest))]
 [JsonSerializable(typeof(PeerFileReply))]
 [JsonSerializable(typeof(PeerFileDone))]

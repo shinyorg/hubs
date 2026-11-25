@@ -19,6 +19,11 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
 
     public bool IsSupported => true;
 
+    /// <summary>
+    /// Invitations go unanswered while set - the host is out of reach (or its app is in the background)
+    /// </summary>
+    public bool Partitioned { get; set; }
+
     public IReadOnlyList<FakeAdvertisement> Advertisements
     {
         get
@@ -88,6 +93,9 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
     {
         // like a persisted MCPeerID, a host is the same peer across re-advertisements
         var name = ((FakePeer)peer).DisplayName;
+        if (this.Partitioned)
+            throw new BleHubException($"{name} did not answer the invitation");
+
         FakeAdvertisement ad;
         lock (this.gate)
             ad = this.advertisements.LastOrDefault(x => x.DisplayName == name) ?? throw new BleHubException($"{name} did not answer the invitation");

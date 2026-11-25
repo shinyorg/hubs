@@ -74,8 +74,17 @@ internal sealed class FakeNearbyNetwork
     }
 
 
+    /// <summary>
+    /// Connection requests fail while set - the host is out of reach
+    /// </summary>
+    public bool Partitioned { get; set; }
+
+
     internal void Request(FakeNearbyRadio from, string endpointId, byte[] info)
     {
+        if (this.Partitioned)
+            throw new InvalidOperationException("STATUS_ENDPOINT_UNKNOWN");
+
         FakeNearbyRadio to;
         lock (this.gate)
         {

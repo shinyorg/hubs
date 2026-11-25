@@ -77,4 +77,15 @@ public interface IBleHubClientTransportEvents
     /// The connection ended without the app asking (the host disconnected the client, or the link was lost), and why
     /// </summary>
     void Closed(HubDisconnect disconnect);
+
+    /// <summary>
+    /// The link dropped and the transport is getting the connection back (<see cref="BleHubClientStatus.Reconnecting"/>).
+    /// Follow it with <see cref="Reconnected"/>, or <see cref="Closed"/> when it gives up.
+    /// </summary>
+    void Reconnecting(HubDisconnect drop) { }
+
+    /// <summary>
+    /// The transport is back on the same connection after <see cref="Reconnecting"/>
+    /// </summary>
+    void Reconnected() { }
 }

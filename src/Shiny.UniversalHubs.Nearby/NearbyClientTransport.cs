@@ -47,16 +47,19 @@ internal sealed class NearbyClientTransport(NearbyLink link, NearbyClientOptions
     public async Task Connect(BleHubClient client, HubHostInfo host, BleHubConnectOptions connectOptions, CancellationToken cancellationToken)
     {
         var endpointId = host.Nearby?.Peer as string ?? throw new BleHubException($"{host.Name} was not seen over Nearby");
-        var connection = await link.Connect(
-            endpointId,
-            options.EndpointName ?? connectOptions.Name ?? "Hub client",
-            options.ConnectTimeout,
-            cancellationToken
-        ).ConfigureAwait(false);
+        var endpointName = options.EndpointName ?? connectOptions.Name ?? "Hub client";
+        var connection = await link.Connect(endpointId, endpointName, options.ConnectTimeout, cancellationToken).ConfigureAwait(false);
         try
         {
             await client.ConnectExternal(
-                events => new PeerHubTransport(HubTransports.Nearby, connection, events, client.CharacteristicUuid, loggerFactory?.CreateLogger<PeerHubTransport>()),
+                events => new PeerHubTransport(
+                    HubTransports.Nearby,
+                    connection,
+                    events,
+                    client.CharacteristicUuid,
+                    loggerFactory?.CreateLogger<PeerHubTransport>(),
+                    connectOptions.AutomaticReconnect ? ct => link.Connect(endpointId, endpointName, options.ConnectTimeout, ct) : null
+                ),
                 connectOptions,
                 cancellationToken
             ).ConfigureAwait(false);

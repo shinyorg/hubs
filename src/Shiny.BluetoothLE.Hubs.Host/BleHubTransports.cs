@@ -74,6 +74,35 @@ public interface IBleHubTransportEndpoint
     void Disconnected(string connectionId, HubDisconnect disconnect);
 
     /// <summary>
+    /// The link to a client was lost or closed - like <see cref="Disconnected(string, HubDisconnect)"/>, but only while
+    /// <paramref name="channel"/> is still the client's channel (a client that resumed on a new channel is left alone), and
+    /// a dropped link (<see cref="HubDisconnectReason.ClientTimeout"/>, <see cref="HubDisconnectReason.ConnectionFailed"/>)
+    /// holds a client that can resume (<see cref="EnableResume"/>) for the host's resume window instead of ending it.
+    /// </summary>
+    void Disconnected(string connectionId, IBleHubPeerChannel channel, HubDisconnect disconnect) => this.Disconnected(connectionId, disconnect);
+
+    /// <summary>
+    /// Lets a connected client resume after a dropped link. Returns the secret token to hand the client, or null when the
+    /// host doesn't hold dropped clients. A transport with its own resume (Wi-Fi) doesn't call it.
+    /// </summary>
+    string? EnableResume(string connectionId) => null;
+
+    /// <summary>
+    /// How long the host holds a dropped client for it to resume - zero when it doesn't
+    /// </summary>
+    TimeSpan ResumeWindow => TimeSpan.Zero;
+
+    /// <summary>
+    /// A client back with its resume token on a new <paramref name="channel"/>. Only connections whose id starts with
+    /// <paramref name="connectionIdPrefix"/> (the transport's own) are resumed. When it can be, the connection moves onto
+    /// the channel - same connection id, groups and Items - <paramref name="accepted"/> runs with the connection id (send
+    /// the client its reply there), then the pushes it missed go out through the channel, in order. Returns null when
+    /// resumed, otherwise why not - the client connects again from scratch.
+    /// </summary>
+    Task<string?> Resume(string resumeToken, string connectionIdPrefix, IBleHubPeerChannel channel, Func<string, Task> accepted, CancellationToken cancellationToken)
+        => Task.FromResult<string?>("This host can't resume connections");
+
+    /// <summary>
     /// The client renamed itself: runs ValidateClient with the new name, then OnRenamedAsync. Returns null when renamed,
     /// otherwise why it was refused - relay it to the client as a <see cref="BleHubRemoteException"/> of type
     /// <see cref="BleHubRemoteException.RenameRefused"/>.

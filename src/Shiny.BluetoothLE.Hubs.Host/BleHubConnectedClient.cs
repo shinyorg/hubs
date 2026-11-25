@@ -17,7 +17,8 @@ public sealed class BleHubConnectedClient
     }
 
     /// <summary>
-    /// The connection id - the platform's identifier for the central
+    /// The connection id - over BLE, the platform's identifier for the central the client first connected through. It stays
+    /// the same when the client resumes after a dropped link, on whichever central it comes back on.
     /// </summary>
     public string Id { get; }
     /// <summary>
@@ -33,9 +34,10 @@ public sealed class BleHubConnectedClient
     public int Mtu { get; }
 
     /// <summary>
-    /// The BLE central this client is connected through - null when it is connected over another transport
+    /// The BLE central this client is connected through - null when it is connected over another transport. A client that
+    /// resumed after a dropped link is on the central it came back on.
     /// </summary>
-    public Shiny.BluetoothLE.Hosting.IPeripheral? Peripheral { get; internal init; }
+    public Shiny.BluetoothLE.Hosting.IPeripheral? Peripheral { get; internal set; }
     public DateTimeOffset ConnectedAt { get; } = DateTimeOffset.UtcNow;
 
     /// <summary>

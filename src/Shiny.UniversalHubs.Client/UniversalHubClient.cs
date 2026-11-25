@@ -63,7 +63,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
     }
 
 
-    public HubTransports Transport => this.inner.Status != BleHubClientStatus.Connected
+    public HubTransports Transport => this.inner.Status is not (BleHubClientStatus.Connected or BleHubClientStatus.Reconnecting)
         ? HubTransports.None
         : this.client.ExternalTransport switch
         {
@@ -190,13 +190,13 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
                         break;
 
                     case HubTransports.Ble:
-                        await this.inner.Connect(host.Ble!, options.ToBle(), cancellationToken).ConfigureAwait(false);
+                        await this.inner.Connect(host.Ble!, this.ToBle(options), cancellationToken).ConfigureAwait(false);
                         break;
 
                     default:
                         var extra = this.extras.Value.FirstOrDefault(x => x.Transport == transport)
                                     ?? throw new BleHubException($"{transport} is not set up on this client");
-                        await extra.Connect(this.client, host, options.ToBle(), cancellationToken).ConfigureAwait(false);
+                        await extra.Connect(this.client, host, this.ToBle(options), cancellationToken).ConfigureAwait(false);
                         break;
                 }
 
@@ -288,7 +288,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             {
                 await this.client.ConnectExternal(
                     events => new SwitchboardTransport(hubUri, filesUri, mediaUri, events, this.options, this.loggerFactory),
-                    options.ToBle(),
+                    this.ToBle(options),
                     timeout.Token
                 ).ConfigureAwait(false);
                 return;
@@ -339,6 +339,9 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
                 yield return address;
         }
     }
+
+
+    BleHubConnectOptions ToBle(HubConnectOptions options) => options.ToBle() with { AutomaticReconnect = this.options.AutomaticReconnect };
 
 
     // BleHubClient reports a refusal (full, ValidateClient, not running) this way on either transport

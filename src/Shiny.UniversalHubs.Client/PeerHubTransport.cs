@@ -10,11 +10,16 @@ using Shiny.BluetoothLE.Hubs.Protocol;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// Carries one hub connection over a peer-link session (Multipeer, Nearby)
+/// Carries one hub connection over a peer-link session (Multipeer, Nearby). When the session drops and the host holds the
+/// connection, it opens a new session and resumes on it - same connection on the host, missed pushes replayed.
 /// </summary>
-internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKind, IPeerConnectionHandler
+internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKind
 {
-    readonly IPeerConnection connection;
+    static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
+    static readonly TimeSpan MaxResumeDelay = TimeSpan.FromSeconds(2);
+
+    readonly Func<CancellationToken, Task<IPeerConnection>>? reopen;
+    readonly CancellationTokenSource lifetime = new();
     readonly IBleHubClientTransportEvents events;
     readonly string characteristicUuid;
     readonly ILogger? logger;
@@ -25,21 +30,47 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
     readonly ConcurrentDictionary<uint, PendingDownload> downloads = new();
     PeerMediaChannel? media;
     HubDisconnect? hostDisconnect;
+    IPeerConnection connection = null!;
+    Link? current;
+    string? resumeToken;
+    int resumeWindowSeconds;
     int nextId;
     int mediaMaxPacketSize;
     bool files;
     volatile bool leaving;
     volatile bool closed;
+    volatile bool resuming;
 
 
-    public PeerHubTransport(HubTransports transport, IPeerConnection connection, IBleHubClientTransportEvents events, string characteristicUuid, ILogger? logger)
+    /// <param name="reopen">Opens a new session to the same host, for a resume - null when this transport can't</param>
+    public PeerHubTransport(
+        HubTransports transport,
+        IPeerConnection connection,
+        IBleHubClientTransportEvents events,
+        string characteristicUuid,
+        ILogger? logger,
+        Func<CancellationToken, Task<IPeerConnection>>? reopen = null
+    )
     {
         this.Transport = transport;
-        this.connection = connection;
         this.events = events;
         this.characteristicUuid = characteristicUuid;
         this.logger = logger;
-        connection.Start(this);
+        this.reopen = reopen;
+        this.Attach(connection);
+    }
+
+
+    /// <summary>
+    /// Makes <paramref name="session"/> the one this connection talks over - anything an earlier session reports from now
+    /// on is ignored
+    /// </summary>
+    void Attach(IPeerConnection session)
+    {
+        var link = new Link(this, session);
+        this.current = link;
+        this.connection = session;
+        session.Start(link);
     }
 
 
@@ -58,7 +89,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
             this.characteristicUuid,
             id => PeerProtocol.Encode(
                 PeerMessageKind.Handshake, id, this.characteristicUuid,
-                new HubHandshake(PeerProtocol.Version, info.Name, info.AppVersion, info.Properties),
+                new HubHandshake(PeerProtocol.Version, info.Name, info.AppVersion, info.Properties, info.Resumable && this.reopen != null),
                 PeerJsonContext.Default.HubHandshake
             ),
             cancellationToken
@@ -67,6 +98,8 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
         this.files = reply.Files;
         this.mediaMaxPacketSize = reply.MediaMaxPacketSize ?? 0;
         this.HostId = reply.HostId;
+        this.resumeToken = reply.ResumeToken;
+        this.resumeWindowSeconds = reply.ResumeWindowSeconds ?? 0;
 
         if (!reply.Accepted)
             this.Shutdown();
@@ -132,7 +165,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
 
     // ---- files ----
 
-    public bool CanTransferFiles => this.files && !this.closed;
+    public bool CanTransferFiles => this.files && !this.closed && !this.resuming;
 
 
     public async Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
@@ -236,7 +269,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
 
     // ---- media ----
 
-    public bool CanOpenMediaChannel => this.mediaMaxPacketSize > 0 && !this.closed;
+    public bool CanOpenMediaChannel => this.mediaMaxPacketSize > 0 && !this.closed && !this.resuming;
 
 
     public async Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
@@ -276,6 +309,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
             return;
 
         this.leaving = true;
+        this.lifetime.Cancel();
         this.TrySend(PeerProtocol.Encode(
             PeerMessageKind.Disconnect, 0, null,
             new HubHangUp((int)HubDisconnectReason.ClientDisconnect, null),
@@ -297,6 +331,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
     void Shutdown()
     {
         this.leaving = true;
+        this.lifetime.Cancel();
         this.connection.Dispose();
     }
 
@@ -390,12 +425,46 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
     }
 
 
-    public void Closed()
+    void LinkClosed(Link link)
     {
+        // a session this connection already moved off
+        if (!ReferenceEquals(this.current, link))
+            return;
+
+        var disconnect = this.hostDisconnect ?? new HubDisconnect(HubDisconnectReason.ClientTimeout, $"The {this.Transport} session ended");
+        this.FailPending(new BleHubDisconnectedException("The connection to the host was closed", disconnect));
+
+        // a resume attempt's session failing - the resume loop tries again
+        if (this.resuming)
+            return;
+
+        if (this.CanResume)
+        {
+            this.resuming = true;
+            this.events.Reconnecting(disconnect);
+            _ = this.Resume(disconnect);
+            return;
+        }
+
         this.closed = true;
 
-        var disconnect = this.hostDisconnect ?? new HubDisconnect(HubDisconnectReason.ClientTimeout, "The Multipeer session ended");
-        var gone = new BleHubDisconnectedException("The connection to the host was closed", disconnect);
+        // the app asked to leave (or the host refused us) - BleHubClient already knows
+        if (!this.leaving)
+            this.events.Closed(disconnect);
+    }
+
+
+    // a dropped session, not a goodbye - and the host said it holds this connection
+    bool CanResume =>
+        !this.leaving
+        && this.hostDisconnect == null
+        && this.reopen != null
+        && this.resumeToken != null
+        && this.resumeWindowSeconds > 0;
+
+
+    void FailPending(Exception gone)
+    {
         foreach (var reply in this.replies.Values)
             reply.TrySetException(gone);
         foreach (var stream in this.streams.Values)
@@ -405,10 +474,122 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
         foreach (var download in this.downloads.Values)
             download.Arrived.TrySetException(gone);
         Interlocked.Exchange(ref this.media, null)?.Closed();
+    }
 
-        // the app asked to leave (or the host refused us) - BleHubClient already knows
+
+    /// <summary>
+    /// Opens new sessions to the host and offers it the resume token, until it takes the connection back, refuses, or its
+    /// resume window runs out
+    /// </summary>
+    async Task Resume(HubDisconnect drop)
+    {
+        this.logger?.LogInformation("{Transport} session dropped ({Reason}) - resuming", this.Transport, drop);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(this.resumeWindowSeconds);
+        var delay = TimeSpan.FromMilliseconds(250);
+        string? refusal = null;
+
+        while (refusal == null && !this.leaving && DateTimeOffset.UtcNow < deadline)
+        {
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
+            attempt.CancelAfter(remaining < AttemptTimeout ? remaining : AttemptTimeout);
+            var id = this.NextId();
+            try
+            {
+                var session = await this.reopen!(attempt.Token).ConfigureAwait(false);
+                var waiting = new TaskCompletionSource<PeerMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+                this.replies[id] = waiting;
+                this.Attach(session);
+                lock (this.sendLock)
+                    session.Send(PeerProtocol.Encode(PeerMessageKind.Resume, id, this.characteristicUuid, new PeerResume(this.resumeToken!), PeerJsonContext.Default.PeerResume));
+
+                var reply = (await waiting.Task.WaitAsync(attempt.Token).ConfigureAwait(false)).Read(PeerJsonContext.Default.PeerHandshakeReply);
+                if (!reply.Accepted)
+                {
+                    refusal = reply.Reason ?? "The host could not resume the connection";
+                }
+                else
+                {
+                    this.resumeToken = reply.ResumeToken ?? this.resumeToken;
+                    this.files = reply.Files;
+                    this.mediaMaxPacketSize = reply.MediaMaxPacketSize ?? 0;
+                    this.resuming = false;
+                    this.logger?.LogInformation("Resumed over {Transport}", this.Transport);
+                    this.events.Reconnected();
+                    return;
+                }
+            }
+            catch (Exception ex) when (!this.leaving)
+            {
+                this.logger?.LogDebug(ex, "Resume attempt failed - retrying");
+                try
+                {
+                    await Task.Delay(delay, this.lifetime.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                delay = delay * 2 > MaxResumeDelay ? MaxResumeDelay : delay * 2;
+            }
+            catch (Exception)
+            {
+                // the app is leaving
+            }
+            finally
+            {
+                this.replies.TryRemove(id, out _);
+            }
+        }
+
+        this.resuming = false;
+        this.closed = true;
+        try
+        {
+            this.connection.Dispose();
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogDebug(ex, "Session did not close cleanly");
+        }
+
         if (!this.leaving)
-            this.events.Closed(disconnect);
+        {
+            this.logger?.LogInformation("Could not resume over {Transport}: {Reason}", this.Transport, refusal ?? "the resume window ran out");
+            this.events.Closed(new HubDisconnect(drop.Reason, refusal ?? drop.Message ?? "Could not get back to the host in time"));
+        }
+    }
+
+
+    /// <summary>
+    /// Hears one session for this connection - and goes quiet once the connection has moved to a newer one
+    /// </summary>
+    sealed class Link(PeerHubTransport owner, IPeerConnection session) : IPeerConnectionHandler
+    {
+        public IPeerConnection Session => session;
+
+        bool IsCurrent => ReferenceEquals(owner.current, this);
+
+        public void Received(ReadOnlyMemory<byte> message)
+        {
+            if (this.IsCurrent)
+                owner.Received(message);
+        }
+
+        public void FileProgress(string name, double fraction)
+        {
+            if (this.IsCurrent)
+                owner.FileProgress(name, fraction);
+        }
+
+        public void FileReceived(string name, string? path, Exception? error)
+        {
+            if (this.IsCurrent)
+                owner.FileReceived(name, path, error);
+            else if (path != null)
+                File.Delete(path);
+        }
+
+        public void Closed() => owner.LinkClosed(this);
     }
 
 
@@ -449,6 +630,8 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
     {
         if (this.closed)
             throw new BleHubDisconnectedException("The connection to the host was closed", this.hostDisconnect);
+        if (this.resuming)
+            throw new BleHubDisconnectedException("The link to the host dropped - resuming");
 
         lock (this.sendLock)
             this.connection.Send(message);

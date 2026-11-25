@@ -11,6 +11,7 @@ public enum FrameKind : byte
     StreamInvoke = 0x12,
     Cancel = 0x13,
     Rename = 0x14,
+    Resume = 0x15,          // a dropped client back on a new link, payload = ResumeInfo; answered with a HandshakeAck
     // Disconnect (0x40) is also sent client -> host when the client leaves
 
     // host -> client

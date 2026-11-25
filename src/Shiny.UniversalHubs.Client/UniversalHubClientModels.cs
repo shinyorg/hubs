@@ -132,8 +132,9 @@ public class UniversalHubClientOptions
     public TimeSpan HttpRediscoverTimeout { get; set; } = TimeSpan.FromSeconds(3);
 
     /// <summary>
-    /// Resume the Wi-Fi line after a short drop instead of disconnecting - the host keeps the client, its groups and
-    /// replays missed pushes
+    /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
+    /// missed pushes. Over Wi-Fi the line resumes on its own; over BLE, Multipeer and Nearby the client reconnects
+    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (BleHubHostOptions.ResumeWindow).
     /// </summary>
     public bool AutomaticReconnect { get; set; } = true;
 

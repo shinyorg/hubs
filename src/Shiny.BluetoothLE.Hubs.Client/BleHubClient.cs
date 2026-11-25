@@ -112,35 +112,9 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
             var conn = this.Begin(host);
             this.services.Connections.Acquire(p.Uuid);
             conn.OwnsBleConnection = true;
+            conn.Relink = ct => this.AttachBleLink(conn, p, ct);
 
-            await p.ConnectAsync(new ConnectionConfig(false), cancellationToken).ConfigureAwait(false);
-            var attMtu = await NegotiateMtu(p, this.logger, cancellationToken).ConfigureAwait(false);
-
-            // fail fast if the host does not serve this hub
-            await p.GetCharacteristicAsync(this.ServiceUuid, this.CharacteristicUuid, cancellationToken).ConfigureAwait(false);
-
-            var subscribed = p.WaitForCharacteristicSubscriptionAsync(this.ServiceUuid, this.CharacteristicUuid, cancellationToken);
-            conn.Subscriptions.Add(p
-                .NotifyCharacteristic(this.ServiceUuid, this.CharacteristicUuid, false)
-                .Subscribe(
-                    r =>
-                    {
-                        if (r.Data is { Length: > 0 } data)
-                            this.protocol.OnFrame(data);
-                    },
-                    ex => this.logger?.LogWarning(ex, "Notification subscription failed")
-                ));
-            await subscribed.ConfigureAwait(false);
-
-            conn.Subscriptions.Add(p
-                .WhenStatusChanged()
-                .Where(x => x == ConnectionState.Disconnected)
-                .Subscribe(__ => { _ = this.Teardown(new HubDisconnect(HubDisconnectReason.ClientTimeout), false); }));
-
-            conn.Write = (frame, ct) => p.WriteCharacteristicAsync(this.ServiceUuid, this.CharacteristicUuid, frame, true, ct, 10000);
-            if (p.IsL2CapAvailable())
-                conn.OpenL2Cap = (psm, secure, ct) => p.OpenL2CapChannelAsync(psm, secure, ct);
-
+            var attMtu = await this.AttachBleLink(conn, p, cancellationToken).ConfigureAwait(false);
             await this.Complete(conn, attMtu, options, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -152,6 +126,45 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         {
             this.connectLock.Release();
         }
+    }
+
+
+    /// <summary>
+    /// Connects the peripheral and subscribes to the hub's characteristic - on connect, and again on each resume after the
+    /// link dropped. Returns the ATT MTU.
+    /// </summary>
+    async Task<int> AttachBleLink(Connection conn, IPeripheral p, CancellationToken cancellationToken)
+    {
+        conn.DropLinkSubscriptions();
+        await p.ConnectAsync(new ConnectionConfig(false), cancellationToken).ConfigureAwait(false);
+        var attMtu = await NegotiateMtu(p, this.logger, cancellationToken).ConfigureAwait(false);
+
+        // fail fast if the host does not serve this hub
+        await p.GetCharacteristicAsync(this.ServiceUuid, this.CharacteristicUuid, cancellationToken).ConfigureAwait(false);
+
+        var subscribed = p.WaitForCharacteristicSubscriptionAsync(this.ServiceUuid, this.CharacteristicUuid, cancellationToken);
+        conn.AddLinkSubscription(p
+            .NotifyCharacteristic(this.ServiceUuid, this.CharacteristicUuid, false)
+            .Subscribe(
+                r =>
+                {
+                    if (r.Data is { Length: > 0 } data)
+                        this.protocol.OnFrame(data);
+                },
+                ex => this.logger?.LogWarning(ex, "Notification subscription failed")
+            ));
+        await subscribed.ConfigureAwait(false);
+
+        conn.AddLinkSubscription(p
+            .WhenStatusChanged()
+            .Where(x => x == ConnectionState.Disconnected)
+            .Subscribe(__ => this.OnLinkLost(conn, new HubDisconnect(HubDisconnectReason.ClientTimeout))));
+
+        conn.Write = (frame, ct) => p.WriteCharacteristicAsync(this.ServiceUuid, this.CharacteristicUuid, frame, true, ct, 10000);
+        if (p.IsL2CapAvailable())
+            conn.OpenL2Cap = (psm, secure, ct) => p.OpenL2CapChannelAsync(psm, secure, ct);
+
+        return attMtu;
     }
 
 
@@ -187,7 +200,8 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         int mtu,
         BleHubConnectOptions? options,
         CancellationToken cancellationToken,
-        Func<ushort, bool, CancellationToken, Task<L2CapChannel>>? openL2Cap = null
+        Func<ushort, bool, CancellationToken, Task<L2CapChannel>>? openL2Cap = null,
+        Func<CancellationToken, Task<int>>? relink = null
     )
     {
         await this.connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -197,6 +211,7 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
             var conn = this.Begin(null);
             conn.Write = write;
             conn.OpenL2Cap = openL2Cap;
+            conn.Relink = relink;
             await this.Complete(conn, mtu, options, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -230,7 +245,8 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
             var conn = this.Begin(null);
             conn.External = createTransport(new ExternalEvents(this, conn));
 
-            var ack = await conn.External.Handshake(this.CreateHandshake(options), cancellationToken).ConfigureAwait(false);
+            // the transport says whether it can resume - it knows whether it can reopen its link
+            var ack = await conn.External.Handshake(this.CreateHandshake(options, options?.AutomaticReconnect ?? true), cancellationToken).ConfigureAwait(false);
             this.Accept(conn, ack, 0, options);
         }
         catch (Exception ex)
@@ -248,9 +264,124 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     internal void ReceiveFrame(ReadOnlySpan<byte> frame) => this.protocol.OnFrame(frame);
 
     /// <summary>
-    /// Simulates the link dropping (tests)
+    /// Simulates the link dropping with no resume (tests)
     /// </summary>
     internal Task LoseConnection(string reason) => this.Teardown(new HubDisconnect(HubDisconnectReason.ClientTimeout, reason), false);
+
+    /// <summary>
+    /// Simulates the link dropping the way the radio reports it - resumed when it can be (tests)
+    /// </summary>
+    internal void DropLink(string reason)
+    {
+        if (this.connection is { } conn)
+            this.OnLinkLost(conn, new HubDisconnect(HubDisconnectReason.ClientTimeout, reason));
+    }
+
+
+    /// <summary>
+    /// The BLE link dropped. A connected client the host holds gets back onto it; anything else is torn down.
+    /// </summary>
+    void OnLinkLost(Connection conn, HubDisconnect drop)
+    {
+        // a drop while already resuming is that attempt failing - the resume loop retries
+        if (!ReferenceEquals(this.connection, conn) || this.Status == BleHubClientStatus.Reconnecting)
+            return;
+
+        if (this.Status == BleHubClientStatus.Connected && conn.CanResume)
+            _ = this.ResumeBle(conn, drop);
+        else
+            _ = this.Teardown(drop, false);
+    }
+
+
+    /// <summary>
+    /// Re-establishes the link and hands the host its resume token, until the host takes the connection back, refuses, or
+    /// its resume window runs out
+    /// </summary>
+    async Task ResumeBle(Connection conn, HubDisconnect drop)
+    {
+        var ack = conn.Ack!;
+        this.logger?.LogInformation("Link to '{Host}' dropped ({Reason}) - resuming", conn.HostName, drop);
+        this.SetStatus(BleHubClientStatus.Reconnecting, drop);
+        this.protocol.FailAll(new BleHubDisconnectedException("The link to the host dropped - the call may not have completed", drop));
+        await this.CloseMedia(conn).ConfigureAwait(false);
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(ack.ResumeWindowSeconds);
+        var delay = TimeSpan.FromMilliseconds(250);
+        string? refusal = null;
+
+        while (refusal == null && ReferenceEquals(this.connection, conn) && DateTimeOffset.UtcNow < deadline)
+        {
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(conn.Lifetime.Token);
+            attempt.CancelAfter(remaining < AttemptTimeout ? remaining : AttemptTimeout);
+            try
+            {
+                this.protocol.Mtu = await conn.Relink!(attempt.Token).ConfigureAwait(false);
+                var reply = await this.protocol.Resume(new ResumeInfo(FrameCodec.ProtocolVersion, ack.ResumeToken!), attempt.Token).ConfigureAwait(false);
+                if (!reply.Accepted)
+                {
+                    refusal = reply.Reason ?? "The host could not resume the connection";
+                }
+                else if (ReferenceEquals(this.connection, conn))
+                {
+                    conn.Ack = reply;
+                    conn.HostName = reply.HostName ?? conn.HostName;
+                    this.SetStatus(BleHubClientStatus.Connected, null);
+                    this.logger?.LogInformation("Resumed on '{Host}'", conn.HostName);
+                    return;
+                }
+            }
+            catch (BleHubRemoteException ex)
+            {
+                // a host older than resume doesn't know the frame
+                refusal = ex.Message;
+            }
+            catch (Exception ex) when (!conn.Lifetime.IsCancellationRequested)
+            {
+                this.logger?.LogDebug(ex, "Resume attempt failed - retrying");
+                try
+                {
+                    await Task.Delay(delay, conn.Lifetime.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                delay = delay * 2 > MaxResumeDelay ? MaxResumeDelay : delay * 2;
+            }
+            catch (Exception)
+            {
+                // torn down (Disconnect, Dispose) while resuming
+                return;
+            }
+        }
+
+        if (ReferenceEquals(this.connection, conn))
+        {
+            this.logger?.LogInformation("Could not resume on '{Host}': {Reason}", conn.HostName, refusal ?? "the resume window ran out");
+            await this.Teardown(new HubDisconnect(drop.Reason, refusal ?? drop.Message ?? "Could not get back to the host in time"), true).ConfigureAwait(false);
+        }
+    }
+
+
+    static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
+    static readonly TimeSpan MaxResumeDelay = TimeSpan.FromSeconds(2);
+
+
+    async Task CloseMedia(Connection conn)
+    {
+        if (conn.TakeMedia() is not { } media)
+            return;
+
+        try
+        {
+            await media.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogDebug(ex, "Media channel did not close cleanly");
+        }
+    }
 
 
     public async Task Disconnect()
@@ -593,16 +724,18 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     async Task Complete(Connection conn, int mtu, BleHubConnectOptions? options, CancellationToken cancellationToken)
     {
         this.protocol.Mtu = mtu;
-        var ack = await this.protocol.Handshake(this.CreateHandshake(options), cancellationToken).ConfigureAwait(false);
+        var resumable = (options?.AutomaticReconnect ?? true) && conn.Relink != null;
+        var ack = await this.protocol.Handshake(this.CreateHandshake(options, resumable), cancellationToken).ConfigureAwait(false);
         this.Accept(conn, ack, mtu, options);
     }
 
 
-    HandshakeInfo CreateHandshake(BleHubConnectOptions? options) => new(
+    HandshakeInfo CreateHandshake(BleHubConnectOptions? options, bool resumable) => new(
         FrameCodec.ProtocolVersion,
         options?.Name,
         options?.AppVersion,
-        options?.Properties
+        options?.Properties,
+        resumable
     );
 
 
@@ -614,6 +747,7 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         conn.Ack = ack;
         conn.HostName = ack.HostName;
         conn.ClientName = options?.Name;
+        conn.AutomaticReconnect = options?.AutomaticReconnect ?? true;
         this.SetStatus(BleHubClientStatus.Connected, null);
         this.Connected?.Invoke(this, EventArgs.Empty);
         this.logger?.LogInformation("Connected to '{Host}' (MTU {Mtu}, file PSM {Psm})", ack.HostName, mtu, ack.FileTransferPsm);
@@ -655,26 +789,15 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         if (conn == null)
             return;
 
-        var wasConnected = this.Status == BleHubClientStatus.Connected;
+        var wasConnected = this.Status is BleHubClientStatus.Connected or BleHubClientStatus.Reconnecting;
         this.SetStatus(BleHubClientStatus.Disconnecting, disconnect);
-        foreach (var sub in conn.Subscriptions)
-            sub.Dispose();
+        conn.DropLinkSubscriptions();
 
         conn.Pushes.Writer.TryComplete();
         this.protocol.FailAll(new BleHubDisconnectedException("The connection to the host was closed", disconnect));
         conn.CloseReason = disconnect;
         conn.Lifetime.Cancel();
-        if (conn.Media is { } media)
-        {
-            try
-            {
-                await media.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogDebug(ex, "Media channel did not close cleanly");
-            }
-        }
+        await this.CloseMedia(conn).ConfigureAwait(false);
 
         if (conn.External != null && cancelConnection)
         {
@@ -786,6 +909,25 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
             if (ReferenceEquals(client.connection, conn))
                 _ = client.Teardown(disconnect, false);
         }
+
+        public void Reconnecting(HubDisconnect drop)
+        {
+            if (!ReferenceEquals(client.connection, conn) || client.Status != BleHubClientStatus.Connected)
+                return;
+
+            client.logger?.LogInformation("Link to '{Host}' dropped ({Reason}) - resuming", conn.HostName, drop);
+            client.SetStatus(BleHubClientStatus.Reconnecting, drop);
+            _ = client.CloseMedia(conn);
+        }
+
+        public void Reconnected()
+        {
+            if (!ReferenceEquals(client.connection, conn) || client.Status != BleHubClientStatus.Reconnecting)
+                return;
+
+            client.SetStatus(BleHubClientStatus.Connected, null);
+            client.logger?.LogInformation("Resumed on '{Host}'", conn.HostName);
+        }
     }
 
 
@@ -796,6 +938,19 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         public string? HostName { get; set; }
         public string? ClientName { get; set; }
         public bool OwnsBleConnection { get; set; }
+        public bool AutomaticReconnect { get; set; } = true;
+
+        /// <summary>
+        /// Re-establishes the BLE link for a resume - returns the new ATT MTU. Null where the link can't be redone.
+        /// </summary>
+        public Func<CancellationToken, Task<int>>? Relink { get; set; }
+
+        public bool CanResume =>
+            this.AutomaticReconnect
+            && this.External == null
+            && this.Relink != null
+            && this.Ack is { ResumeToken: not null, ResumeWindowSeconds: > 0 };
+
         public Func<byte[], CancellationToken, Task>? Write { get; set; }
         public IBleHubClientTransport? External { get; set; }
         public Func<ushort, bool, CancellationToken, Task<L2CapChannel>>? OpenL2Cap { get; set; }
@@ -806,9 +961,29 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
             get => Volatile.Read(ref this.media);
             set => Interlocked.Exchange(ref this.media, value);
         }
+        public IBleHubMediaChannel? TakeMedia() => Interlocked.Exchange(ref this.media, null);
         public CancellationTokenSource Lifetime { get; } = new();
         public HubDisconnect? CloseReason { get; set; }
-        public List<IDisposable> Subscriptions { get; } = new();
+
+        readonly List<IDisposable> subscriptions = new();
+
+        public void AddLinkSubscription(IDisposable subscription)
+        {
+            lock (this.subscriptions)
+                this.subscriptions.Add(subscription);
+        }
+
+        public void DropLinkSubscriptions()
+        {
+            List<IDisposable> old;
+            lock (this.subscriptions)
+            {
+                old = this.subscriptions.ToList();
+                this.subscriptions.Clear();
+            }
+            foreach (var sub in old)
+                sub.Dispose();
+        }
         public Channel<BleHubMessage> Pushes { get; } = Channel.CreateUnbounded<BleHubMessage>(new UnboundedChannelOptions { SingleReader = true });
     }
 }

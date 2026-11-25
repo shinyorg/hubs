@@ -8,7 +8,14 @@ public enum BleHubClientStatus
     Disconnected,
     Connecting,
     Connected,
-    Disconnecting
+    Disconnecting,
+
+    /// <summary>
+    /// The link dropped and the client is getting back onto it - the host holds the connection (same id, groups) and
+    /// replays the pushes it missed. Calls fail until it is Connected again; if the host's resume window runs out it goes
+    /// to Disconnected (and Disconnected is raised) instead.
+    /// </summary>
+    Reconnecting
 }
 
 
@@ -28,14 +35,22 @@ public sealed record BleHubConnectOptions(
     string? Name = null,
     string? AppVersion = null,
     Dictionary<string, string>? Properties = null
-);
+)
+{
+    /// <summary>
+    /// When the link drops, get back onto it as the same connection (<see cref="BleHubClientStatus.Reconnecting"/>)
+    /// instead of disconnecting - over BLE and the peer-to-peer transports, when the host holds dropped clients. Pushes
+    /// missed in between are replayed; calls in flight when the link dropped fail.
+    /// </summary>
+    public bool AutomaticReconnect { get; init; } = true;
+}
 
 
 /// <summary>
 /// The client's status changed
 /// </summary>
 /// <param name="Status">The new status</param>
-/// <param name="Disconnect">Why the connection is ending - set for Disconnecting and Disconnected</param>
+/// <param name="Disconnect">Why the connection is ending - set for Disconnecting and Disconnected - or why the link dropped, for Reconnecting</param>
 public sealed record BleHubStatusChangedEventArgs(BleHubClientStatus Status, HubDisconnect? Disconnect = null)
 {
     /// <summary>

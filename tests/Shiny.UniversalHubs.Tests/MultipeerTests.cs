@@ -90,13 +90,14 @@ public class MultipeerTests : IAsyncLifetime
     }
 
 
-    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid) where TContract : class
+    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid, bool automaticReconnect = true) where TContract : class
     {
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<IMultipeerLink>(this.network)
             .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
             {
+                o.AutomaticReconnect = automaticReconnect;
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.Multipeer(ServiceType, mc => mc.DisplayName = "Phone");
             })
@@ -140,9 +141,9 @@ public class MultipeerTests : IAsyncLifetime
     }
 
 
-    async Task<IUniversalHubClient<ITestHub>> Connect(string name = "Alice")
+    async Task<IUniversalHubClient<ITestHub>> Connect(string name = "Alice", bool automaticReconnect = true)
     {
-        var client = this.CreateClient<ITestHub>(CharacteristicUuid);
+        var client = this.CreateClient<ITestHub>(CharacteristicUuid, automaticReconnect);
         var found = await Find(client);
         await client.Connect(found, new HubConnectOptions(name, "1.0") { Allowed = HubTransports.Multipeer });
         return client;
@@ -448,9 +449,9 @@ public class MultipeerTests : IAsyncLifetime
 
 
     [Fact]
-    public async Task ALostSessionIsAClientTimeoutOnBothEnds()
+    public async Task ALostSessionIsAClientTimeoutOnBothEndsWithoutAutomaticReconnect()
     {
-        var client = await this.Connect();
+        var client = await this.Connect(automaticReconnect: false);
         HubDisconnect? disconnect = null;
         client.Disconnected += (_, d) => disconnect = d;
 
@@ -459,6 +460,70 @@ public class MultipeerTests : IAsyncLifetime
         await WaitFor(() => disconnect != null);
         Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect!.Reason);
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ClientTimeout"));
+    }
+
+
+    [Fact]
+    public async Task ALostSessionResumesAsTheSameConnection()
+    {
+        var client = await this.Connect();
+        var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
+        var id = Assert.Single(context.ConnectedClients).Id;
+        await client.Hub.JoinGroup("team");
+        var statuses = new List<BleHubClientStatus>();
+        var messages = new List<string>();
+        HubDisconnect? disconnected = null;
+        client.StatusChanged += (_, e) => { lock (statuses) statuses.Add(e.Status); };
+        client.Disconnected += (_, d) => disconnected = d;
+        client.Hub.Message += m => { lock (messages) messages.Add(m); };
+
+        // out of reach for a moment - the host holds the client and keeps what it misses
+        this.network.Partitioned = true;
+        this.network.Sessions.Single().Host.Drop();
+        await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
+        Assert.Equal(HubTransports.Multipeer, client.Transport);
+        await WaitFor(() => this.network.Sessions.Count == 1);
+        await context.Clients.Group("team").Message("missed one");
+        await context.Clients.All.Message("missed two");
+        Assert.Single(context.ConnectedClients);
+
+        this.network.Partitioned = false;
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && messages.Count == 2);
+
+        Assert.Equal(["missed one", "missed two"], messages);
+        Assert.Equal([BleHubClientStatus.Reconnecting, BleHubClientStatus.Connected], statuses);
+        Assert.Null(disconnected);
+        Assert.Equal(id, Assert.Single(context.ConnectedClients).Id);
+        Assert.Contains(id, context.Groups.GetMembers("team"));
+        Assert.Equal(new Payload("back", 1), await client.Hub.Echo(new Payload("back", 1)));
+        Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
+        Assert.Equal(2, this.network.Sessions.Count);
+    }
+
+
+    [Fact]
+    public async Task AClientTheHostLetGoCannotResume()
+    {
+        var client = await this.Connect();
+        var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
+        var id = Assert.Single(context.ConnectedClients).Id;
+        var disconnected = new TaskCompletionSource<HubDisconnect>();
+        client.Disconnected += (_, d) => disconnected.TrySetResult(d);
+
+        this.network.Partitioned = true;
+        this.network.Sessions.Single().Host.Drop();
+        await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
+        await WaitFor(() => this.log.Entries.Count(x => x.StartsWith("disconnected:", StringComparison.Ordinal)) == 0 && context.ConnectedClients.Count == 1);
+
+        // the host gives up on it before it gets back
+        await context.Disconnect(id, "gone");
+        await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerDisconnect"));
+
+        this.network.Partitioned = false;
+        var disconnect = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect.Reason);
+        Assert.Contains("can't be resumed", disconnect.Message);
+        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
     }
 
 
