@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
@@ -161,7 +160,7 @@ public sealed record HubConnectOptions(
             .ToList();
     }
 
-    internal BleHubConnectOptions ToBle() => new(this.Name, this.AppVersion, this.Properties);
+    internal HubHandshakeOptions ToBle() => new(this.Name, this.AppVersion, this.Properties);
 }
 
 
@@ -173,7 +172,7 @@ public class UniversalHubClientOptions
     readonly List<(Type Type, Func<IServiceProvider, IHubClientTransport> Factory)> transports = new();
     readonly List<Type> priority = new();
 
-    internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
+    internal List<Action<HubProtocolOptions>> ProtocolActions { get; } = new();
 
     /// <summary>
     /// Registrations the transports need
@@ -183,12 +182,12 @@ public class UniversalHubClientOptions
     /// <summary>
     /// The GATT service dynamic hubs are characteristics in (AddDynamicHubClients) - the host's DynamicHubOptions.BleServiceUuid
     /// </summary>
-    public string DynamicBleServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
+    public string DynamicBleServiceUuid { get; set; } = HubProtocolOptions.DefaultServiceUuid;
 
     /// <summary>
     /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
     /// missed pushes. Over HTTP the line resumes on its own; over BLE, Multipeer and Nearby the client reconnects
-    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (UniversalServerOptions.ResumeWindow).
+    /// (<see cref="HubClientStatus.Reconnecting"/>) within the host's resume window (UniversalServerOptions.ResumeWindow).
     /// </summary>
     public bool AutomaticReconnect { get; set; } = true;
 
@@ -248,7 +247,7 @@ public class UniversalHubClientOptions
     /// <summary>
     /// Protocol limits (payload size, timeouts) - app-wide, shared with every other hub client and host in the app
     /// </summary>
-    public UniversalHubClientOptions Protocol(Action<BleHubProtocolOptions> configure)
+    public UniversalHubClientOptions Protocol(Action<HubProtocolOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
         this.ProtocolActions.Add(configure);
@@ -318,13 +317,13 @@ public interface IHubClientTransport
 /// </summary>
 public sealed class HubClientContext
 {
-    internal HubClientContext(BleHubClient client, BleHubConnectOptions connectOptions)
+    internal HubClientContext(HubProxy client, HubHandshakeOptions connectOptions)
     {
         this.Client = client;
         this.ConnectOptions = connectOptions;
     }
 
-    internal BleHubClient Client { get; }
+    internal HubProxy Client { get; }
 
     /// <summary>
     /// The name of the hub - what hosts list and handshakes ask for
@@ -335,15 +334,15 @@ public sealed class HubClientContext
 
     /// <summary>
     /// What the client tells the host about itself, and whether it resumes after a dropped link
-    /// (<see cref="BleHubConnectOptions.AutomaticReconnect"/> - a transport that can, reopens its link to the same host)
+    /// (<see cref="HubHandshakeOptions.AutomaticReconnect"/> - a transport that can, reopens its link to the same host)
     /// </summary>
-    public BleHubConnectOptions ConnectOptions { get; }
+    public HubHandshakeOptions ConnectOptions { get; }
 
     /// <summary>
     /// Connects through the link <paramref name="createTransport"/> returns: it is handed the callbacks for pushes and
     /// closes, and carries this one connection
     /// </summary>
-    public Task Connect(Func<IBleHubClientTransportEvents, IBleHubClientTransport> createTransport, CancellationToken cancellationToken)
+    public Task Connect(Func<IHubConnectionTransportEvents, IHubConnectionTransport> createTransport, CancellationToken cancellationToken)
         => this.Client.ConnectExternal(createTransport, this.ConnectOptions, cancellationToken);
 }
 

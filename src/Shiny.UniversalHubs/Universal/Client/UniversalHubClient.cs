@@ -2,16 +2,15 @@ using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// A hub client that reaches its host over whichever of its transports can - Bluetooth LE, HTTP, Multipeer, Nearby or your
-/// own. Everything from IBleHubClient works the same on any of them - the generated proxy
-/// (<see cref="IBleHubClient{TContract}.Hub"/>), events, Disconnected and the file methods.
+/// own. Everything from IHubProxy works the same on any of them - the generated proxy
+/// (<see cref="IHubProxy{TContract}.Hub"/>), events, Disconnected and the file methods.
 /// </summary>
-public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> where TContract : class
+public interface IUniversalHubClient<out TContract> : IHubProxy<TContract> where TContract : class
 {
     /// <summary>
     /// Every transport this client has, in priority order - supported here or not (<see cref="IHubClientTransport.IsSupported"/>)
@@ -95,16 +94,16 @@ public static class UniversalHubClientTransportExtensions
 
 internal static class UniversalHubClientErrors
 {
-    // BleHubClient reports a refusal (full, ValidateClient, not running) this way on every transport
+    // HubProxy reports a refusal (full, ValidateClient, not running) this way on every transport
     public static bool IsRefusal(Exception ex)
-        => ex is BleHubException && ex.Message.StartsWith("Host refused", StringComparison.Ordinal);
+        => ex is HubException && ex.Message.StartsWith("Host refused", StringComparison.Ordinal);
 }
 
 
 internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContract> where TContract : class
 {
-    readonly IBleHubClient<TContract> inner;
-    readonly BleHubClient client;
+    readonly IHubProxy<TContract> inner;
+    readonly HubProxy client;
     readonly Lazy<IReadOnlyList<IHubClientTransport>> transports;
     readonly UniversalHubClientOptions options;
     readonly ILogger? logger;
@@ -114,14 +113,14 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     /// <param name="transports">Creates the client's transports, in priority order</param>
     public UniversalHubClient(
-        IBleHubClient<TContract> inner,
+        IHubProxy<TContract> inner,
         UniversalHubClientOptions options,
         Func<IReadOnlyList<IHubClientTransport>> transports,
         ILoggerFactory? loggerFactory = null
     )
     {
         this.inner = inner;
-        this.client = (BleHubClient)(object)inner;
+        this.client = (HubProxy)(object)inner;
         this.transports = new(transports);
         this.options = options;
         this.logger = loggerFactory?.CreateLogger<UniversalHubClient<TContract>>();
@@ -132,7 +131,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     IReadOnlyList<Type> Priority => this.Transports.Select(x => x.GetType()).ToList();
 
-    public IHubClientTransport? Transport => this.inner.Status is BleHubClientStatus.Connected or BleHubClientStatus.Reconnecting
+    public IHubClientTransport? Transport => this.inner.Status is HubClientStatus.Connected or HubClientStatus.Reconnecting
         ? this.connectedThrough
         : null;
 
@@ -193,7 +192,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         var scans = new Dictionary<IHubClientTransport, IDisposable>();
         var gate = new object();
         var priority = this.Priority;
-        var context = new HubClientContext(this.client, new BleHubConnectOptions());
+        var context = new HubClientContext(this.client, new HubHandshakeOptions());
         var disposed = false;
 
         void Publish(string name, HubHostInfo updated)
@@ -314,25 +313,25 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
         throw errors.Count switch
         {
-            0 => new BleHubException(
+            0 => new HubException(
                 $"{host.Name} is not reachable over any transport this client may use - seen over "
                 + (host.Transports.Count == 0 ? "nothing" : String.Join(", ", host.Transports.Select(x => this.Transports.FirstOrDefault(t => t.GetType() == x)?.DisplayName ?? x.Name)))
             ),
             1 => errors[0],
-            _ => new BleHubException($"Could not reach {host.Name}: {String.Join("; ", errors.Select(x => x.Message))}", new AggregateException(errors))
+            _ => new HubException($"Could not reach {host.Name}: {String.Join("; ", errors.Select(x => x.Message))}", new AggregateException(errors))
         };
     }
 
 
-    // ---- IBleHubClient<TContract> ----
+    // ---- IHubProxy<TContract> ----
 
     public TContract Hub => this.inner.Hub;
-    public BleHubClientStatus Status => this.inner.Status;
+    public HubClientStatus Status => this.inner.Status;
     public string? HostName => this.inner.HostName;
     public string? ClientName => this.inner.ClientName;
     public bool CanTransferFiles => this.inner.CanTransferFiles;
 
-    public event EventHandler<BleHubStatusChangedEventArgs>? StatusChanged
+    public event EventHandler<HubStatusChangedEventArgs>? StatusChanged
     {
         add => this.inner.StatusChanged += value;
         remove => this.inner.StatusChanged -= value;
@@ -363,7 +362,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     public bool CanOpenMediaChannel => this.inner.CanOpenMediaChannel;
 
-    public Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken = default) => this.inner.OpenMediaChannel(cancellationToken);
+    public Task<IHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken = default) => this.inner.OpenMediaChannel(cancellationToken);
 
     public Task<L2CapTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.UploadFile(localFilePath, remoteFileName, progress, cancellationToken);

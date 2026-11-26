@@ -2,20 +2,20 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Transport independent client side of the protocol - correlates replies with calls and surfaces host pushes
 /// </summary>
 internal sealed class HubClientProtocol(
-    BleHubProtocolOptions options,
+    HubProtocolOptions options,
     Func<byte[], CancellationToken, Task> write,
     ILogger? logger = null
 )
 {
-    readonly ConcurrentDictionary<ushort, Channel<BleHubMessage>> pending = new();
+    readonly ConcurrentDictionary<ushort, Channel<HubMessage>> pending = new();
     readonly SemaphoreSlim writeLock = new(1, 1);
     readonly MessageReassembler reassembler = new(options.MaxPayloadSize, options.ReassemblyTimeout, options.MaxPartialMessages);
     int nextId;
@@ -25,7 +25,7 @@ internal sealed class HubClientProtocol(
     /// <summary>
     /// A push or a host rename from the host, in the order received
     /// </summary>
-    public event Action<BleHubMessage>? Pushed;
+    public event Action<HubMessage>? Pushed;
 
     /// <summary>
     /// The host asked us to leave
@@ -35,13 +35,13 @@ internal sealed class HubClientProtocol(
 
     public void OnFrame(ReadOnlySpan<byte> frame)
     {
-        BleHubMessage? message;
+        HubMessage? message;
         try
         {
             lock (this.reassembler)
                 message = this.reassembler.Add(frame);
         }
-        catch (BleHubProtocolException ex)
+        catch (HubProtocolException ex)
         {
             logger?.LogWarning(ex, "Bad frame from host");
             if (ex.MessageId is { } id && this.pending.TryGetValue(id, out var ch))
@@ -98,7 +98,7 @@ internal sealed class HubClientProtocol(
 
     /// <summary>
     /// Takes a held connection back on a new link. A host older than resume answers with an error (thrown as
-    /// <see cref="BleHubRemoteException"/>).
+    /// <see cref="HubRemoteException"/>).
     /// </summary>
     public async Task<HandshakeAck> Resume(ResumeInfo info, CancellationToken cancellationToken)
     {
@@ -127,7 +127,7 @@ internal sealed class HubClientProtocol(
     public async IAsyncEnumerable<ReadOnlyMemory<byte>> Stream(string method, byte[] arguments, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var id = this.NextId();
-        var channel = Channel.CreateUnbounded<BleHubMessage>(new UnboundedChannelOptions { SingleReader = true });
+        var channel = Channel.CreateUnbounded<HubMessage>(new UnboundedChannelOptions { SingleReader = true });
         this.pending[id] = channel;
         var completed = false;
 
@@ -160,10 +160,10 @@ internal sealed class HubClientProtocol(
     }
 
 
-    async Task<BleHubMessage> Call(FrameKind kind, string? name, byte[] payload, CancellationToken cancellationToken)
+    async Task<HubMessage> Call(FrameKind kind, string? name, byte[] payload, CancellationToken cancellationToken)
     {
         var id = this.NextId();
-        var channel = Channel.CreateUnbounded<BleHubMessage>(new UnboundedChannelOptions { SingleReader = true });
+        var channel = Channel.CreateUnbounded<HubMessage>(new UnboundedChannelOptions { SingleReader = true });
         this.pending[id] = channel;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -193,7 +193,7 @@ internal sealed class HubClientProtocol(
     async Task WriteMessage(FrameKind kind, ushort id, string? name, byte[] payload, CancellationToken cancellationToken)
     {
         if (payload.Length > options.MaxPayloadSize)
-            throw new BleHubException($"Payload is {payload.Length} bytes which exceeds MaxPayloadSize ({options.MaxPayloadSize}) - send large content as a file");
+            throw new HubException($"Payload is {payload.Length} bytes which exceeds MaxPayloadSize ({options.MaxPayloadSize}) - send large content as a file");
 
         var frames = FrameCodec.Encode(kind, id, name, payload, FrameCodec.GetFrameSize(this.Mtu));
         await this.writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -244,9 +244,9 @@ internal sealed class HubClientProtocol(
     }
 
 
-    static async Task<BleHubMessage> Read(Channel<BleHubMessage> channel, CancellationToken cancellationToken)
+    static async Task<HubMessage> Read(Channel<HubMessage> channel, CancellationToken cancellationToken)
     {
-        BleHubMessage message;
+        HubMessage message;
         try
         {
             message = await channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -260,12 +260,12 @@ internal sealed class HubClientProtocol(
         if (message.Kind == FrameKind.Error)
         {
             var error = ProtocolSerializer.ReadError(message.Payload);
-            throw new BleHubRemoteException(error.ErrorType, error.Message);
+            throw new HubRemoteException(error.ErrorType, error.Message);
         }
         return message;
     }
 
 
-    static BleHubProtocolException Unexpected(BleHubMessage message)
+    static HubProtocolException Unexpected(HubMessage message)
         => new($"Unexpected {message.Kind} reply", message.MessageId);
 }

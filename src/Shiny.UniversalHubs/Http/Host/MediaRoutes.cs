@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.WebSockets;
 
@@ -87,7 +86,7 @@ internal static class MediaRoutes
 /// <summary>
 /// One client's media channel, on the host
 /// </summary>
-internal sealed class ServerMediaChannel(WebSocket socket, string connectionId, int maxPacketSize) : IBleHubMediaChannel
+internal sealed class ServerMediaChannel(WebSocket socket, string connectionId, int maxPacketSize) : IHubMediaChannel
 {
     readonly SemaphoreSlim sending = new(1, 1);
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -104,7 +103,7 @@ internal sealed class ServerMediaChannel(WebSocket socket, string connectionId, 
         if (packet.Length > maxPacketSize)
             throw new ArgumentException($"Packets are limited to {maxPacketSize} bytes", nameof(packet));
         if (!this.IsOpen)
-            throw new BleHubDisconnectedException("The media channel is closed");
+            throw new HubDisconnectedException("The media channel is closed");
 
         await this.sending.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

@@ -4,8 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
 using Shiny.BluetoothLE.Hosting;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 using HostedPeripheral = Shiny.BluetoothLE.Hosting.IPeripheral;
 
 namespace Shiny.UniversalHubs;
@@ -37,7 +36,7 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
     readonly IBleHostingManager hosting;
     readonly UniversalServerOptions serverOptions;
     readonly BluetoothLETransportOptions options;
-    readonly BleHubProtocolOptions protocolOptions;
+    readonly HubProtocolOptions protocolOptions;
     readonly IServiceProvider services;
     readonly ILoggerFactory? loggerFactory;
     readonly ILogger? logger;
@@ -62,7 +61,7 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
         IBleHostingManager hosting,
         UniversalServerOptions serverOptions,
         BluetoothLETransportOptions options,
-        BleHubProtocolOptions protocolOptions,
+        HubProtocolOptions protocolOptions,
         IServiceProvider services,
         ILoggerFactory? loggerFactory = null,
         LocalHubAdvertisement? localAdvertisement = null
@@ -126,7 +125,7 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
                 {
                     var access = await this.hosting.RequestAccess().ConfigureAwait(false);
                     if (access != AccessState.Available)
-                        throw new BleHubException($"Bluetooth hosting is not available ({access})");
+                        throw new HubException($"Bluetooth hosting is not available ({access})");
 
                     await this.StartFileServer().ConfigureAwait(false);
                     await this.StartMediaServer().ConfigureAwait(false);
@@ -352,7 +351,7 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
     Task Notify(IHubBinding hub, FrameHostLink link, byte[] frame, CancellationToken cancellationToken)
     {
         if (!this.characteristics.TryGetValue(hub, out var ch))
-            throw new BleHubException("Hub host is not running");
+            throw new HubException("Hub host is not running");
 
         return ch.Notify(frame, cancellationToken, (HostedPeripheral)link.Native!);
     }
@@ -380,7 +379,7 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
 
 
     // an L2CAP channel names the central it came from - the link, which a resumed client's connection id isn't
-    BleHubConnectedClient? FindClient(string peerId) => this.sessions.Values
+    HubConnectedClient? FindClient(string peerId) => this.sessions.Values
         .Select(x => x.FindClientOnLink(peerId))
         .FirstOrDefault(x => x != null);
 
@@ -405,12 +404,12 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
 
         try
         {
-            var handler = this.services.GetService<IBleHubFileHandler>();
+            var handler = this.services.GetService<IBleFileHandler>();
             if (handler != null)
             {
                 this.fileServer = await this.hosting.HandleL2CapRequests(
                     ft.Secure,
-                    (req, ct) => handler.Handle(new BleHubFileRequest(req, this.FindClient(req.PeerIdentifier)), ct),
+                    (req, ct) => handler.Handle(new BleFileRequest(req, this.FindClient(req.PeerIdentifier)), ct),
                     ft.Transfer,
                     (req, ex) => this.logger?.LogWarning(ex, "File transfer {File} failed", req?.FileName)
                 ).ConfigureAwait(false);
@@ -425,11 +424,11 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
                     AllowDownloads = ft.AllowDownloads,
                     OverwriteExistingUploads = ft.OverwriteExistingUploads,
                     MaxUploadSize = ft.MaxUploadSize,
-                    Authorize = ft.Authorize == null ? null : req => ft.Authorize(new BleHubFileRequest(req, this.FindClient(req.PeerIdentifier))),
-                    OnProgress = e => this.Host.OnFileProgress(new BleHubFileProgressEventArgs(
+                    Authorize = ft.Authorize == null ? null : req => ft.Authorize(new BleFileRequest(req, this.FindClient(req.PeerIdentifier))),
+                    OnProgress = e => this.Host.OnFileProgress(new HubFileProgressEventArgs(
                         this.FindClient(e.PeerIdentifier), e.PeerIdentifier, e.Type, e.FileName, e.Progress
                     )),
-                    OnCompleted = r => this.Host.OnFileTransferred(new BleHubFileTransferredEventArgs(
+                    OnCompleted = r => this.Host.OnFileTransferred(new HubFileTransferredEventArgs(
                         this.FindClient(r.PeerIdentifier), r.PeerIdentifier, r.Result.Type, r.Result.FileName, r.LocalFilePath, r.Result.BytesTransferred, r.Result.Elapsed
                     )),
                     OnError = (req, ex) => this.logger?.LogWarning(ex, "File transfer {File} failed", req?.FileName)

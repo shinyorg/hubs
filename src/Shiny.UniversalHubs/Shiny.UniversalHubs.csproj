@@ -15,12 +15,12 @@
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Multipeer" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Nearby" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
-        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.BluetoothLE.Tests" />
     </ItemGroup>
     <ItemGroup>
         <!-- ship the generator with the package so host and client apps both get it -->
-        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="None" PrivateAssets="all" />
-        <None Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\bin\$(Configuration)\netstandard2.0\Shiny.BluetoothLE.Hubs.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+        <ProjectReference Include="..\Shiny.UniversalHubs.SourceGenerators\Shiny.UniversalHubs.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="None" PrivateAssets="all" />
+        <None Include="..\Shiny.UniversalHubs.SourceGenerators\bin\$(Configuration)\netstandard2.0\Shiny.UniversalHubs.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     </ItemGroup>
 
     <!--

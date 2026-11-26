@@ -1,13 +1,12 @@
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// The client end of a media channel over Wi-Fi: a WebSocket where one binary message is one packet
 /// </summary>
-internal sealed class ClientMediaChannel(ClientWebSocket socket, HttpMessageInvoker? invoker, int maxPacketSize) : IBleHubMediaChannel
+internal sealed class ClientMediaChannel(ClientWebSocket socket, HttpMessageInvoker? invoker, int maxPacketSize) : IHubMediaChannel
 {
     readonly SemaphoreSlim sending = new(1, 1);
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,7 +32,7 @@ internal sealed class ClientMediaChannel(ClientWebSocket socket, HttpMessageInvo
         {
             socket.Dispose();
             invoker?.Dispose();
-            throw new BleHubException($"Could not open a media channel: {ex.Message}", ex);
+            throw new HubException($"Could not open a media channel: {ex.Message}", ex);
         }
         return new ClientMediaChannel(socket, invoker, maxPacketSize);
     }
@@ -63,7 +62,7 @@ internal sealed class ClientMediaChannel(ClientWebSocket socket, HttpMessageInvo
         if (packet.Length > maxPacketSize)
             throw new ArgumentException($"Packets are limited to {maxPacketSize} bytes", nameof(packet));
         if (!this.IsOpen)
-            throw new BleHubDisconnectedException("The media channel is closed");
+            throw new HubDisconnectedException("The media channel is closed");
 
         await this.sending.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

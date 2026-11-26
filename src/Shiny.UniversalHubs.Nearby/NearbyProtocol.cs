@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -190,7 +189,7 @@ public static class NearbyProtocol
     {
         var span = frame.Span;
         if (span.Length < FrameHeaderSize)
-            throw new BleHubProtocolException($"Nearby frame is too short ({span.Length} bytes)");
+            throw new HubProtocolException($"Nearby frame is too short ({span.Length} bytes)");
 
         return (
             (NearbyFrameKind)(span[0] & ~OpenerFlag),

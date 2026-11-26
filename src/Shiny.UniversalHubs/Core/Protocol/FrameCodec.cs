@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// Splits logical messages into MTU sized frames.
@@ -120,10 +120,10 @@ public static class FrameCodec
     public static FrameHeader ReadHeader(ReadOnlySpan<byte> frame)
     {
         if (frame.Length < HeaderSize)
-            throw new BleHubProtocolException($"Frame is too short ({frame.Length} bytes)");
+            throw new HubProtocolException($"Frame is too short ({frame.Length} bytes)");
 
         if (frame[0] != ProtocolVersion)
-            throw new BleHubProtocolException($"Unsupported protocol version {frame[0]}");
+            throw new HubProtocolException($"Unsupported protocol version {frame[0]}");
 
         var flags = frame[6];
         var first = (flags & FlagFirst) != 0;
@@ -131,7 +131,7 @@ public static class FrameCodec
         if (first)
         {
             if (frame.Length < FirstHeaderSize)
-                throw new BleHubProtocolException("First frame is too short");
+                throw new HubProtocolException("First frame is too short");
 
             totalLength = BinaryPrimitives.ReadUInt32LittleEndian(frame[7..]);
         }
@@ -151,18 +151,18 @@ public static class FrameCodec
     /// <summary>
     /// Splits a reassembled body into its name and payload
     /// </summary>
-    public static BleHubMessage ParseBody(FrameKind kind, ushort messageId, byte[] body)
+    public static HubMessage ParseBody(FrameKind kind, ushort messageId, byte[] body)
     {
         if (body.Length < 1)
-            throw new BleHubProtocolException("Message body is empty");
+            throw new HubProtocolException("Message body is empty");
 
         var idLength = body[0];
         if (body.Length < 1 + idLength)
-            throw new BleHubProtocolException("Message body is shorter than its name");
+            throw new HubProtocolException("Message body is shorter than its name");
 
         var name = idLength == 0 ? null : Encoding.UTF8.GetString(body, 1, idLength);
         var payload = new ReadOnlyMemory<byte>(body, 1 + idLength, body.Length - 1 - idLength);
-        return new BleHubMessage(kind, messageId, name, payload);
+        return new HubMessage(kind, messageId, name, payload);
     }
 }
 

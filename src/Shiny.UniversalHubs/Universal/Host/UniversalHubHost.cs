@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -83,19 +82,19 @@ public interface IUniversalHubHost
 
     /// <summary>
     /// Changes the host's name without stopping anything: sets <see cref="UniversalServerOptions.LocalName"/>, re-advertises
-    /// under it on the transports that advertise, and tells every connected client (<see cref="IBleHubConnection.HostRenamed"/>).
+    /// under it on the transports that advertise, and tells every connected client (<see cref="IHubConnection.HostRenamed"/>).
     /// </summary>
     Task Rename(string? localName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// A file finished moving, over any transport
     /// </summary>
-    event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
+    event EventHandler<HubFileTransferredEventArgs>? FileTransferred;
 
     /// <summary>
     /// Progress of a file moving over L2CAP
     /// </summary>
-    event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+    event EventHandler<HubFileProgressEventArgs>? FileTransferProgress;
 }
 
 
@@ -158,8 +157,8 @@ internal sealed class UniversalHubHost : IUniversalHubHost
 {
     readonly IServiceProvider services;
     readonly UniversalServerOptions options;
-    readonly BleHubProtocolOptions protocolOptions;
-    readonly IBleHubSerializer serializer;
+    readonly HubProtocolOptions protocolOptions;
+    readonly IHubSerializer serializer;
     readonly ILoggerFactory? loggerFactory;
     readonly ILogger? logger;
     readonly SemaphoreSlim gate = new(1, 1);
@@ -171,8 +170,8 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     public UniversalHubHost(
         IServiceProvider services,
         UniversalServerOptions options,
-        BleHubProtocolOptions protocolOptions,
-        IBleHubSerializer serializer,
+        HubProtocolOptions protocolOptions,
+        IHubSerializer serializer,
         IEnumerable<HubRegistration> registrations,
         ILoggerFactory? loggerFactory = null
     )
@@ -186,7 +185,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
 
         foreach (var reg in registrations)
         {
-            var runtime = this.CreateRuntime(new BleHubRegistration(reg.HubType, reg.Key, reg.Options), BleHubDispatchers.Get(reg.HubType), reg.HubType.Name, null);
+            var runtime = this.CreateRuntime(new HubDefinition(reg.HubType, reg.Key, reg.Options), HubDispatchers.Get(reg.HubType), reg.HubType.Name, null);
             this.compiled.Add(new HubEntry(reg.Key, reg.HubType.Name, reg.HubType, reg.Transports, reg.Settings, runtime));
         }
     }
@@ -224,8 +223,8 @@ internal sealed class UniversalHubHost : IUniversalHubHost
 
     public IReadOnlyList<string> ListenUrls => this.Transports.OfType<IListeningTransport>().FirstOrDefault()?.ListenUrls ?? [];
 
-    public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
-    public event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+    public event EventHandler<HubFileTransferredEventArgs>? FileTransferred;
+    public event EventHandler<HubFileProgressEventArgs>? FileTransferProgress;
     public event EventHandler? RunningChanged;
 
     /// <summary>
@@ -438,7 +437,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     /// <summary>
     /// Adds a hub while the app runs. It doesn't start until asked.
     /// </summary>
-    public HubEntry AddDynamic(string key, string name, BleHubOptions options, IBleHubHandler handler, IReadOnlySet<Type> transports, IReadOnlyDictionary<Type, object> settings)
+    public HubEntry AddDynamic(string key, string name, HubOptions options, IHubHandler handler, IReadOnlySet<Type> transports, IReadOnlyDictionary<Type, object> settings)
     {
         lock (this.dynamicGate)
         {
@@ -446,7 +445,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
                 throw new InvalidOperationException($"A hub named {key} already exists");
 
             var runtime = this.CreateRuntime(
-                new BleHubRegistration(typeof(HandlerHub), key, options),
+                new HubDefinition(typeof(HandlerHub), key, options),
                 new HandlerDispatcher(handler),
                 name,
                 () => new HandlerHub(handler)
@@ -474,11 +473,11 @@ internal sealed class UniversalHubHost : IUniversalHubHost
 
     // ---- what the transports report ----
 
-    internal void OnFileTransferred(BleHubFileTransferredEventArgs args) => this.FileTransferred?.Invoke(this, args);
-    internal void OnFileProgress(BleHubFileProgressEventArgs args) => this.FileTransferProgress?.Invoke(this, args);
+    internal void OnFileTransferred(HubFileTransferredEventArgs args) => this.FileTransferred?.Invoke(this, args);
+    internal void OnFileProgress(HubFileProgressEventArgs args) => this.FileTransferProgress?.Invoke(this, args);
 
 
-    HubRuntime CreateRuntime(BleHubRegistration registration, IBleHubDispatcher dispatcher, string name, Func<object>? createHub)
+    HubRuntime CreateRuntime(HubDefinition registration, IHubDispatcher dispatcher, string name, Func<object>? createHub)
     {
         var runtime = new HubRuntime(
             registration,

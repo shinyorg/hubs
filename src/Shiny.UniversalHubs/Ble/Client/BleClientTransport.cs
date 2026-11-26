@@ -3,11 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
-public static class BleHubClientExtensions
+public static class BleClientExtensions
 {
     /// <summary>
     /// Reaches the hub over Bluetooth LE: scans for hosts advertising <paramref name="serviceUuid"/> and connects to the
@@ -107,7 +106,7 @@ public sealed class BleClientTransport : IHubClientTransport
         .FromAsync(() => this.Ble.RequestAccessAsync())
         .SelectMany(access => access == AccessState.Available
             ? this.Ble.Scan(new ScanConfig(serviceUuid))
-            : Observable.Throw<ScanResult>(new BleHubException($"Bluetooth is not available ({access})"))
+            : Observable.Throw<ScanResult>(new HubException($"Bluetooth is not available ({access})"))
         )
         // a scan on the device that is hosting can report the device's own advertisement - checked per result, since
         // this app's host can start or stop advertising mid-scan
@@ -121,7 +120,7 @@ public sealed class BleClientTransport : IHubClientTransport
 
     public Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)
     {
-        var found = host.Endpoint<BleHubEndpoint>() ?? throw new BleHubException($"{host.Name} was not seen over Bluetooth LE");
+        var found = host.Endpoint<BleHubEndpoint>() ?? throw new HubException($"{host.Name} was not seen over Bluetooth LE");
         var ble = this.Ble;
         if (ble.IsScanning)
             ble.StopScan();

@@ -1,7 +1,7 @@
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Threading.Channels;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Shiny.UniversalHubs.Tests;
 
@@ -94,11 +94,11 @@ internal sealed class FakeMultipeerNetwork : IMultipeerLink
         // like a persisted MCPeerID, a host is the same peer across re-advertisements
         var name = ((FakePeer)peer).DisplayName;
         if (this.Partitioned)
-            throw new BleHubException($"{name} did not answer the invitation");
+            throw new HubException($"{name} did not answer the invitation");
 
         FakeAdvertisement ad;
         lock (this.gate)
-            ad = this.advertisements.LastOrDefault(x => x.DisplayName == name) ?? throw new BleHubException($"{name} did not answer the invitation");
+            ad = this.advertisements.LastOrDefault(x => x.DisplayName == name) ?? throw new HubException($"{name} did not answer the invitation");
 
         var client = new FakeMultipeerConnection(ad.DisplayName);
         var host = new FakeMultipeerConnection("Phone");
@@ -143,7 +143,7 @@ internal sealed class FakeMultipeerConnection : PeerConnectionBase
     public override void Send(byte[] message)
     {
         if (this.IsClosed)
-            throw new BleHubDisconnectedException("The fake session has ended");
+            throw new HubDisconnectedException("The fake session has ended");
 
         var copy = message.ToArray();
         this.Other.Post(() => this.Other.RaiseReceived(copy));
@@ -153,7 +153,7 @@ internal sealed class FakeMultipeerConnection : PeerConnectionBase
     public override Task SendFile(string path, string name, Action<double>? progress, CancellationToken cancellationToken)
     {
         if (this.IsClosed)
-            throw new BleHubDisconnectedException("The fake session has ended");
+            throw new HubDisconnectedException("The fake session has ended");
 
         var arrived = Path.Combine(Path.GetTempPath(), "fake-multipeer-" + Guid.NewGuid().ToString("N"));
         File.Copy(path, arrived);

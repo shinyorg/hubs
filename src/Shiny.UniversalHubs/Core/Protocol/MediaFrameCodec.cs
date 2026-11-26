@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// Frames media packets over a byte stream (an L2CAP channel). Each packet is <c>[u32 LE length][bytes]</c>.
@@ -83,7 +83,7 @@ public sealed class MediaFrameCodec
 
     /// <summary>
     /// Feeds bytes read from the stream. Returns the frames they complete, in order - often none, sometimes several.
-    /// Throws <see cref="BleHubProtocolException"/> for a frame longer than the max; the stream can't be trusted after that.
+    /// Throws <see cref="HubProtocolException"/> for a frame longer than the max; the stream can't be trusted after that.
     /// </summary>
     public IReadOnlyList<byte[]> Add(ReadOnlySpan<byte> data)
     {
@@ -104,7 +104,7 @@ public sealed class MediaFrameCodec
 
                 var length = BinaryPrimitives.ReadUInt32LittleEndian(this.prefix);
                 if (length > (uint)this.maxFrameSize)
-                    throw new BleHubProtocolException($"Media frame of {length} bytes exceeds the {this.maxFrameSize} byte limit");
+                    throw new HubProtocolException($"Media frame of {length} bytes exceeds the {this.maxFrameSize} byte limit");
 
                 this.body = length == 0 ? [] : new byte[length];
                 this.bodyFilled = 0;

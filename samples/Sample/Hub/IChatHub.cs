@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Sample.Hub;
 
@@ -7,7 +7,7 @@ namespace Sample.Hub;
 /// The always-on chat. Every running app hosts one, so anyone nearby, on the same network or - through a tunnel - on the
 /// internet can message its owner. The owner answers each person in their own conversation.
 /// </summary>
-[BleHubClient]
+[UniversalHubContract]
 public interface IChatHub
 {
     /// <summary>

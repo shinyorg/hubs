@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 internal static class ClientServiceCollectionExtensions
 {
@@ -12,10 +12,10 @@ internal static class ClientServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddHubClientCore(this IServiceCollection services)
     {
-        services.AddBleHubCore();
-        services.TryAddSingleton(sp => new BleHubClientServices(
-            sp.GetRequiredService<BleHubProtocolOptions>(),
-            sp.GetRequiredService<IBleHubSerializer>(),
+        services.AddHubCore();
+        services.TryAddSingleton(sp => new HubClientServices(
+            sp.GetRequiredService<HubProtocolOptions>(),
+            sp.GetRequiredService<IHubSerializer>(),
             sp.GetService<ILoggerFactory>()
         ));
         return services;

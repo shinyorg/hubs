@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer;
 
 namespace Shiny.UniversalHubs;
@@ -127,8 +126,8 @@ internal static class FileRoutes
 
     static (int Status, string Message)? Prepare(
         HttpContext ctx,
-        out BleHubFileTransferOptions? ft,
-        out BleHubConnectedClient? client,
+        out HubFileTransferOptions? ft,
+        out HubConnectedClient? client,
         out string? name,
         out string? path
     )
@@ -156,7 +155,7 @@ internal static class FileRoutes
     /// The full path of <paramref name="name"/> inside the file transfer directory, or null when it is not a plain file
     /// name there (empty, a path, traversal). Every transport uses this.
     /// </summary>
-    internal static string? ResolvePath(BleHubFileTransferOptions ft, string? name)
+    internal static string? ResolvePath(HubFileTransferOptions ft, string? name)
     {
         if (String.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(['/', '\\']) >= 0 || Path.GetFileName(name) != name)
             return null;
@@ -174,12 +173,12 @@ internal static class FileRoutes
     }
 
 
-    static void Raise(HttpContext ctx, BleHubConnectedClient client, L2CapTransferType type, string name, string path, long bytes, TimeSpan elapsed)
+    static void Raise(HttpContext ctx, HubConnectedClient client, L2CapTransferType type, string name, string path, long bytes, TimeSpan elapsed)
     {
         try
         {
             ctx.RequestServices.GetRequiredService<UniversalHubHost>().OnFileTransferred(
-                new BleHubFileTransferredEventArgs(client, client.Id, type, name, path, bytes, elapsed)
+                new HubFileTransferredEventArgs(client, client.Id, type, name, path, bytes, elapsed)
             );
         }
         catch (Exception ex)

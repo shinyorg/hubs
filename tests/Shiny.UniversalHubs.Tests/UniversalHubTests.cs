@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Shiny.BluetoothLE.Hosting;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
 using Shiny.Net.HttpServer.Switchboard;
@@ -69,8 +69,8 @@ public class UniversalHubTests : IAsyncLifetime
                     o.HostId = "host-1";
                     o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
                 })
-                .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
-                .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType, allowTunnel: true));
+                .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
+                .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType, allowTunnel: true));
         });
 
         return TestHttpServer.For(builder.Build());
@@ -98,7 +98,7 @@ public class UniversalHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, characteristicUuid);
             })
             .BuildServiceProvider();
 
@@ -160,7 +160,7 @@ public class UniversalHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
-                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(2); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(2); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
             })
             .AddSingleton(locator)
             .BuildServiceProvider();
@@ -194,7 +194,7 @@ public class UniversalHubTests : IAsyncLifetime
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice").Only<HttpClientTransport>()));
         Assert.Equal(1, locator.Lookups);
-        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+        Assert.Equal(HubClientStatus.Disconnected, client.Status);
     }
 
 
@@ -215,7 +215,7 @@ public class UniversalHubTests : IAsyncLifetime
         var client = await this.Connect();
 
         Assert.IsType<HttpClientTransport>(client.Transport);
-        Assert.Equal(BleHubClientStatus.Connected, client.Status);
+        Assert.Equal(HubClientStatus.Connected, client.Status);
         Assert.Equal("TestHost", client.HostName);
         Assert.Contains("connected:Alice", this.log.Entries);
 
@@ -292,7 +292,7 @@ public class UniversalHubTests : IAsyncLifetime
     public void BadServiceTypesAreRejected(string serviceType)
     {
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(
-            s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(serviceType))
+            s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(serviceType))
         ));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseHttp(serviceType)));
     }
@@ -354,15 +354,15 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Equal(custom, host.Get(typeof(TestHub)).GetSettings<BleHubSettings>()!.ServiceUuid);
         TransportAssert.Equal([typeof(HttpHostTransport)], host.Get(typeof(OtherHub)).Transports);
         Assert.Null(host.Get(typeof(OtherHub)).GetSettings<BleHubSettings>());
-        Assert.Equal(TimeSpan.FromSeconds(7), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(7), sp.GetRequiredService<HubProtocolOptions>().RequestTimeout);
     }
 
 
     [Fact]
     public void UniversalServerIsRegisteredOnce()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
-        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
+        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))));
     }
 
 
@@ -391,7 +391,7 @@ public class UniversalHubTests : IAsyncLifetime
         public Type? HubType => typeof(TestHub);
         public string Name => "Fake";
         public IReadOnlySet<Type> Transports { get; } = new HashSet<Type> { typeof(HttpHostTransport) };
-        public IBleHubTransportEndpoint Endpoint => throw new NotSupportedException();
+        public IHubEndpoint Endpoint => throw new NotSupportedException();
         public T? GetSettings<T>() where T : class => typeof(T) == typeof(HttpHubSettings) ? (T)(object)new HttpHubSettings(this.ServiceType, this.AllowTunnel) : null;
     }
 
@@ -428,7 +428,7 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Equal("Alice", await test.Hub.WhoAmI());
 
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => other.Connect(HttpHost(), new HubConnectOptions("Bob")));
+        var ex = await Assert.ThrowsAsync<HubException>(() => other.Connect(HttpHost(), new HubConnectOptions("Bob")));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -515,13 +515,13 @@ public class UniversalHubTests : IAsyncLifetime
 
         await client.Disable<HttpClientTransport>();
 
-        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+        Assert.Equal(HubClientStatus.Disconnected, client.Status);
         Assert.Null(client.Transport);
-        await Assert.ThrowsAsync<BleHubException>(() => client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice")));
+        await Assert.ThrowsAsync<HubException>(() => client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice")));
 
         await client.Enable<HttpClientTransport>();
         await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"));
-        Assert.Equal(BleHubClientStatus.Connected, client.Status);
+        Assert.Equal(HubClientStatus.Connected, client.Status);
     }
 
 
@@ -533,7 +533,7 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void UniversalServerBindsTheNetworkWhenItCreatesTheServer()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
         var options = (HttpServerOptions)services.Single(x => x.ServiceType == typeof(HttpServerOptions)).ImplementationInstance!;
 
         Assert.Equal(IPAddress.Any, options.Address);
@@ -557,7 +557,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task HubErrorsKeepTheirTypeAndMessage()
     {
         var client = await this.Connect();
-        var ex = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Fail());
+        var ex = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Fail());
         Assert.Equal(nameof(InvalidOperationException), ex.RemoteErrorType);
         Assert.Equal("boom", ex.Message);
     }
@@ -580,7 +580,7 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var client = await this.Connect();
         var items = new List<int>();
-        var ex = await Assert.ThrowsAsync<BleHubRemoteException>(async () =>
+        var ex = await Assert.ThrowsAsync<HubRemoteException>(async () =>
         {
             await foreach (var i in client.Hub.CountThenFail(3, CancellationToken.None))
                 items.Add(i);
@@ -684,11 +684,11 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var client = await this.Connect();
         HubDisconnect? disconnect = null;
-        BleHubStatusChangedEventArgs? disconnected = null;
+        HubStatusChangedEventArgs? disconnected = null;
         client.Disconnected += (_, d) => disconnect = d;
         client.StatusChanged += (_, e) =>
         {
-            if (e.Status == BleHubClientStatus.Disconnected)
+            if (e.Status == HubClientStatus.Disconnected)
                 disconnected = e;
         };
 
@@ -701,7 +701,7 @@ public class UniversalHubTests : IAsyncLifetime
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerShutdown"));
 
         var late = this.CreateClient();
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => late.Connect(HttpHost(), new HubConnectOptions("Late")));
+        var ex = await Assert.ThrowsAsync<HubException>(() => late.Connect(HttpHost(), new HubConnectOptions("Late")));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -749,7 +749,7 @@ public class UniversalHubTests : IAsyncLifetime
         await this.Connect("B");
         await this.Connect("C");
 
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => this.Connect("D"));
+        var ex = await Assert.ThrowsAsync<HubException>(() => this.Connect("D"));
         Assert.Contains("Host is full", ex.Message);
     }
 
@@ -759,8 +759,8 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var client = this.CreateClient();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HttpHost("/nowhere"), new HubConnectOptions("Alice")));
-        Assert.IsNotType<BleHubRemoteException>(ex);
-        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+        Assert.IsNotType<HubRemoteException>(ex);
+        Assert.Equal(HubClientStatus.Disconnected, client.Status);
     }
 
 
@@ -770,7 +770,7 @@ public class UniversalHubTests : IAsyncLifetime
         var client = await this.Connect();
         Assert.True(client.CanTransferFiles);
 
-        var transferred = new List<BleHubFileTransferredEventArgs>();
+        var transferred = new List<HubFileTransferredEventArgs>();
         this.host.FileTransferred += (_, e) => transferred.Add(e);
 
         var local = Path.GetTempFileName();
@@ -812,17 +812,17 @@ public class UniversalHubTests : IAsyncLifetime
 
         // AuthorizeFile
         using var secret = new MemoryStream("x"u8.ToArray());
-        var refused = await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(secret, 1, "secret.txt"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt"));
         Assert.Contains("403", refused.Message);
 
         // MaxUploadSize
         using var big = new MemoryStream(new byte[2048]);
-        var tooBig = await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(big, 2048, "big.bin"));
+        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin"));
         Assert.Contains("413", tooBig.Message);
 
         // path traversal never reaches the disk
         using var sneaky = new MemoryStream("x"u8.ToArray());
-        await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
+        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
         Assert.False(File.Exists(Path.Combine(this.filesDirectory, "..", "escape.txt")));
     }
 
@@ -859,7 +859,7 @@ public class UniversalHubTests : IAsyncLifetime
             ["NoSuchMethod", JsonDocument.Parse("[]").RootElement],
             CancellationToken.None
         );
-        var ex = Assert.Throws<BleHubRemoteException>(() => HubJson.ReadResult(envelope));
+        var ex = Assert.Throws<HubRemoteException>(() => HubJson.ReadResult(envelope));
         Assert.Equal("HubMethodNotFound", ex.RemoteErrorType);
     }
 

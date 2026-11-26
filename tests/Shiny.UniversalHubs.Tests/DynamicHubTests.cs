@@ -2,14 +2,14 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
 using Shiny.Net.HttpServer.Testing;
 
 namespace Shiny.UniversalHubs.Tests;
 
-[BleHubClient]
+[UniversalHubContract]
 public interface IDynamicTestHub
 {
     Task<Payload> Echo(Payload payload);
@@ -46,7 +46,7 @@ public class DynamicHubTests : IAsyncLifetime
     {
         this.app = Build(server => server
             .AllowDynamicHubs(o => o.ServiceTypes.Add(ServiceType))
-            .AddHub<TestHub>(CompiledUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CompiledUuid).UseHttp(ServiceType)));
+            .AddHub<TestHub>(CompiledUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CompiledUuid).UseHttp(ServiceType)));
 
         this.dynamicHubs = this.app.Services.GetRequiredService<IDynamicHubs>();
         this.hub = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType) { MaxClients = 2 }, this.handler);
@@ -97,7 +97,7 @@ public class DynamicHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseHttp(ServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
+                o.UseHttp(ServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, characteristicUuid);
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
@@ -167,15 +167,15 @@ public class DynamicHubTests : IAsyncLifetime
             items.Add(i);
         Assert.Equal([1, 2, 3], items);
 
-        var failed = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Fail());
+        var failed = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Fail());
         Assert.Equal(nameof(InvalidOperationException), failed.RemoteErrorType);
         Assert.Equal("boom", failed.Message);
 
-        var rule = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Rule());
+        var rule = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Rule());
         Assert.Equal("GameRule", rule.RemoteErrorType);
         Assert.Equal("Not your turn", rule.Message);
 
-        var missing = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Missing());
+        var missing = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Missing());
         Assert.Equal("HubMethodNotFound", missing.RemoteErrorType);
         Assert.Contains("game has no method 'Missing'", missing.Message);
     }
@@ -220,13 +220,13 @@ public class DynamicHubTests : IAsyncLifetime
     public async Task TheHandlerAndTheHubsRulesCanRefuseAClient()
     {
         this.handler.RefuseWith = "No seats";
-        var refused = await Assert.ThrowsAsync<BleHubException>(() => this.Connect("Carol"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => this.Connect("Carol"));
         Assert.Contains("No seats", refused.Message);
 
         this.handler.RefuseWith = null;
         await this.Connect("A");
         await this.Connect("B");
-        var full = await Assert.ThrowsAsync<BleHubException>(() => this.Connect("C"));
+        var full = await Assert.ThrowsAsync<HubException>(() => this.Connect("C"));
         Assert.Contains("Host is full", full.Message);
     }
 
@@ -236,10 +236,10 @@ public class DynamicHubTests : IAsyncLifetime
     {
         await this.hub.Stop("closed");
         Assert.Empty(this.hub.RunningTransports);
-        var stopped = await Assert.ThrowsAsync<BleHubException>(() => this.Connect());
+        var stopped = await Assert.ThrowsAsync<HubException>(() => this.Connect());
         Assert.Contains("not running", stopped.Message);
 
-        var unknown = await Assert.ThrowsAsync<BleHubException>(() => this.Connect<IDynamicTestHub>("6e400099-b5a3-f393-e0a9-e50e24dcca9e"));
+        var unknown = await Assert.ThrowsAsync<HubException>(() => this.Connect<IDynamicTestHub>("6e400099-b5a3-f393-e0a9-e50e24dcca9e"));
         Assert.Contains("Hub not found", unknown.Message);
     }
 
@@ -370,7 +370,7 @@ public class DynamicHubTests : IAsyncLifetime
             items.Add(Encoding.UTF8.GetString(item.Span));
         Assert.Equal(["1", "2"], items);
 
-        var failed = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Invoke("Rule", []));
+        var failed = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Invoke("Rule", []));
         Assert.Equal("GameRule", failed.RemoteErrorType);
 
         await this.hub.Clients.All.Send("Message", [Utf8("\"hey\"")]);
@@ -438,7 +438,7 @@ public class DynamicHubTests : IAsyncLifetime
 
                 case "Rule":
                     // a handler relaying someone else's error keeps its type
-                    throw new BleHubRemoteException("GameRule", "Not your turn");
+                    throw new HubRemoteException("GameRule", "Not your turn");
 
                 default:
                     throw new InvalidOperationException("boom");

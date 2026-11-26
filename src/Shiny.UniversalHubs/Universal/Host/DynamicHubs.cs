@@ -2,9 +2,8 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Switchboard;
-using IGroupManager = Shiny.BluetoothLE.Hubs.IGroupManager;
+using IGroupManager = Shiny.UniversalHubs.IGroupManager;
 
 namespace Shiny.UniversalHubs;
 
@@ -63,7 +62,7 @@ public enum DynamicHubMethodKind
 
 /// <summary>
 /// Runs a dynamic hub: its methods by name, and its clients coming and going. Values are the bytes the caller's
-/// IBleHubSerializer wrote - JSON with the default serializer, which Wi-Fi clients need anyway.
+/// IHubSerializer wrote - JSON with the default serializer, which Wi-Fi clients need anyway.
 /// </summary>
 public interface IDynamicHubHandler
 {
@@ -92,7 +91,7 @@ public interface IDynamicHubHandler
     Task OnDisconnectedAsync(HubConnection connection, HubDisconnect disconnect);
 
     /// <summary>
-    /// A client renamed itself (<see cref="BleHubConnectedClient.Name"/> is the new name). Throw to refuse.
+    /// A client renamed itself (<see cref="HubConnectedClient.Name"/> is the new name). Throw to refuse.
     /// </summary>
     Task OnRenamedAsync(HubConnection connection, string? previousName) => Task.CompletedTask;
 }
@@ -103,9 +102,9 @@ public interface IDynamicHubHandler
 /// </summary>
 public sealed class DynamicHubCall
 {
-    readonly BleHubCallerContext context;
+    readonly HubCallerContext context;
 
-    internal DynamicHubCall(BleHubCallerContext context, string method, IReadOnlyList<ReadOnlyMemory<byte>> arguments)
+    internal DynamicHubCall(HubCallerContext context, string method, IReadOnlyList<ReadOnlyMemory<byte>> arguments)
     {
         this.context = context;
         this.Method = method;
@@ -184,9 +183,9 @@ public interface IDynamicHub
 /// </summary>
 public readonly struct DynamicHubPush
 {
-    readonly BleHubPush<IBleHubHandler> push;
+    readonly HubPush<IHubHandler> push;
 
-    internal DynamicHubPush(BleHubPush<IBleHubHandler> push) => this.push = push;
+    internal DynamicHubPush(HubPush<IHubHandler> push) => this.push = push;
 
     /// <summary>
     /// Raises <paramref name="eventName"/> on each client, with arguments already serialized
@@ -280,7 +279,7 @@ internal sealed class DynamicHubRegistry(
             var transports = host.Transports.Select(x => x.GetType()).ToHashSet();
             var bleService = options.BleServiceUuid
                 ?? host.Hubs.Select(x => x.GetSettings<BleHubSettings>()?.ServiceUuid).FirstOrDefault(x => x != null)
-                ?? BleHubProtocolOptions.DefaultServiceUuid;
+                ?? HubProtocolOptions.DefaultServiceUuid;
             var settings = new Dictionary<Type, object>
             {
                 [typeof(BleHubSettings)] = new BleHubSettings(BleUuid.Normalize(bleService, nameof(options.BleServiceUuid)), characteristic),
@@ -295,7 +294,7 @@ internal sealed class DynamicHubRegistry(
             var entry = host.AddDynamic(
                 characteristic,
                 definition.Name,
-                new BleHubOptions { MaxClients = definition.MaxClients },
+                new HubOptions { MaxClients = definition.MaxClients },
                 new HandlerAdapter(handler),
                 transports,
                 settings
@@ -360,13 +359,13 @@ internal sealed class DynamicHubRegistry(
     public ValueTask Invoke(Switchboard board, SwitchboardInvocation call)
         => this.LineHttp(board) is { } http
             ? http.Invoke(board, call)
-            : call.ReturnAsync(HubJson.Error(nameof(BleHubProtocolException), "Handshake required"));
+            : call.ReturnAsync(HubJson.Error(nameof(HubProtocolException), "Handshake required"));
 
 
     public ValueTask Stream(Switchboard board, SwitchboardInvocation call)
         => this.LineHttp(board) is { } http
             ? http.Stream(board, call)
-            : call.StreamAsync(One(HubJson.Error(nameof(BleHubProtocolException), "Handshake required")));
+            : call.StreamAsync(One(HubJson.Error(nameof(HubProtocolException), "Handshake required")));
 
 
     public void LineGone(Switchboard board, HubDisconnect disconnect)
@@ -389,34 +388,34 @@ internal sealed class DynamicHubRegistry(
     }
 
 
-    sealed class HandlerAdapter(IDynamicHubHandler handler) : IBleHubHandler
+    sealed class HandlerAdapter(IDynamicHubHandler handler) : IHubHandler
     {
-        public BleHubMethodKind GetMethodKind(string method) => handler.GetMethodKind(method) switch
+        public HubMethodKind GetMethodKind(string method) => handler.GetMethodKind(method) switch
         {
-            DynamicHubMethodKind.Invoke => BleHubMethodKind.Invoke,
-            DynamicHubMethodKind.Stream => BleHubMethodKind.Stream,
-            _ => BleHubMethodKind.NotFound
+            DynamicHubMethodKind.Invoke => HubMethodKind.Invoke,
+            DynamicHubMethodKind.Stream => HubMethodKind.Stream,
+            _ => HubMethodKind.NotFound
         };
 
-        public Task<byte[]?> Invoke(BleHubHandlerCall call, CancellationToken cancellationToken)
+        public Task<byte[]?> Invoke(HubHandlerCall call, CancellationToken cancellationToken)
             => handler.Invoke(new DynamicHubCall(call.Context, call.Method, call.Arguments), cancellationToken);
 
-        public async IAsyncEnumerable<byte[]> Stream(BleHubHandlerCall call, [EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<byte[]> Stream(HubHandlerCall call, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             await foreach (var item in handler.Stream(new DynamicHubCall(call.Context, call.Method, call.Arguments), cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
                 yield return item;
         }
 
-        public Task OnConnectedAsync(BleHubCallerContext context) => handler.OnConnectedAsync(HubConnection.From(context.Client));
+        public Task OnConnectedAsync(HubCallerContext context) => handler.OnConnectedAsync(HubConnection.From(context.Client));
 
-        public Task OnDisconnectedAsync(BleHubCallerContext context, HubDisconnect disconnect)
+        public Task OnDisconnectedAsync(HubCallerContext context, HubDisconnect disconnect)
         {
             // the line's requests are over - nothing current to show, whatever the async flow still holds
             HttpCall.Current = null;
             return handler.OnDisconnectedAsync(HubConnection.From(context.Client), disconnect);
         }
 
-        public Task OnRenamedAsync(BleHubCallerContext context, string? previousName)
+        public Task OnRenamedAsync(HubCallerContext context, string? previousName)
             => handler.OnRenamedAsync(HubConnection.From(context.Client), previousName);
     }
 }
@@ -480,14 +479,14 @@ internal sealed class DynamicHub(DynamicHubDefinition definition, HubEntry entry
     public IGroupManager Groups => entry.Runtime;
 
     public IHubClients<DynamicHubPush> Clients => new PushClients(
-        new HubClients<BleHubPush<IBleHubHandler>>(entry.Runtime, target => new BleHubPush<IBleHubHandler>(target, entry.Runtime.Serializer))
+        new HubClients<HubPush<IHubHandler>>(entry.Runtime, target => new HubPush<IHubHandler>(target, entry.Runtime.Serializer))
     );
 
     public Task Disconnect(string connectionId, string? reason = null)
         => entry.Runtime.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, reason));
 
 
-    sealed class PushClients(IHubClients<BleHubPush<IBleHubHandler>> inner) : IHubClients<DynamicHubPush>
+    sealed class PushClients(IHubClients<HubPush<IHubHandler>> inner) : IHubClients<DynamicHubPush>
     {
         public DynamicHubPush All => new(inner.All);
         public DynamicHubPush AllExcept(params IEnumerable<string> excludedConnectionIds) => new(inner.AllExcept(excludedConnectionIds));
@@ -541,5 +540,5 @@ internal sealed class DynamicHttpHub : HttpHub
         return Task.WhenAll(ids.Select(x => this.board.Lines.HangUpAsync(x, message, allowReconnect: false)));
     }
 
-    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Clients, this.board.Lines, lineId, this.Transport);
+    protected override IHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Clients, this.board.Lines, lineId, this.Transport);
 }

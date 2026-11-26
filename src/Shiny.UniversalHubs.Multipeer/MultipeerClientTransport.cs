@@ -5,8 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
 
@@ -81,7 +80,7 @@ public sealed class MultipeerClientTransport : IHubClientTransport
     public async Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)
     {
         var connectOptions = client.ConnectOptions;
-        var peer = host.Endpoint<MultipeerHubEndpoint>()?.Peer ?? throw new BleHubException($"{host.Name} was not seen over Multipeer");
+        var peer = host.Endpoint<MultipeerHubEndpoint>()?.Peer ?? throw new HubException($"{host.Name} was not seen over Multipeer");
         var connection = await link.Connect(peer, options.InviteTimeout, cancellationToken).ConfigureAwait(false);
         try
         {

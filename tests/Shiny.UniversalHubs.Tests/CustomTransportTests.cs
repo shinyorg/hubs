@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs;
+using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs.Tests;
 
@@ -208,7 +208,7 @@ public class LoopTransport : IHubTransport
         );
 
 
-    sealed class LoopChannel(LoopTransport transport) : IBleHubPeerChannel
+    sealed class LoopChannel(LoopTransport transport) : IHubPeerChannel
     {
         public IHubTransport Transport => transport;
         public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken) => Task.CompletedTask;

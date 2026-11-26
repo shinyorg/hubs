@@ -4,8 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
 
@@ -13,14 +12,14 @@ namespace Shiny.UniversalHubs;
 /// Carries one hub connection over a peer-link session (Multipeer, Nearby). When the session drops and the host holds the
 /// connection, it opens a new session and resumes on it - same connection on the host, missed pushes replayed.
 /// </summary>
-internal sealed class PeerHubTransport : IBleHubClientTransport
+internal sealed class PeerHubTransport : IHubConnectionTransport
 {
     static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
     static readonly TimeSpan MaxResumeDelay = TimeSpan.FromSeconds(2);
 
     readonly Func<CancellationToken, Task<IPeerConnection>>? reopen;
     readonly CancellationTokenSource lifetime = new();
-    readonly IBleHubClientTransportEvents events;
+    readonly IHubConnectionTransportEvents events;
     readonly string characteristicUuid;
     readonly ILogger? logger;
     readonly object sendLock = new();
@@ -46,7 +45,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     public PeerHubTransport(
         string transport,
         IPeerConnection connection,
-        IBleHubClientTransportEvents events,
+        IHubConnectionTransportEvents events,
         string characteristicUuid,
         ILogger? logger,
         Func<CancellationToken, Task<IPeerConnection>>? reopen = null
@@ -174,7 +173,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     public async Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
     {
         if (!this.files)
-            throw new BleHubFileTransferNotSupportedException("The host does not serve file transfers");
+            throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
 
         var sw = Stopwatch.StartNew();
         var temp = Path.Combine(Path.GetTempPath(), "shiny-peerlink-" + Guid.NewGuid().ToString("N"));
@@ -207,7 +206,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
 
             var done = (await this.fileDone[id].Task.WaitAsync(cancellationToken).ConfigureAwait(false)).Read(PeerJsonContext.Default.PeerFileDone);
             if (!done.Succeeded)
-                throw new BleHubException($"Upload failed: {done.Message}");
+                throw new HubException($"Upload failed: {done.Message}");
 
             progress?.Report(Progress(length, length, sw.Elapsed));
             return new L2CapTransferResult(L2CapTransferType.Upload, remoteFileName, length, sw.Elapsed);
@@ -223,7 +222,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     public async Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
     {
         if (!this.files)
-            throw new BleHubFileTransferNotSupportedException("The host does not serve file transfers");
+            throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
 
         var sw = Stopwatch.StartNew();
         uint id = 0;
@@ -275,7 +274,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     public bool CanOpenMediaChannel => this.mediaMaxPacketSize > 0 && !this.closed && !this.resuming;
 
 
-    public async Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
+    public async Task<IHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
     {
         if (!this.CanOpenMediaChannel)
             throw new NotSupportedException("The host has no media channels");
@@ -298,7 +297,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
         {
             Interlocked.CompareExchange(ref this.media, null, channel);
             channel.Closed();
-            throw new BleHubException($"Could not open a media channel: {ex.Message}", ex);
+            throw new HubException($"Could not open a media channel: {ex.Message}", ex);
         }
         return channel;
     }
@@ -422,7 +421,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
         }
 
         if (path == null)
-            download.Arrived.TrySetException(new BleHubException($"Download failed: {error?.Message ?? "the file did not arrive"}"));
+            download.Arrived.TrySetException(new HubException($"Download failed: {error?.Message ?? "the file did not arrive"}"));
         else
             download.Arrived.TrySetResult(path);
     }
@@ -435,7 +434,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
             return;
 
         var disconnect = this.hostDisconnect ?? new HubDisconnect(HubDisconnectReason.ClientTimeout, $"The {this.Transport} session ended");
-        this.FailPending(new BleHubDisconnectedException("The connection to the host was closed", disconnect));
+        this.FailPending(new HubDisconnectedException("The connection to the host was closed", disconnect));
 
         // a resume attempt's session failing - the resume loop tries again
         if (this.resuming)
@@ -451,7 +450,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
 
         this.closed = true;
 
-        // the app asked to leave (or the host refused us) - BleHubClient already knows
+        // the app asked to leave (or the host refused us) - HubProxy already knows
         if (!this.leaving)
             this.events.Closed(disconnect);
     }
@@ -632,9 +631,9 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     void Send(byte[] message)
     {
         if (this.closed)
-            throw new BleHubDisconnectedException("The connection to the host was closed", this.hostDisconnect);
+            throw new HubDisconnectedException("The connection to the host was closed", this.hostDisconnect);
         if (this.resuming)
-            throw new BleHubDisconnectedException("The link to the host dropped - resuming");
+            throw new HubDisconnectedException("The link to the host dropped - resuming");
 
         lock (this.sendLock)
             this.connection.Send(message);
@@ -654,10 +653,10 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
     }
 
 
-    static BleHubRemoteException ToRemote(PeerMessage message)
+    static HubRemoteException ToRemote(PeerMessage message)
     {
         var error = message.Read(PeerJsonContext.Default.PeerError);
-        return new BleHubRemoteException(error.Type, error.Message);
+        return new HubRemoteException(error.Type, error.Message);
     }
 
 
@@ -669,8 +668,8 @@ internal sealed class PeerHubTransport : IBleHubClientTransport
 
         var message = reply.Message ?? $"Status {reply.Status}";
         throw reply.Status == 404 && message.Contains("does not serve files", StringComparison.Ordinal)
-            ? new BleHubFileTransferNotSupportedException(message)
-            : new BleHubException($"{what} failed ({reply.Status}): {message}");
+            ? new HubFileTransferNotSupportedException(message)
+            : new HubException($"{what} failed ({reply.Status}): {message}");
     }
 
 

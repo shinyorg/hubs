@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Sample.Calls;
 
@@ -8,14 +8,14 @@ namespace Sample.Calls;
 /// </summary>
 internal sealed class MediaLink : IAsyncDisposable
 {
-    readonly IBleHubMediaChannel channel;
+    readonly IHubMediaChannel channel;
     readonly MediaSender sender;
     readonly CancellationTokenSource stop = new();
     Task? receiving;
 
 
     /// <param name="id">Host side: the client's connection id. Client side: empty - the link goes to the host.</param>
-    public MediaLink(IBleHubMediaChannel channel, string id, CallProfile profile, ILogger? logger)
+    public MediaLink(IHubMediaChannel channel, string id, CallProfile profile, ILogger? logger)
     {
         this.channel = channel;
         this.Id = id;

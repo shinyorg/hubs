@@ -3,7 +3,6 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.Discovery;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;

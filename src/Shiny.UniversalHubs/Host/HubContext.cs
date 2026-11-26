@@ -1,6 +1,6 @@
 using Shiny.UniversalHubs;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Reach a hub's clients from outside the hub (services, view models, timers...).
@@ -29,15 +29,15 @@ public interface IHubContext<THub> where THub : class
     /// <summary>
     /// Clients that have completed the handshake with this hub
     /// </summary>
-    IReadOnlyList<BleHubConnectedClient> ConnectedClients { get; }
+    IReadOnlyList<HubConnectedClient> ConnectedClients { get; }
 
-    event EventHandler<BleHubConnectedClient>? ClientConnected;
-    event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected;
+    event EventHandler<HubConnectedClient>? ClientConnected;
+    event EventHandler<HubClientDisconnectedEventArgs>? ClientDisconnected;
 
     /// <summary>
-    /// A connected client changed its name (<see cref="IBleHubConnection.Rename"/>)
+    /// A connected client changed its name (<see cref="IHubConnection.Rename"/>)
     /// </summary>
-    event EventHandler<BleHubClientRenamedEventArgs>? ClientRenamed;
+    event EventHandler<HubClientRenamedEventArgs>? ClientRenamed;
 
     /// <summary>
     /// Ends a client's session (cooperative - the client library disconnects itself)
@@ -48,24 +48,24 @@ public interface IHubContext<THub> where THub : class
     /// A connected client opened its media channel (<see cref="UniversalServerOptions.EnableMediaChannels"/>), over any
     /// transport. The channel closes when the client disconnects or the hub stops.
     /// </summary>
-    event EventHandler<BleHubMediaChannelEventArgs>? MediaChannelOpened;
+    event EventHandler<HubMediaChannelEventArgs>? MediaChannelOpened;
 
     /// <summary>
     /// A client's open media channel, null when it has none
     /// </summary>
-    IBleHubMediaChannel? GetMediaChannel(string connectionId);
+    IHubMediaChannel? GetMediaChannel(string connectionId);
 
     /// <summary>
     /// The hub as transports reach it
     /// </summary>
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    IBleHubTransportEndpoint TransportEndpoint { get; }
+    IHubEndpoint TransportEndpoint { get; }
 
     /// <summary>
     /// Used by the generated <c>Clients</c> extension property
     /// </summary>
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    IHubClients<BleHubPush<TContract>> GetClients<TContract>() where TContract : class;
+    IHubClients<HubPush<TContract>> GetClients<TContract>() where TContract : class;
 }
 
 
@@ -83,22 +83,22 @@ internal sealed class HubContext<THub>(Func<HubRuntime> getRuntime, UniversalHub
         => this.Host.StopHubs([this.Host.Get(typeof(THub))], null, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
     public IGroupManager Groups => this.Runtime;
-    public IBleHubTransportEndpoint TransportEndpoint => this.Runtime;
-    public IReadOnlyList<BleHubConnectedClient> ConnectedClients => this.Runtime.Clients;
+    public IHubEndpoint TransportEndpoint => this.Runtime;
+    public IReadOnlyList<HubConnectedClient> ConnectedClients => this.Runtime.Clients;
 
-    public event EventHandler<BleHubConnectedClient>? ClientConnected
+    public event EventHandler<HubConnectedClient>? ClientConnected
     {
         add => this.Runtime.ClientConnected += value;
         remove => this.Runtime.ClientConnected -= value;
     }
 
-    public event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected
+    public event EventHandler<HubClientDisconnectedEventArgs>? ClientDisconnected
     {
         add => this.Runtime.ClientDisconnected += value;
         remove => this.Runtime.ClientDisconnected -= value;
     }
 
-    public event EventHandler<BleHubClientRenamedEventArgs>? ClientRenamed
+    public event EventHandler<HubClientRenamedEventArgs>? ClientRenamed
     {
         add => this.Runtime.ClientRenamed += value;
         remove => this.Runtime.ClientRenamed -= value;
@@ -107,20 +107,20 @@ internal sealed class HubContext<THub>(Func<HubRuntime> getRuntime, UniversalHub
     public Task Disconnect(string connectionId, string? reason = null)
         => this.Runtime.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, reason));
 
-    public event EventHandler<BleHubMediaChannelEventArgs>? MediaChannelOpened
+    public event EventHandler<HubMediaChannelEventArgs>? MediaChannelOpened
     {
         add => this.Runtime.MediaChannelOpened += value;
         remove => this.Runtime.MediaChannelOpened -= value;
     }
 
-    public IBleHubMediaChannel? GetMediaChannel(string connectionId) => this.Runtime.GetMediaChannel(connectionId);
+    public IHubMediaChannel? GetMediaChannel(string connectionId) => this.Runtime.GetMediaChannel(connectionId);
 
-    public IHubClients<BleHubPush<TContract>> GetClients<TContract>() where TContract : class
+    public IHubClients<HubPush<TContract>> GetClients<TContract>() where TContract : class
     {
         var runtime = this.Runtime;
         if (runtime.ContractType != typeof(TContract))
             throw new InvalidOperationException($"{typeof(THub).Name} serves {runtime.ContractType.Name}, not {typeof(TContract).Name}");
 
-        return new HubClients<BleHubPush<TContract>>(runtime, target => new BleHubPush<TContract>(target, runtime.Serializer));
+        return new HubClients<HubPush<TContract>>(runtime, target => new HubPush<TContract>(target, runtime.Serializer));
     }
 }

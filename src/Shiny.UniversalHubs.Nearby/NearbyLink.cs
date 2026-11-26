@@ -3,7 +3,6 @@ using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -182,7 +181,7 @@ internal sealed class NearbyLink : INearbyRadioListener
             catch (Exception ex)
             {
                 this.Forget(remote, ex);
-                throw new BleHubException($"Nearby could not reach the host: {ex.Message}", ex);
+                throw new HubException($"Nearby could not reach the host: {ex.Message}", ex);
             }
         }
 
@@ -197,7 +196,7 @@ internal sealed class NearbyLink : INearbyRadioListener
                 this.radio.Disconnect(endpointId);
                 this.Forget(remote, null);
             }
-            throw new BleHubException("The host did not accept the Nearby connection in time");
+            throw new HubException("The host did not accept the Nearby connection in time");
         }
 
         var channel = this.OpenChannel(remote, mine: true, Interlocked.Increment(ref this.nextChannel));
@@ -286,7 +285,7 @@ internal sealed class NearbyLink : INearbyRadioListener
         else
         {
             this.logger?.LogInformation("Nearby connection to {Endpoint} failed: {Error}", endpointId, error);
-            this.Forget(remote, new BleHubException($"Nearby connection refused: {error ?? "rejected"}"));
+            this.Forget(remote, new HubException($"Nearby connection refused: {error ?? "rejected"}"));
         }
     });
 
@@ -297,7 +296,7 @@ internal sealed class NearbyLink : INearbyRadioListener
         lock (this.gate)
             this.remotes.TryGetValue(endpointId, out remote);
         if (remote != null)
-            this.Forget(remote, new BleHubDisconnectedException("The Nearby connection was lost"));
+            this.Forget(remote, new HubDisconnectedException("The Nearby connection was lost"));
     });
 
 
@@ -313,7 +312,7 @@ internal sealed class NearbyLink : INearbyRadioListener
         {
             this.Receive(remote, data);
         }
-        catch (BleHubProtocolException ex)
+        catch (HubProtocolException ex)
         {
             this.logger?.LogWarning(ex, "Dropping {Endpoint}: unreadable Nearby frame", endpointId);
             this.radio.Disconnect(endpointId);
@@ -338,7 +337,7 @@ internal sealed class NearbyLink : INearbyRadioListener
                     break;
 
                 default:
-                    sending.Done.TrySetException(new BleHubException($"The file transfer {(status == NearbyTransferStatus.Canceled ? "was canceled" : "failed")}"));
+                    sending.Done.TrySetException(new HubException($"The file transfer {(status == NearbyTransferStatus.Canceled ? "was canceled" : "failed")}"));
                     break;
             }
             return;
@@ -361,7 +360,7 @@ internal sealed class NearbyLink : INearbyRadioListener
                 break;
 
             default:
-                file.Error = new BleHubException("The file did not arrive");
+                file.Error = new HubException("The file did not arrive");
                 file.Done = true;
                 this.TryDeliver(payloadId, file);
                 break;
@@ -443,7 +442,7 @@ internal sealed class NearbyLink : INearbyRadioListener
                 lock (this.gate)
                     ad = this.advertisement;
                 if (!senderOpened || channel != null)
-                    throw new BleHubProtocolException("Unexpected channel open");
+                    throw new HubProtocolException("Unexpected channel open");
 
                 if (ad == null)
                 {
@@ -598,7 +597,7 @@ internal sealed class NearbyLink : INearbyRadioListener
     void Send(NearbyRemote remote, byte[] frame)
     {
         if (!remote.Connected.Task.IsCompletedSuccessfully)
-            throw new BleHubDisconnectedException("The Nearby connection has ended");
+            throw new HubDisconnectedException("The Nearby connection has ended");
 
         this.radio.SendBytes(remote.EndpointId, frame);
     }
@@ -682,7 +681,7 @@ internal sealed class NearbyChannel(NearbyLink link, NearbyRemote remote, bool m
     public override void Send(byte[] message)
     {
         if (this.IsClosed)
-            throw new BleHubDisconnectedException("The Nearby session has ended");
+            throw new HubDisconnectedException("The Nearby session has ended");
 
         link.Send(this, message);
     }
@@ -691,7 +690,7 @@ internal sealed class NearbyChannel(NearbyLink link, NearbyRemote remote, bool m
     public override Task SendFile(string path, string name, Action<double>? progress, CancellationToken cancellationToken)
     {
         if (this.IsClosed)
-            throw new BleHubDisconnectedException("The Nearby session has ended");
+            throw new HubDisconnectedException("The Nearby session has ended");
 
         return link.SendFile(this, path, name, progress, cancellationToken);
     }

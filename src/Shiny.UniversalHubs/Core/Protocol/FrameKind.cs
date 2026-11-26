@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// The kind of logical message a frame belongs to. Values are part of the wire protocol - never renumber.

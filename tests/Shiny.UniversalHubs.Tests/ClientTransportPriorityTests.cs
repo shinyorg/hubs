@@ -1,7 +1,7 @@
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.DependencyInjection;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Shiny.UniversalHubs.Tests;
 
@@ -98,7 +98,7 @@ public class ClientTransportPriorityTests : IDisposable
             .UseTransport(_ => new Alpha(this.attempts))
             .UseTransport(_ => new Beta(this.attempts)));
 
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(SeenOn(typeof(Beta)), new HubConnectOptions().Only<Alpha>()));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(SeenOn(typeof(Beta)), new HubConnectOptions().Only<Alpha>()));
         Assert.Contains("seen over Beta", ex.Message);
         Assert.Empty(this.attempts);
     }

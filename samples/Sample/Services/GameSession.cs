@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Logging;
 using Shiny.Actors;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.UniversalHubs;
 using Sample.Game;
 using Sample.Hub;

@@ -1,5 +1,4 @@
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -51,5 +50,5 @@ public sealed record UniversalHubFileRequest(
     L2CapTransferType Type,
     string FileName,
     long? Size,
-    BleHubConnectedClient Client
+    HubConnectedClient Client
 );

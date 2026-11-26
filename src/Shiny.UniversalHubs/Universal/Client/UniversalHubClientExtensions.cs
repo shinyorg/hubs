@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -9,7 +8,7 @@ public static class UniversalHubClientExtensions
     /// <summary>
     /// Registers the generated proxy for <typeparamref name="TContract"/> as a client of the hub named
     /// <paramref name="hubName"/>, over the transports <paramref name="configure"/> picks (at least one). Resolve
-    /// <see cref="IUniversalHubClient{TContract}"/>; IBleHubClient&lt;TContract&gt; and TContract resolve to the same
+    /// <see cref="IUniversalHubClient{TContract}"/>; IHubProxy&lt;TContract&gt; and TContract resolve to the same
     /// connection.
     /// <code>
     /// services.AddUniversalHubClient&lt;IGameHub&gt;("game", o => o
@@ -37,18 +36,18 @@ public static class UniversalHubClientExtensions
 
         services.AddHubClientCore();
         foreach (var c in options.ProtocolActions)
-            services.ConfigureBleHubProtocol(c);
+            services.ConfigureHubProtocol(c);
 
         foreach (var c in options.ServiceActions)
             c(services);
 
-        services.AddSingleton<IBleHubClient<TContract>>(sp => (IBleHubClient<TContract>)BleHubClientFactories.Create<TContract>(
-            sp.GetRequiredService<BleHubClientServices>(),
+        services.AddSingleton<IHubProxy<TContract>>(sp => (IHubProxy<TContract>)HubProxyFactories.Create<TContract>(
+            sp.GetRequiredService<HubClientServices>(),
             hubName
         ));
-        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
+        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IHubProxy<TContract>>());
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
-            sp.GetRequiredService<IBleHubClient<TContract>>(),
+            sp.GetRequiredService<IHubProxy<TContract>>(),
             options,
             () => options.CreateTransports(sp),
             sp.GetService<ILoggerFactory>()

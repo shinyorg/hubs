@@ -3,7 +3,6 @@ using System.Net.Sockets;
 using System.Reactive.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
@@ -128,7 +127,7 @@ public sealed class HttpClientTransport : IHubClientTransport
     /// </summary>
     public async Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)
     {
-        var server = host.Endpoint<HttpHubEndpoint>()?.Server ?? throw new BleHubException($"{host.Name} was not seen over HTTP");
+        var server = host.Endpoint<HttpHubEndpoint>()?.Server ?? throw new HubException($"{host.Name} was not seen over HTTP");
         try
         {
             await this.ConnectHttp(client, server, cancellationToken).ConfigureAwait(false);

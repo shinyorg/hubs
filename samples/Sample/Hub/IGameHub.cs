@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Sample.Game;
 
 namespace Sample.Hub;
@@ -8,7 +8,7 @@ namespace Sample.Hub;
 /// The whole conversation between a client and the host. The source generator turns this into GameHubClient (the client
 /// proxy) and typed pushes for the hub (Clients.All.StateChanged(...)).
 /// </summary>
-[BleHubClient]
+[UniversalHubContract]
 public interface IGameHub
 {
     // client -> host

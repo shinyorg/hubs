@@ -1,4 +1,3 @@
-using Shiny.BluetoothLE.Hubs;
 using Shiny.UniversalHubs;
 using Sample.Services;
 

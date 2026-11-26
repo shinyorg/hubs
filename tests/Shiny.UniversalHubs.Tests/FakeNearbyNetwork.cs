@@ -1,5 +1,5 @@
 using System.Threading.Channels;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Shiny.UniversalHubs.Tests;
 

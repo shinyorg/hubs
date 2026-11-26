@@ -4,8 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 using Shiny.Net.HttpServer.Switchboard;
 
 namespace Shiny.UniversalHubs;
@@ -94,7 +93,7 @@ internal abstract class HttpHub
     /// The hub this serves
     /// </summary>
     public abstract IHubBinding Binding { get; }
-    IBleHubTransportEndpoint Endpoint => this.Binding.Endpoint;
+    IHubEndpoint Endpoint => this.Binding.Endpoint;
     string Name => this.Binding.Name;
 
     /// <summary>
@@ -105,7 +104,7 @@ internal abstract class HttpHub
     /// <summary>
     /// How the hub reaches the Wi-Fi client on <paramref name="lineId"/>
     /// </summary>
-    protected abstract IBleHubPeerChannel CreateChannel(string lineId);
+    protected abstract IHubPeerChannel CreateChannel(string lineId);
 
 
     public void LineGone(string lineId, HubDisconnect disconnect) => this.Endpoint.Disconnected(HubConnection.HttpPrefix + lineId, disconnect);
@@ -120,7 +119,7 @@ internal abstract class HttpHub
         {
             handshake = HubJson.ReadHandshake(call.GetArgument<JsonElement>(0, "handshake"));
         }
-        catch (Exception ex) when (ex is JsonException or BleHubProtocolException)
+        catch (Exception ex) when (ex is JsonException or HubProtocolException)
         {
             await call.ReturnAsync(HubJson.Serialize(new HubHandshakeReply(false, "Malformed handshake", null, null, null)));
             return;
@@ -167,10 +166,10 @@ internal abstract class HttpHub
     {
         var connectionId = HubConnection.HttpPrefix + board.Context.LineId;
         JsonElement envelope;
-        BleHubInvocationResult? result = null;
+        HubInvocationResult? result = null;
         try
         {
-            var (method, arguments) = this.ReadCall(call, BleHubMethodKind.Invoke);
+            var (method, arguments) = this.ReadCall(call, HubMethodKind.Invoke);
             HttpCall.Current = call.Caller;
             result = await this.Endpoint.Invoke(connectionId, method, arguments, call.Aborted);
             envelope = HubJson.Result(result.Result, result.Result != null);
@@ -183,7 +182,7 @@ internal abstract class HttpHub
         catch (Exception ex)
         {
             this.logger.LogWarning(ex, "{Hub} call failed", this.Name);
-            envelope = HubJson.Error(ex is HubMethodMismatch ? "HubMethodNotFound" : BleHubRemoteException.TypeOf(ex), ex.Message);
+            envelope = HubJson.Error(ex is HubMethodMismatch ? "HubMethodNotFound" : HubRemoteException.TypeOf(ex), ex.Message);
         }
 
         await call.ReturnAsync(envelope);
@@ -201,11 +200,11 @@ internal abstract class HttpHub
         byte[] arguments;
         try
         {
-            (method, arguments) = this.ReadCall(call, BleHubMethodKind.Stream);
+            (method, arguments) = this.ReadCall(call, HubMethodKind.Stream);
         }
         catch (Exception ex)
         {
-            await call.StreamAsync(One(HubJson.Error(ex is HubMethodMismatch ? "HubMethodNotFound" : BleHubRemoteException.TypeOf(ex), ex.Message)));
+            await call.StreamAsync(One(HubJson.Error(ex is HubMethodMismatch ? "HubMethodNotFound" : HubRemoteException.TypeOf(ex), ex.Message)));
             return;
         }
         HttpCall.Current = call.Caller;   // flows into the enumeration StreamAsync runs
@@ -232,7 +231,7 @@ internal abstract class HttpHub
             catch (Exception ex)
             {
                 this.logger.LogWarning(ex, "{Hub} stream failed", this.Name);
-                failure = HubJson.Error(BleHubRemoteException.TypeOf(ex), ex.Message);
+                failure = HubJson.Error(HubRemoteException.TypeOf(ex), ex.Message);
             }
 
             if (failure is { } error)
@@ -248,15 +247,15 @@ internal abstract class HttpHub
     }
 
 
-    (string Method, byte[] Arguments) ReadCall(SwitchboardInvocation call, BleHubMethodKind expected)
+    (string Method, byte[] Arguments) ReadCall(SwitchboardInvocation call, HubMethodKind expected)
     {
         var method = call.GetArgument<string>(0, "method");
         var kind = this.Endpoint.GetMethodKind(method);
         if (kind != expected)
         {
-            throw new HubMethodMismatch(kind == BleHubMethodKind.NotFound
+            throw new HubMethodMismatch(kind == HubMethodKind.NotFound
                 ? $"{this.Name} has no method '{method}'"
-                : $"'{method}' is {(kind == BleHubMethodKind.Stream ? "a stream" : "not a stream")}");
+                : $"'{method}' is {(kind == HubMethodKind.Stream ? "a stream" : "not a stream")}");
         }
         return (method, HubJson.ArgumentsFromJson(call.GetArgument<JsonElement>(1, "arguments")));
     }
@@ -293,14 +292,14 @@ internal sealed class HttpHub<THub> : HttpHub where THub : class
 
     public override Task HangUpAll(HubDisconnect disconnect) => this.board.Value.Lines.HangUpAllAsync(HubJson.HangUpMessage(disconnect), allowReconnect: false);
 
-    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Value.Clients, this.board.Value.Lines, lineId, this.Transport);
+    protected override IHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Value.Clients, this.board.Value.Lines, lineId, this.Transport);
 }
 
 
 /// <summary>
 /// How the hub reaches one Wi-Fi client: pushes and hang-ups go through the Switchboard's operator
 /// </summary>
-internal sealed class LineChannel(ISwitchboardCallerClients clients, ILineManager lines, string lineId, IHubTransport transport) : IBleHubPeerChannel
+internal sealed class LineChannel(ISwitchboardCallerClients clients, ILineManager lines, string lineId, IHubTransport transport) : IHubPeerChannel
 {
     public IHubTransport Transport => transport;
 
@@ -317,16 +316,16 @@ internal sealed class LineChannel(ISwitchboardCallerClients clients, ILineManage
 /// </summary>
 internal sealed class FileTokens
 {
-    readonly ConcurrentDictionary<string, (string ConnectionId, Func<BleHubConnectedClient?> Client)> tokens = new(StringComparer.Ordinal);
+    readonly ConcurrentDictionary<string, (string ConnectionId, Func<HubConnectedClient?> Client)> tokens = new(StringComparer.Ordinal);
 
-    public string Issue(string connectionId, Func<BleHubConnectedClient?> client)
+    public string Issue(string connectionId, Func<HubConnectedClient?> client)
     {
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
         this.tokens[token] = (connectionId, client);
         return token;
     }
 
-    public BleHubConnectedClient? Find(string? token)
+    public HubConnectedClient? Find(string? token)
         => token != null && this.tokens.TryGetValue(token, out var entry) ? entry.Client() : null;
 
     public void Remove(string connectionId)

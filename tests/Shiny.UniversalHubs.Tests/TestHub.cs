@@ -2,13 +2,13 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using Shiny.BluetoothLE.Hosting;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Shiny.UniversalHubs.Tests;
 
 public record Payload(string Text, int Number);
 
-[BleHubClient]
+[UniversalHubContract]
 public interface ITestHub
 {
     Task<Payload> Echo(Payload payload);
@@ -29,7 +29,7 @@ public interface ITestHub
 }
 
 
-[BleHubClient]
+[UniversalHubContract]
 public interface IOtherHub
 {
     Task<string> Ping();

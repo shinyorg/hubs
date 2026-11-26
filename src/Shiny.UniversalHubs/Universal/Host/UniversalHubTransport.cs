@@ -1,4 +1,3 @@
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -75,7 +74,7 @@ public interface IHubBinding
     /// <summary>
     /// The hub itself
     /// </summary>
-    IBleHubTransportEndpoint Endpoint { get; }
+    IHubEndpoint Endpoint { get; }
 
     /// <summary>
     /// What a transport was told about this hub when it was set up to use it (UseBluetoothLE, UseHttp, UseTransport's
@@ -116,7 +115,7 @@ internal sealed class HubEntry : IHubBinding
     public Type? HubType { get; }
     public IReadOnlySet<Type> Transports { get; }
     public HubRuntime Runtime { get; }
-    public IBleHubTransportEndpoint Endpoint => this.Runtime;
+    public IHubEndpoint Endpoint => this.Runtime;
 
     public T? GetSettings<T>() where T : class => this.settings.TryGetValue(typeof(T), out var value) ? (T)value : null;
 
@@ -130,7 +129,7 @@ internal sealed class HubEntry : IHubBinding
 internal sealed record HubRegistration(
     Type HubType,
     string Key,
-    BleHubOptions Options,
+    HubOptions Options,
     IReadOnlySet<Type> Transports,
     IReadOnlyDictionary<Type, object> Settings
 );

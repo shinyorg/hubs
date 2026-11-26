@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 public interface IHubClients<T>
 {
@@ -35,22 +35,22 @@ public interface IGroupManager
 /// <summary>
 /// A resolved set of recipients. The generated push extensions (eg. push.StateChanged(state)) send through this.
 /// </summary>
-public readonly struct BleHubPush<TContract> where TContract : class
+public readonly struct HubPush<TContract> where TContract : class
 {
     readonly PushTarget target;
-    readonly IBleHubSerializer serializer;
+    readonly IHubSerializer serializer;
 
-    internal BleHubPush(PushTarget target, IBleHubSerializer serializer)
+    internal HubPush(PushTarget target, IHubSerializer serializer)
     {
         this.target = target;
         this.serializer = serializer;
     }
 
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    public BleHubArgumentWriter CreateArguments() => new(this.serializer);
+    public HubArgumentWriter CreateArguments() => new(this.serializer);
 
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    public Task Send(string eventName, BleHubArgumentWriter arguments, CancellationToken cancellationToken = default)
+    public Task Send(string eventName, HubArgumentWriter arguments, CancellationToken cancellationToken = default)
         => this.target.Send(eventName, arguments.ToArray(), cancellationToken);
 }
 

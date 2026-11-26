@@ -11,10 +11,10 @@
   </Folder>
   <Project Path="samples/Sample/Sample.csproj" />
   <Project Path="samples/Sample.MacOS/Sample.MacOS.csproj" />
-  <Project Path="src/Shiny.BluetoothLE.Hubs.SourceGenerators/Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" />
+  <Project Path="src/Shiny.UniversalHubs.SourceGenerators/Shiny.UniversalHubs.SourceGenerators.csproj" />
   <Project Path="src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Nearby/Shiny.UniversalHubs.Nearby.csproj" />
-  <Project Path="tests/Shiny.BluetoothLE.Hubs.Tests/Shiny.BluetoothLE.Hubs.Tests.csproj" />
+  <Project Path="tests/Shiny.UniversalHubs.BluetoothLE.Tests/Shiny.UniversalHubs.BluetoothLE.Tests.csproj" />
   <Project Path="tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj" />
 </Solution>

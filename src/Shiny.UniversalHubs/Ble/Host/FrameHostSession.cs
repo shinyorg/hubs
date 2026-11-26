@@ -3,10 +3,10 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hosting;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 using Shiny.UniversalHubs;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// The host side of the frame protocol (<see cref="FrameCodec"/>) for one hub: reassembles each link's frames, and runs
@@ -18,12 +18,12 @@ internal sealed class FrameHostSession
     // by link: the BLE central frames come from - a client that resumed is on a new link with the same connection id
     readonly ConcurrentDictionary<string, FrameHostLink> links = new(StringComparer.OrdinalIgnoreCase);
     readonly HubRuntime endpoint;
-    readonly BleHubProtocolOptions options;
+    readonly HubProtocolOptions options;
     readonly ILogger? logger;
     CancellationTokenSource lifetime = new();
 
 
-    public FrameHostSession(HubRuntime endpoint, BleHubProtocolOptions options, ILogger? logger)
+    public FrameHostSession(HubRuntime endpoint, HubProtocolOptions options, ILogger? logger)
     {
         this.endpoint = endpoint;
         this.options = options;
@@ -69,7 +69,7 @@ internal sealed class FrameHostSession
     /// <summary>
     /// The client on a link right now - its connection id differs from the link once it has resumed on a new one
     /// </summary>
-    public BleHubConnectedClient? FindClientOnLink(string linkId)
+    public HubConnectedClient? FindClientOnLink(string linkId)
         => this.links.TryGetValue(linkId, out var link) && link.ConnectionId is { } id ? this.endpoint.FindClient(id) : null;
 
 
@@ -84,17 +84,17 @@ internal sealed class FrameHostSession
         if (native != null)
             link.Native = native;
 
-        BleHubMessage? message;
+        HubMessage? message;
         try
         {
             lock (link.Reassembler)
                 message = link.Reassembler.Add(frame);
         }
-        catch (BleHubProtocolException ex)
+        catch (HubProtocolException ex)
         {
             this.logger?.LogWarning(ex, "Bad frame from {Peer}", linkId);
             if (ex.MessageId is { } id && link.ConnectionId != null)
-                _ = this.SendError(link, id, nameof(BleHubProtocolException), ex.Message);
+                _ = this.SendError(link, id, nameof(HubProtocolException), ex.Message);
 
             return false;
         }
@@ -176,10 +176,10 @@ internal sealed class FrameHostSession
     }
 
 
-    public bool AttachMediaChannel(string connectionId, IBleHubMediaChannel channel) => this.endpoint.AttachMediaChannel(connectionId, channel);
+    public bool AttachMediaChannel(string connectionId, IHubMediaChannel channel) => this.endpoint.AttachMediaChannel(connectionId, channel);
 
 
-    async Task Dispatch(FrameHostLink link, BleHubMessage message)
+    async Task Dispatch(FrameHostLink link, HubMessage message)
     {
         try
         {
@@ -207,7 +207,7 @@ internal sealed class FrameHostSession
                     break;
 
                 default:
-                    await this.SendError(link, message.MessageId, nameof(BleHubProtocolException), $"Unexpected message kind {message.Kind}").ConfigureAwait(false);
+                    await this.SendError(link, message.MessageId, nameof(HubProtocolException), $"Unexpected message kind {message.Kind}").ConfigureAwait(false);
                     break;
             }
         }
@@ -218,7 +218,7 @@ internal sealed class FrameHostSession
     }
 
 
-    async Task OnHandshake(FrameHostLink link, BleHubMessage message)
+    async Task OnHandshake(FrameHostLink link, HubMessage message)
     {
         var info = ProtocolSerializer.ReadHandshake(message.Payload);
         string? rejection = null;
@@ -285,7 +285,7 @@ internal sealed class FrameHostSession
     /// A client back on a new link with its resume token. Accepted, the held connection moves onto this link - same
     /// connection id, groups and Items - the ack goes out, then the pushes it missed.
     /// </summary>
-    async Task OnResume(FrameHostLink link, BleHubMessage message)
+    async Task OnResume(FrameHostLink link, HubMessage message)
     {
         ResumeInfo? info = null;
         try
@@ -342,11 +342,11 @@ internal sealed class FrameHostSession
     }
 
 
-    async Task OnRename(FrameHostLink link, BleHubMessage message)
+    async Task OnRename(FrameHostLink link, HubMessage message)
     {
         if (link.ConnectionId is not { } id)
         {
-            await this.SendError(link, message.MessageId, nameof(BleHubProtocolException), "Handshake required").ConfigureAwait(false);
+            await this.SendError(link, message.MessageId, nameof(HubProtocolException), "Handshake required").ConfigureAwait(false);
             return;
         }
 
@@ -355,45 +355,45 @@ internal sealed class FrameHostSession
         {
             rejection = await this.endpoint.Rename(id, ProtocolSerializer.ReadRename(message.Payload).Name, this.lifetime.Token).ConfigureAwait(false);
         }
-        catch (BleHubProtocolException ex)
+        catch (HubProtocolException ex)
         {
-            await this.SendError(link, message.MessageId, nameof(BleHubProtocolException), ex.Message).ConfigureAwait(false);
+            await this.SendError(link, message.MessageId, nameof(HubProtocolException), ex.Message).ConfigureAwait(false);
             return;
         }
 
         if (rejection == null)
             await this.Send(link, FrameKind.Completion, message.MessageId, null, ReadOnlyMemory<byte>.Empty, this.lifetime.Token).ConfigureAwait(false);
         else
-            await this.SendError(link, message.MessageId, BleHubRemoteException.RenameRefused, rejection).ConfigureAwait(false);
+            await this.SendError(link, message.MessageId, HubRemoteException.RenameRefused, rejection).ConfigureAwait(false);
     }
 
 
-    async Task OnInvoke(FrameHostLink link, BleHubMessage message)
+    async Task OnInvoke(FrameHostLink link, HubMessage message)
     {
         if (link.ConnectionId is not { } connectionId)
         {
-            await this.SendError(link, message.MessageId, nameof(BleHubProtocolException), "Handshake required").ConfigureAwait(false);
+            await this.SendError(link, message.MessageId, nameof(HubProtocolException), "Handshake required").ConfigureAwait(false);
             return;
         }
 
         var method = message.Name ?? "";
         var kind = this.endpoint.GetMethodKind(method);
-        var expected = message.Kind == FrameKind.StreamInvoke ? BleHubMethodKind.Stream : BleHubMethodKind.Invoke;
+        var expected = message.Kind == FrameKind.StreamInvoke ? HubMethodKind.Stream : HubMethodKind.Invoke;
         if (kind != expected)
         {
-            var error = kind == BleHubMethodKind.NotFound
+            var error = kind == HubMethodKind.NotFound
                 ? $"{this.endpoint.Name} has no method '{method}'"
-                : $"'{method}' is {(kind == BleHubMethodKind.Stream ? "a stream" : "not a stream")}";
+                : $"'{method}' is {(kind == HubMethodKind.Stream ? "a stream" : "not a stream")}";
             await this.SendError(link, message.MessageId, "HubMethodNotFound", error).ConfigureAwait(false);
             return;
         }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
         link.Track(message.MessageId, cts);
-        BleHubInvocationResult? result = null;
+        HubInvocationResult? result = null;
         try
         {
-            if (kind == BleHubMethodKind.Invoke)
+            if (kind == HubMethodKind.Invoke)
             {
                 result = await this.endpoint.Invoke(connectionId, method, message.Payload, cts.Token).ConfigureAwait(false);
                 await this.Send(link, FrameKind.Completion, message.MessageId, null, result.Result ?? ReadOnlyMemory<byte>.Empty, cts.Token).ConfigureAwait(false);
@@ -413,7 +413,7 @@ internal sealed class FrameHostSession
         catch (Exception ex)
         {
             this.logger?.LogWarning(ex, "{Hub}.{Method} failed", this.endpoint.Name, method);
-            await this.SendError(link, message.MessageId, BleHubRemoteException.TypeOf(ex), ex.Message).ConfigureAwait(false);
+            await this.SendError(link, message.MessageId, HubRemoteException.TypeOf(ex), ex.Message).ConfigureAwait(false);
         }
         finally
         {
@@ -458,7 +458,7 @@ internal sealed class FrameHostSession
     // under the link's send lock
     async Task SendLocked(FrameHostLink link, FrameKind kind, ushort messageId, string? name, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
-        var notify = this.Notify ?? throw new BleHubException("Hub host is not running");
+        var notify = this.Notify ?? throw new HubException("Hub host is not running");
         var frames = FrameCodec.Encode(kind, messageId, name, payload.Span, FrameCodec.GetFrameSize(link.Mtu));
         foreach (var frame in frames)
             await notify(link, frame, cancellationToken).ConfigureAwait(false);
@@ -514,7 +514,7 @@ internal sealed class FrameHostLink
     /// <summary>
     /// How the hub reaches the client on this link
     /// </summary>
-    public IBleHubPeerChannel Channel { get; }
+    public IHubPeerChannel Channel { get; }
 
 
     /// <summary>
@@ -546,7 +546,7 @@ internal sealed class FrameHostLink
     }
 
 
-    internal sealed class LinkChannel(FrameHostSession session, FrameHostLink link) : IBleHubPeerChannel
+    internal sealed class LinkChannel(FrameHostSession session, FrameHostLink link) : IHubPeerChannel
     {
         public FrameHostSession Session => session;
         public IHubTransport? Transport => session.Transport;

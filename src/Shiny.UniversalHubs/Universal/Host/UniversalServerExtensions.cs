@@ -3,8 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
 
@@ -36,9 +35,9 @@ public static partial class UniversalServerExtensions
         configure(server);
         server.Validate();
 
-        services.AddBleHubCore();
+        services.AddHubCore();
         foreach (var c in server.ProtocolActions)
-            services.ConfigureBleHubProtocol(c);
+            services.ConfigureHubProtocol(c);
 
         var options = new UniversalServerOptions();
         foreach (var c in server.ServerActions)
@@ -94,7 +93,7 @@ public sealed class UniversalServerBuilder
     internal UniversalServerBuilder() { }
 
     internal List<Action<UniversalServerOptions>> ServerActions { get; } = new();
-    internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
+    internal List<Action<HubProtocolOptions>> ProtocolActions { get; } = new();
     internal List<UniversalHubBuilder> Hubs { get; } = new();
     internal DynamicHubOptions? DynamicHubs { get; private set; }
 
@@ -123,7 +122,7 @@ public sealed class UniversalServerBuilder
     /// <summary>
     /// Protocol limits (payload size, timeouts) - app-wide, so a client in the same app gets them too
     /// </summary>
-    public UniversalServerBuilder Protocol(Action<BleHubProtocolOptions> configure)
+    public UniversalServerBuilder Protocol(Action<HubProtocolOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
         this.ProtocolActions.Add(configure);
@@ -286,7 +285,7 @@ public sealed class UniversalHubBuilder
     internal UniversalServerBuilder Server { get; }
     internal Type HubType { get; }
     internal HashSet<Type> Transports { get; } = new();
-    internal BleHubOptions Options { get; } = new();
+    internal HubOptions Options { get; } = new();
 
 
     /// <summary>

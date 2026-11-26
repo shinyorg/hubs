@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -8,7 +7,7 @@ namespace Shiny.UniversalHubs;
 /// A media channel over the hub connection's own peer-link session (Multipeer, Nearby): one MediaPacket message is one packet. Reliable and
 /// ordered like L2CAP and the Wi-Fi WebSocket, so signalling can share the pipe. The same class serves both ends.
 /// </summary>
-internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IBleHubMediaChannel
+internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IHubMediaChannel
 {
     readonly Channel<ReadOnlyMemory<byte>> inbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -26,7 +25,7 @@ internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<by
         if (packet.Length > maxPacketSize)
             throw new ArgumentException($"Packets are limited to {maxPacketSize} bytes", nameof(packet));
         if (!this.IsOpen)
-            throw new BleHubDisconnectedException("The media channel is closed");
+            throw new HubDisconnectedException("The media channel is closed");
 
         cancellationToken.ThrowIfCancellationRequested();
         try
@@ -36,7 +35,7 @@ internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<by
         catch (Exception ex)
         {
             this.Closed();
-            throw new BleHubDisconnectedException($"The media channel is closed: {ex.Message}");
+            throw new HubDisconnectedException($"The media channel is closed: {ex.Message}");
         }
         return ValueTask.CompletedTask;
     }

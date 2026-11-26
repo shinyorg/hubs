@@ -5,7 +5,6 @@ using Foundation;
 using Microsoft.Extensions.Logging;
 using MultipeerConnectivity;
 using ObjCRuntime;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -79,7 +78,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
             connection.Dispose();
             throw ex is OperationCanceledException && cancellationToken.IsCancellationRequested
                 ? ex
-                : new BleHubException($"Could not connect to {found.Peer.DisplayName} over Multipeer: {ex.Message}", ex);
+                : new HubException($"Could not connect to {found.Peer.DisplayName} over Multipeer: {ex.Message}", ex);
         }
     }
 
@@ -192,7 +191,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
         public override void DidNotStartBrowsingForPeers(MCNearbyServiceBrowser browser, NSError error)
         {
             logger?.LogError("Multipeer browsing did not start: {Error}", error.LocalizedDescription);
-            observer.OnError(new BleHubException($"Multipeer browsing did not start: {error.LocalizedDescription}"));
+            observer.OnError(new HubException($"Multipeer browsing did not start: {error.LocalizedDescription}"));
         }
     }
 
@@ -247,11 +246,11 @@ internal sealed class AppleMultipeerConnection : PeerConnectionBase
     public override void Send(byte[] message)
     {
         if (this.IsClosed)
-            throw new BleHubDisconnectedException("The Multipeer session has ended");
+            throw new HubDisconnectedException("The Multipeer session has ended");
 
         using var data = NSData.FromArray(message);
         if (!this.session.SendData(data, [this.remote], MCSessionSendDataMode.Reliable, out var error))
-            throw new BleHubException($"Multipeer send failed: {error?.LocalizedDescription ?? "unknown error"}");
+            throw new HubException($"Multipeer send failed: {error?.LocalizedDescription ?? "unknown error"}");
     }
 
 
@@ -263,10 +262,10 @@ internal sealed class AppleMultipeerConnection : PeerConnectionBase
             if (error == null)
                 done.TrySetResult();
             else
-                done.TrySetException(new BleHubException($"Multipeer file transfer failed: {error.LocalizedDescription}"));
+                done.TrySetException(new HubException($"Multipeer file transfer failed: {error.LocalizedDescription}"));
         });
         if (sending == null)
-            throw new BleHubException("Multipeer would not send the file");
+            throw new HubException("Multipeer would not send the file");
 
         using var cancel = cancellationToken.Register(() => sending.Cancel());
         while (!done.Task.IsCompleted)
@@ -292,7 +291,7 @@ internal sealed class AppleMultipeerConnection : PeerConnectionBase
 
     void Gone()
     {
-        this.connected.TrySetException(new BleHubException("The peer did not connect"));
+        this.connected.TrySetException(new HubException("The peer did not connect"));
         foreach (var progress in this.receiving.Values)
             progress.Cancel();
         this.receiving.Clear();
@@ -339,7 +338,7 @@ internal sealed class AppleMultipeerConnection : PeerConnectionBase
         this.receiving.TryRemove(name, out _);
         if (error != null || localUrl?.Path is not { } source)
         {
-            this.RaiseFileReceived(name, null, new BleHubException(error?.LocalizedDescription ?? "The file did not arrive"));
+            this.RaiseFileReceived(name, null, new HubException(error?.LocalizedDescription ?? "The file did not arrive"));
             return;
         }
 

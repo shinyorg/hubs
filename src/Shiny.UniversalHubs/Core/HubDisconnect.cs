@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Why a hub connection ended. Values travel on the wire - never renumber.

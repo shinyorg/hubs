@@ -1,10 +1,11 @@
 using System.Reactive.Linq;
+using Shiny.BluetoothLE;
 using System.Reactive.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 using Shiny.UniversalHubs;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// The link under a <see cref="FrameClientTransport"/> - a GATT characteristic over BLE, or an in-memory radio in tests
@@ -45,14 +46,14 @@ internal abstract class FrameLink
 /// A hub connection over the frame protocol (<see cref="FrameCodec"/>) - handshake, calls, pushes, resume after a dropped
 /// link, and L2CAP files and media - on whatever <see cref="FrameLink"/> carries the frames
 /// </summary>
-internal sealed class FrameClientTransport : IBleHubClientTransport
+internal sealed class FrameClientTransport : IHubConnectionTransport
 {
     static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
     static readonly TimeSpan MaxResumeDelay = TimeSpan.FromSeconds(2);
 
-    readonly BleHubProtocolOptions options;
+    readonly HubProtocolOptions options;
     readonly FrameLink link;
-    readonly IBleHubClientTransportEvents events;
+    readonly IHubConnectionTransportEvents events;
     readonly ILogger? logger;
     readonly HubClientProtocol protocol;
     readonly CancellationTokenSource lifetime = new();
@@ -62,7 +63,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
     volatile bool resuming;
 
 
-    public FrameClientTransport(BleHubProtocolOptions options, FrameLink link, IBleHubClientTransportEvents events, ILogger? logger)
+    public FrameClientTransport(HubProtocolOptions options, FrameLink link, IHubConnectionTransportEvents events, ILogger? logger)
     {
         this.options = options;
         this.link = link;
@@ -161,7 +162,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
     public bool CanOpenMediaChannel => this.ack is { MediaChannelPsm: > 0, MediaToken: not null } && this.link.CanOpenL2Cap;
 
 
-    public async Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
+    public async Task<IHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
     {
         var ack = this.ack;
         if (ack == null || ack.MediaChannelPsm == 0 || ack.MediaToken == null || ack.MediaMaxPacketSize < 1)
@@ -187,13 +188,13 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
             {
                 answer = await channel.ReadControl(this.options.RequestTimeout, cancellationToken).ConfigureAwait(false);
             }
-            catch (BleHubException)
+            catch (HubException)
             {
                 // the host closes the channel on a token it doesn't know
-                throw new BleHubException("The host refused the media channel");
+                throw new HubException("The host refused the media channel");
             }
             if (answer is not [MediaFrameCodec.Accepted])
-                throw new BleHubException("The host refused the media channel");
+                throw new HubException("The host refused the media channel");
 
             return channel;
         }
@@ -234,7 +235,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
         var ack = this.ack!;
         this.resuming = true;
         this.events.Reconnecting(drop);
-        this.protocol.FailAll(new BleHubDisconnectedException("The link to the host dropped - the call may not have completed", drop));
+        this.protocol.FailAll(new HubDisconnectedException("The link to the host dropped - the call may not have completed", drop));
 
         var deadline = DateTimeOffset.UtcNow.AddSeconds(ack.ResumeWindowSeconds);
         var delay = TimeSpan.FromMilliseconds(250);
@@ -267,7 +268,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
                         return;
                     }
                 }
-                catch (BleHubRemoteException ex)
+                catch (HubRemoteException ex)
                 {
                     // a host older than resume doesn't know the frame
                     refusal = ex.Message;
@@ -313,7 +314,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
             return;
 
         this.lifetime.Cancel();
-        this.protocol.FailAll(new BleHubDisconnectedException("The connection to the host was closed", disconnect));
+        this.protocol.FailAll(new HubDisconnectedException("The connection to the host was closed", disconnect));
         this.events.Closed(disconnect);
         await this.CloseLink(disconnectLink).ConfigureAwait(false);
     }
@@ -325,7 +326,7 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
             return;
 
         this.lifetime.Cancel();
-        this.protocol.FailAll(new BleHubDisconnectedException("The connection to the host was closed", disconnect));
+        this.protocol.FailAll(new HubDisconnectedException("The connection to the host was closed", disconnect));
         await this.CloseLink(disconnectLink).ConfigureAwait(false);
     }
 
@@ -347,10 +348,10 @@ internal sealed class FrameClientTransport : IBleHubClientTransport
     {
         var ack = this.ack;
         if (ack == null || ack.FileTransferPsm == 0)
-            throw new BleHubFileTransferNotSupportedException("The host does not serve file transfers");
+            throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
 
         if (!this.link.CanOpenL2Cap)
-            throw new BleHubFileTransferNotSupportedException("L2CAP is not available on this device");
+            throw new HubFileTransferNotSupportedException("L2CAP is not available on this device");
 
         return ack;
     }

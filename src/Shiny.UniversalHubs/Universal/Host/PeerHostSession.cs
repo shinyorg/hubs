@@ -2,8 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
 
@@ -45,7 +44,7 @@ internal interface IPeerHostTransport : IHubTransport
 /// <summary>
 /// One client's peer-link session on the host (Multipeer, Nearby): runs its calls through the hub and carries the hub's pushes back
 /// </summary>
-internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnection connection) : IPeerConnectionHandler, IBleHubPeerChannel
+internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnection connection) : IPeerConnectionHandler, IHubPeerChannel
 {
     readonly object sendLock = new();
     readonly ConcurrentDictionary<uint, CancellationTokenSource> calls = new();
@@ -186,7 +185,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     public void Close() => connection.Dispose();
 
 
-    // ---- to the client (IBleHubPeerChannel) ----
+    // ---- to the client (IHubPeerChannel) ----
 
     public IHubTransport Transport => transport;
 
@@ -232,7 +231,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     {
         if (Interlocked.Exchange(ref this.handshaking, 1) == 1)
         {
-            this.SendError(message.Id, nameof(BleHubProtocolException), "Already connected");
+            this.SendError(message.Id, nameof(HubProtocolException), "Already connected");
             return;
         }
 
@@ -298,7 +297,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     {
         if (Interlocked.Exchange(ref this.handshaking, 1) == 1)
         {
-            this.SendError(message.Id, nameof(BleHubProtocolException), "Already connected");
+            this.SendError(message.Id, nameof(HubProtocolException), "Already connected");
             return;
         }
 
@@ -387,12 +386,12 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
     async Task Invoke(PeerMessage message)
     {
-        if (this.Check(message, BleHubMethodKind.Invoke) is not { } endpoint)
+        if (this.Check(message, HubMethodKind.Invoke) is not { } endpoint)
             return;
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
         this.calls[message.Id] = cts;
-        BleHubInvocationResult? result = null;
+        HubInvocationResult? result = null;
         try
         {
             result = await endpoint.Invoke(this.ConnectionId, message.Name!, message.Payload, cts.Token).ConfigureAwait(false);
@@ -405,7 +404,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         catch (Exception ex)
         {
             this.Logger?.LogWarning(ex, "{Hub} call failed", this.Binding?.Name);
-            this.SendError(message.Id, BleHubRemoteException.TypeOf(ex), ex.Message);
+            this.SendError(message.Id, HubRemoteException.TypeOf(ex), ex.Message);
         }
         finally
         {
@@ -420,7 +419,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
     async Task Stream(PeerMessage message)
     {
-        if (this.Check(message, BleHubMethodKind.Stream) is not { } endpoint)
+        if (this.Check(message, HubMethodKind.Stream) is not { } endpoint)
             return;
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
@@ -438,7 +437,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         catch (Exception ex)
         {
             this.Logger?.LogWarning(ex, "{Hub} stream failed", this.Binding?.Name);
-            this.SendError(message.Id, BleHubRemoteException.TypeOf(ex), ex.Message);
+            this.SendError(message.Id, HubRemoteException.TypeOf(ex), ex.Message);
         }
         finally
         {
@@ -451,7 +450,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     {
         if (this.Binding is not { } hub)
         {
-            this.SendError(message.Id, nameof(BleHubProtocolException), "Handshake required");
+            this.SendError(message.Id, nameof(HubProtocolException), "Handshake required");
             return;
         }
         try
@@ -461,11 +460,11 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             if (refusal == null)
                 this.Send(PeerMessageKind.Completion, message.Id, null, []);
             else
-                this.SendError(message.Id, BleHubRemoteException.RenameRefused, refusal);
+                this.SendError(message.Id, HubRemoteException.RenameRefused, refusal);
         }
         catch (Exception ex) when (!this.lifetime.IsCancellationRequested)
         {
-            this.SendError(message.Id, BleHubRemoteException.TypeOf(ex), ex.Message);
+            this.SendError(message.Id, HubRemoteException.TypeOf(ex), ex.Message);
         }
     }
 
@@ -473,11 +472,11 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     /// <summary>
     /// The hub's endpoint when the call may go ahead; otherwise answers with the error and returns null
     /// </summary>
-    IBleHubTransportEndpoint? Check(PeerMessage message, BleHubMethodKind expected)
+    IHubEndpoint? Check(PeerMessage message, HubMethodKind expected)
     {
         if (this.Binding is not { } hub)
         {
-            this.SendError(message.Id, nameof(BleHubProtocolException), "Handshake required");
+            this.SendError(message.Id, nameof(HubProtocolException), "Handshake required");
             return null;
         }
 
@@ -487,9 +486,9 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return hub.Endpoint;
 
         // the same wording and error type as BLE and HTTP
-        this.SendError(message.Id, "HubMethodNotFound", kind == BleHubMethodKind.NotFound
+        this.SendError(message.Id, "HubMethodNotFound", kind == HubMethodKind.NotFound
             ? $"{hub.Name} has no method '{method}'"
-            : $"'{method}' is {(kind == BleHubMethodKind.Stream ? "a stream" : "not a stream")}");
+            : $"'{method}' is {(kind == HubMethodKind.Stream ? "a stream" : "not a stream")}");
         return null;
     }
 
@@ -554,7 +553,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     }
 
 
-    (int Status, string Message)? CheckUpload(BleHubFileTransferOptions ft, PeerFileRequest request, string path, BleHubConnectedClient client)
+    (int Status, string Message)? CheckUpload(HubFileTransferOptions ft, PeerFileRequest request, string path, HubConnectedClient client)
     {
         if (!ft.AllowUploads)
             return (403, "Uploads are not allowed");
@@ -571,7 +570,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     }
 
 
-    (int Status, string Message)? CheckDownload(BleHubFileTransferOptions ft, PeerFileRequest request, string path, BleHubConnectedClient client)
+    (int Status, string Message)? CheckDownload(HubFileTransferOptions ft, PeerFileRequest request, string path, HubConnectedClient client)
     {
         if (!ft.AllowDownloads)
             return (403, "Downloads are not allowed");
@@ -635,11 +634,11 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     }
 
 
-    void Raise(BleHubConnectedClient client, L2CapTransferType type, string name, string path, long bytes, TimeSpan elapsed)
+    void Raise(HubConnectedClient client, L2CapTransferType type, string name, string path, long bytes, TimeSpan elapsed)
     {
         try
         {
-            transport.Host.OnFileTransferred(new BleHubFileTransferredEventArgs(client, client.Id, type, name, path, bytes, elapsed));
+            transport.Host.OnFileTransferred(new HubFileTransferredEventArgs(client, client.Id, type, name, path, bytes, elapsed));
         }
         catch (Exception ex)
         {
@@ -667,12 +666,12 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     {
         if (this.Binding is not { } hub)
         {
-            this.SendError(message.Id, nameof(BleHubProtocolException), "Handshake required");
+            this.SendError(message.Id, nameof(HubProtocolException), "Handshake required");
             return;
         }
         if (transport.Host.MediaMaxPacketSize is not { } max)
         {
-            this.SendError(message.Id, nameof(BleHubException), "This host has no media channels");
+            this.SendError(message.Id, nameof(HubException), "This host has no media channels");
             return;
         }
 
@@ -682,7 +681,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         {
             Interlocked.CompareExchange(ref this.media, null, channel);
             channel.Closed();
-            this.SendError(message.Id, nameof(BleHubException), "Not connected");
+            this.SendError(message.Id, nameof(HubException), "Not connected");
             return;
         }
         this.Send(PeerMessageKind.MediaOpened, message.Id, null, []);
@@ -732,5 +731,5 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     }
 
 
-    sealed record PendingUpload(string Name, string Path, long Size, BleHubConnectedClient Client, BleHubFileTransferOptions Options, Stopwatch Elapsed);
+    sealed record PendingUpload(string Name, string Path, long Size, HubConnectedClient Client, HubFileTransferOptions Options, Stopwatch Elapsed);
 }

@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -16,9 +15,9 @@ namespace Shiny.UniversalHubs;
 /// [2..5]  message id (little endian) - correlates replies, stream items and cancels with their call
 /// [6]     name length
 /// [7..]   name (UTF-8): the hub's characteristic UUID, method or event
-/// [...]   payload: hub arguments and results exactly as IBleHubSerializer wrote them, or a control record as JSON
+/// [...]   payload: hub arguments and results exactly as IHubSerializer wrote them, or a control record as JSON
 /// </code>
-/// Unlike Wi-Fi, values are never re-framed as JSON, so any IBleHubSerializer works. Files travel as the radio's own
+/// Unlike Wi-Fi, values are never re-framed as JSON, so any IHubSerializer works. Files travel as the radio's own
 /// file transfers, named <see cref="FileResourcePrefix"/> + the request's message id.
 /// </summary>
 public static class PeerProtocol
@@ -62,13 +61,13 @@ public static class PeerProtocol
     {
         var span = message.Span;
         if (span.Length < HeaderSize)
-            throw new BleHubProtocolException($"Peer-link message is too short ({span.Length} bytes)");
+            throw new HubProtocolException($"Peer-link message is too short ({span.Length} bytes)");
         if (span[0] != Version)
-            throw new BleHubProtocolException($"Unsupported peer-link protocol version {span[0]}");
+            throw new HubProtocolException($"Unsupported peer-link protocol version {span[0]}");
 
         var nameLength = span[6];
         if (span.Length < HeaderSize + nameLength)
-            throw new BleHubProtocolException("Peer-link message is shorter than its name");
+            throw new HubProtocolException("Peer-link message is shorter than its name");
 
         return new PeerMessage(
             (PeerMessageKind)span[1],
@@ -80,7 +79,7 @@ public static class PeerProtocol
 
 
     internal static T Read<T>(this PeerMessage message, JsonTypeInfo<T> type)
-        => JsonSerializer.Deserialize(message.Payload.Span, type) ?? throw new BleHubProtocolException($"{message.Kind} has no body");
+        => JsonSerializer.Deserialize(message.Payload.Span, type) ?? throw new HubProtocolException($"{message.Kind} has no body");
 
     internal static string FileResourceName(uint id) => FileResourcePrefix + id;
 
@@ -146,7 +145,7 @@ public sealed record PeerHandshakeReply(bool Accepted, string? Reason, string? H
 public sealed record PeerResume(string Token);
 
 /// <summary>
-/// A hub failure relayed to the caller - becomes BleHubRemoteException on the client
+/// A hub failure relayed to the caller - becomes HubRemoteException on the client
 /// </summary>
 public sealed record PeerError(string Type, string Message);
 

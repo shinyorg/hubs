@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 
 namespace Sample.Calls;
 
@@ -112,7 +112,7 @@ internal sealed class HubCalls : IHubCalls
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
         var router = this.Endpoint<HostCallRouter<THub>>($"Host<{typeof(THub).Name}>()");
-        var link = router.Find(connectionId) ?? throw new BleHubException($"{connectionId} is not connected to {typeof(THub).Name} with calls");
+        var link = router.Find(connectionId) ?? throw new HubException($"{connectionId} is not connected to {typeof(THub).Name} with calls");
         return Task.FromResult(this.Place(link, "", typeof(THub), options ?? new CallOptions(), router.HostName));
     }
 
@@ -267,7 +267,7 @@ public sealed class HubCallsBuilder
     public HubCallsBuilder Client<TContract>() where TContract : class
     {
         this.Add(typeof(ClientCallEndpoint<TContract>), (sp, calls) => new ClientCallEndpoint<TContract>(
-            sp.GetRequiredService<IBleHubClient<TContract>>(),
+            sp.GetRequiredService<IHubProxy<TContract>>(),
             calls
         ));
         return this;

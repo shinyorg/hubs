@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 internal static class BleUuid
 {

@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Switchboard;
 
 namespace Shiny.UniversalHubs;
@@ -13,11 +12,11 @@ namespace Shiny.UniversalHubs;
 /// client connected through a channel outside the universal host
 /// </param>
 /// <param name="Client">The client's handshake details and per connection state</param>
-public sealed record HubConnection(string Id, IHubTransport? Transport, BleHubConnectedClient Client)
+public sealed record HubConnection(string Id, IHubTransport? Transport, HubConnectedClient Client)
 {
     /// <summary>
     /// Your own state for this connection, kept for as long as it is connected - the same bag on every transport
-    /// (<see cref="BleHubConnectedClient.Items"/>). Not to be confused with <see cref="BleHubConnectedClient.Properties"/>,
+    /// (<see cref="HubConnectedClient.Items"/>). Not to be confused with <see cref="HubConnectedClient.Properties"/>,
     /// the read-only values the client sent in its handshake.
     /// </summary>
     public IDictionary<string, object> Properties => this.Client.Items;
@@ -60,7 +59,7 @@ public sealed record HubConnection(string Id, IHubTransport? Transport, BleHubCo
     /// </summary>
     internal const string NearbyPrefix = "nb:";
 
-    public static HubConnection From(BleHubConnectedClient client)
+    public static HubConnection From(HubConnectedClient client)
     {
         var transport = client.Channel?.Transport;
         return new(client.Id, transport, client)
@@ -76,13 +75,26 @@ public sealed record HubConnection(string Id, IHubTransport? Transport, BleHubCo
 
 
 /// <summary>
-/// Base class for a hub served over BLE and Wi-Fi. <typeparamref name="TContract"/> is the [BleHubClient] interface.
-/// Register it with AddUniversalServer exactly like a BleHub - this only adds
-/// <see cref="Connection"/> and lifecycle hooks that say which transport the client is on.
+/// Base class for a hub. <typeparamref name="TContract"/> is the [UniversalHubContract] interface - implement its methods as public
+/// methods on the hub (a trailing CancellationToken parameter is optional). A new hub instance is created, in its own DI
+/// scope, for every invocation - keep state in singletons or <see cref="HubCallerContext.Items"/>. The same hub serves
+/// clients on every transport it is set up with.
 /// </summary>
-public abstract class UniversalHub<TContract> : BleHub<TContract> where TContract : class
+public abstract class UniversalHub<TContract> : IHubInternal where TContract : class
 {
     HubConnection? connection;
+
+    /// <summary>
+    /// The client that made the call
+    /// </summary>
+    public HubCallerContext Context { get; private set; } = null!;
+
+    /// <summary>
+    /// Push targets - eg. Clients.All.SomethingHappened(...), Clients.Others..., Clients.Group("x")...
+    /// </summary>
+    public IHubCallerClients<HubPush<TContract>> Clients { get; private set; } = null!;
+
+    public IGroupManager Groups { get; private set; } = null!;
 
     /// <summary>
     /// The client that made the call, and the transport it is connected over
@@ -90,25 +102,39 @@ public abstract class UniversalHub<TContract> : BleHub<TContract> where TContrac
     public HubConnection Connection => this.connection ??= HubConnection.From(this.Context.Client);
 
     /// <summary>
-    /// Runs once a client completes its handshake, over either transport, and before it is told it is connected
+    /// Runs once a client completes its handshake, on any transport, and before it is told it is connected
     /// </summary>
     public virtual Task OnConnectedAsync(HubConnection connection) => Task.CompletedTask;
 
     /// <summary>
-    /// Runs when a client leaves, over either transport, with why (<see cref="HubDisconnect.Reason"/>) and any message.
-    /// Group membership is still intact.
+    /// Runs when a client leaves (disconnect, host disconnect or connection loss), on any transport, with why
+    /// (<see cref="HubDisconnect.Reason"/>) and any message. Group membership is still intact.
     /// </summary>
     public virtual Task OnDisconnectedAsync(HubConnection connection, HubDisconnect disconnect) => Task.CompletedTask;
 
+    /// <summary>
+    /// Runs when a connected client renames itself, after ValidateClient accepted the new name and before the client is
+    /// told. <see cref="HubCallerContext.Client"/> already has the new name. Throw to refuse the rename - the name is put
+    /// back and the client gets the exception's message.
+    /// </summary>
+    public virtual Task OnRenamedAsync(string? previousName) => Task.CompletedTask;
 
-    public sealed override Task OnConnectedAsync() => this.OnConnectedAsync(this.Connection);
-    public sealed override Task OnDisconnectedAsync(HubDisconnect disconnect)
+
+    void IHubInternal.Initialize(HubCallerContext context, HubRuntime runtime)
+    {
+        this.Context = context;
+        this.Groups = runtime.Groups;
+        this.Clients = new HubCallerClients<HubPush<TContract>>(runtime, target => new HubPush<TContract>(target, runtime.Serializer), context.ConnectionId);
+    }
+
+    Task IHubInternal.OnConnectedAsync() => this.OnConnectedAsync(this.Connection);
+
+    Task IHubInternal.OnDisconnectedAsync(HubDisconnect disconnect)
     {
         // the line's requests are over - nothing current to show, whatever the async flow still holds
         HttpCall.Current = null;
         return this.OnDisconnectedAsync(this.Connection, disconnect);
     }
-    public sealed override Task OnDisconnectedAsync(string? reason) => Task.CompletedTask;
 }
 
 
@@ -130,14 +156,14 @@ internal static class HttpCall
 /// <summary>
 /// A client's MultipeerConnectivity peer
 /// </summary>
-/// <param name="DisplayName">The name the client's device gave its peer - the hub's own client name is <see cref="BleHubConnectedClient.Name"/></param>
+/// <param name="DisplayName">The name the client's device gave its peer - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
 public sealed record MultipeerPeer(string DisplayName);
 
 
 /// <summary>
 /// A client's Nearby Connections endpoint
 /// </summary>
-/// <param name="EndpointName">The name the client's device connected under - the hub's own client name is <see cref="BleHubConnectedClient.Name"/></param>
+/// <param name="EndpointName">The name the client's device connected under - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
 public sealed record NearbyPeer(string EndpointName);
 
 

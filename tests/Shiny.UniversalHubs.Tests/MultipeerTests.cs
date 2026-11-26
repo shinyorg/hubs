@@ -4,7 +4,7 @@ using System.Reactive.Threading.Tasks;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
 using Shiny.Net.HttpServer.Testing;
@@ -26,7 +26,7 @@ public class MultipeerTests : IAsyncLifetime
 
     readonly string filesDirectory = Path.Combine(Path.GetTempPath(), "universalhubs-multipeer-tests", Guid.NewGuid().ToString("N"));
     readonly List<ServiceProvider> clientContainers = new();
-    readonly ConcurrentQueue<BleHubMediaChannelEventArgs> mediaOpened = new();
+    readonly ConcurrentQueue<HubMediaChannelEventArgs> mediaOpened = new();
     readonly FakeMultipeerNetwork network = new();
     TestHttpServer app = null!;
     IUniversalHubHost host = null!;
@@ -74,8 +74,8 @@ public class MultipeerTests : IAsyncLifetime
             })
             .Multipeer(ServiceType)
             .AllowDynamicHubs(o => o.ServiceTypes.Add(MdnsServiceType))
-            .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
-            .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
+            .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
+            .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
         );
 
         return TestHttpServer.For(builder.Build());
@@ -100,7 +100,7 @@ public class MultipeerTests : IAsyncLifetime
             .AddSingleton<IMultipeerLink>(this.network)
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, characteristicUuid);
                 o.AutomaticReconnect = automaticReconnect;
                 o.UseMultipeer(ServiceType, mc => mc.DisplayName = "Phone");
             })
@@ -270,7 +270,7 @@ public class MultipeerTests : IAsyncLifetime
         var client = await this.Connect();
 
         Assert.IsType<MultipeerClientTransport>(client.Transport);
-        Assert.Equal(BleHubClientStatus.Connected, client.Status);
+        Assert.Equal(HubClientStatus.Connected, client.Status);
         Assert.Equal("TestHost", client.HostName);
 
         Assert.Equal(new Payload("hi", 42), await client.Hub.Echo(new Payload("hi", 42)));
@@ -300,7 +300,7 @@ public class MultipeerTests : IAsyncLifetime
     public async Task HubErrorsKeepTheirTypeAndMessage()
     {
         var client = await this.Connect();
-        var ex = await Assert.ThrowsAsync<BleHubRemoteException>(() => client.Hub.Fail());
+        var ex = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Fail());
         Assert.Equal(nameof(InvalidOperationException), ex.RemoteErrorType);
         Assert.Equal("boom", ex.Message);
     }
@@ -323,7 +323,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         var client = await this.Connect();
         var items = new List<int>();
-        var ex = await Assert.ThrowsAsync<BleHubRemoteException>(async () =>
+        var ex = await Assert.ThrowsAsync<HubRemoteException>(async () =>
         {
             await foreach (var i in client.Hub.CountThenFail(3, CancellationToken.None))
                 items.Add(i);
@@ -385,7 +385,7 @@ public class MultipeerTests : IAsyncLifetime
         await this.ConnectHttp("B");
         await this.Connect("C");
 
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => this.Connect("D"));
+        var ex = await Assert.ThrowsAsync<HubException>(() => this.Connect("D"));
         Assert.Contains("Host is full", ex.Message);
     }
 
@@ -473,7 +473,7 @@ public class MultipeerTests : IAsyncLifetime
         var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
         var id = Assert.Single(context.ConnectedClients).Id;
         await client.Hub.JoinGroup("team");
-        var statuses = new List<BleHubClientStatus>();
+        var statuses = new List<HubClientStatus>();
         var messages = new List<string>();
         HubDisconnect? disconnected = null;
         client.StatusChanged += (_, e) => { lock (statuses) statuses.Add(e.Status); };
@@ -483,7 +483,7 @@ public class MultipeerTests : IAsyncLifetime
         // out of reach for a moment - the host holds the client and keeps what it misses
         this.network.Partitioned = true;
         this.network.Sessions.Single().Host.Drop();
-        await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
+        await WaitFor(() => client.Status == HubClientStatus.Reconnecting);
         Assert.IsType<MultipeerClientTransport>(client.Transport);
         await WaitFor(() => this.network.Sessions.Count == 1);
         await context.Clients.Group("team").Message("missed one");
@@ -491,10 +491,10 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Single(context.ConnectedClients);
 
         this.network.Partitioned = false;
-        await WaitFor(() => client.Status == BleHubClientStatus.Connected && messages.Count == 2);
+        await WaitFor(() => client.Status == HubClientStatus.Connected && messages.Count == 2);
 
         Assert.Equal(["missed one", "missed two"], messages);
-        Assert.Equal([BleHubClientStatus.Reconnecting, BleHubClientStatus.Connected], statuses);
+        Assert.Equal([HubClientStatus.Reconnecting, HubClientStatus.Connected], statuses);
         Assert.Null(disconnected);
         Assert.Equal(id, Assert.Single(context.ConnectedClients).Id);
         Assert.Contains(id, context.Groups.GetMembers("team"));
@@ -515,7 +515,7 @@ public class MultipeerTests : IAsyncLifetime
 
         this.network.Partitioned = true;
         this.network.Sessions.Single().Host.Drop();
-        await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
+        await WaitFor(() => client.Status == HubClientStatus.Reconnecting);
         await WaitFor(() => this.log.Entries.Count(x => x.StartsWith("disconnected:", StringComparison.Ordinal)) == 0 && context.ConnectedClients.Count == 1);
 
         // the host gives up on it before it gets back
@@ -526,7 +526,7 @@ public class MultipeerTests : IAsyncLifetime
         var disconnect = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect.Reason);
         Assert.Contains("can't be resumed", disconnect.Message);
-        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+        Assert.Equal(HubClientStatus.Disconnected, client.Status);
     }
 
 
@@ -550,7 +550,7 @@ public class MultipeerTests : IAsyncLifetime
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerShutdown"));
 
         await Assert.ThrowsAnyAsync<Exception>(() => late.Connect(stale, new HubConnectOptions("Late").Only<MultipeerClientTransport>()));
-        Assert.Equal(BleHubClientStatus.Disconnected, late.Status);
+        Assert.Equal(HubClientStatus.Disconnected, late.Status);
     }
 
 
@@ -562,7 +562,7 @@ public class MultipeerTests : IAsyncLifetime
 
         // the advertisement is still up for OtherHub, so the invitation is accepted - the handshake is refused
         await this.host.StopHub<TestHub>();
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<MultipeerClientTransport>()));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<MultipeerClientTransport>()));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -575,7 +575,7 @@ public class MultipeerTests : IAsyncLifetime
         var client = await this.Connect();
         Assert.True(client.CanTransferFiles);
 
-        var transferred = new List<BleHubFileTransferredEventArgs>();
+        var transferred = new List<HubFileTransferredEventArgs>();
         this.host.FileTransferred += (_, e) =>
         {
             lock (transferred)
@@ -618,24 +618,24 @@ public class MultipeerTests : IAsyncLifetime
 
         // AuthorizeFile
         using var secret = new MemoryStream("x"u8.ToArray());
-        var refused = await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(secret, 1, "secret.txt"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt"));
         Assert.Contains("403", refused.Message);
 
         // MaxUploadSize
         using var big = new MemoryStream(new byte[2048]);
-        var tooBig = await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(big, 2048, "big.bin"));
+        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin"));
         Assert.Contains("413", tooBig.Message);
 
         // path traversal never reaches the disk
         using var sneaky = new MemoryStream("x"u8.ToArray());
-        await Assert.ThrowsAsync<BleHubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
+        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
         Assert.False(File.Exists(Path.Combine(this.filesDirectory, "..", "escape.txt")));
 
         // missing files
         var local = Path.GetTempFileName();
         try
         {
-            var missing = await Assert.ThrowsAsync<BleHubException>(() => client.DownloadFile("nope.jpg", local));
+            var missing = await Assert.ThrowsAsync<HubException>(() => client.DownloadFile("nope.jpg", local));
             Assert.Contains("404", missing.Message);
         }
         finally
@@ -741,8 +741,8 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Equal(new byte[] { 4, 5, 6 }, message.Payload.ToArray());
 
         bytes[0] = 99;
-        Assert.Throws<BleHubProtocolException>(() => PeerProtocol.Decode(bytes));
-        Assert.Throws<BleHubProtocolException>(() => PeerProtocol.Decode(new byte[3]));
+        Assert.Throws<HubProtocolException>(() => PeerProtocol.Decode(bytes));
+        Assert.Throws<HubProtocolException>(() => PeerProtocol.Decode(new byte[3]));
         Assert.Equal(42u, PeerProtocol.ReadFileResourceId(PeerProtocol.FileResourceName(42)));
         Assert.Null(PeerProtocol.ReadFileResourceId("something-else"));
     }
@@ -768,8 +768,8 @@ public class MultipeerTests : IAsyncLifetime
     public void BadServiceTypesAreRejected(string serviceType)
     {
         Assert.Throws<ArgumentException>(() => MultipeerProtocol.ValidateServiceType(serviceType));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.Multipeer(serviceType).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer(serviceType)));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.Multipeer(serviceType).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer(serviceType)));
     }
 
 
@@ -783,7 +783,7 @@ public class MultipeerTests : IAsyncLifetime
         => Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
             .Multipeer("one")
             .Multipeer("two")
-            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
+            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
 
 
     [Fact]

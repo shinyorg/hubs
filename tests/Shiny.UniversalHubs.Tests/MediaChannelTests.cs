@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using Microsoft.Extensions.DependencyInjection;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
 using Shiny.Net.HttpServer.Testing;
@@ -20,7 +20,7 @@ public class MediaChannelTests : IAsyncLifetime
     static MediaChannelTests() => Json.AddContext(TestJsonContext.Default);
 
     readonly List<ServiceProvider> clientContainers = new();
-    readonly ConcurrentQueue<BleHubMediaChannelEventArgs> opened = new();
+    readonly ConcurrentQueue<HubMediaChannelEventArgs> opened = new();
     TestHttpServer app = null!;
     bool mediaChannels = true;
 
@@ -48,7 +48,7 @@ public class MediaChannelTests : IAsyncLifetime
                 o.Advertise = false;
                 o.ManageHttpServer = false;
             })
-            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
+            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
         );
 
         this.app = TestHttpServer.For(builder.Build());
@@ -71,7 +71,7 @@ public class MediaChannelTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
-                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
@@ -200,7 +200,7 @@ public class MediaChannelTests : IAsyncLifetime
         {
         }
         await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(BleHubClientStatus.Connected, client.Status);   // the hub connection is untouched
+        Assert.Equal(HubClientStatus.Connected, client.Status);   // the hub connection is untouched
     }
 
 

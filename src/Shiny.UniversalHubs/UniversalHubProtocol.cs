@@ -139,7 +139,7 @@ public sealed record HubHandshakeReply(
 /// The message a host hangs up a line with: why, and the host's own text. It travels as the Switchboard hang-up message,
 /// so it arrives with the close itself.
 /// </summary>
-/// <param name="Reason">A <see cref="Shiny.BluetoothLE.Hubs.HubDisconnectReason"/></param>
+/// <param name="Reason">A <see cref="Shiny.UniversalHubs.HubDisconnectReason"/></param>
 /// <param name="Message">The text passed to Context.Abort, Disconnect or Stop</param>
 public sealed record HubHangUp(int Reason, string? Message);
 

@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// What this app's own hub host is advertising right now, so its own hub clients can leave it out of discovery - a scan

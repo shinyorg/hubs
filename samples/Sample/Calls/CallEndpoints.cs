@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.UniversalHubs;
 
 namespace Sample.Calls;
@@ -11,21 +10,21 @@ namespace Sample.Calls;
 /// </summary>
 internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContract : class
 {
-    readonly IBleHubClient<TContract> client;
+    readonly IHubProxy<TContract> client;
     readonly HubCalls calls;
     readonly ILogger? logger;
     readonly SemaphoreSlim opening = new(1, 1);
     MediaLink? link;
 
 
-    public ClientCallEndpoint(IBleHubClient<TContract> client, HubCalls calls)
+    public ClientCallEndpoint(IHubProxy<TContract> client, HubCalls calls)
     {
         this.client = client;
         this.calls = calls;
         this.logger = calls.LoggerFactory?.CreateLogger<ClientCallEndpoint<TContract>>();
 
         client.Connected += (_, _) => _ = this.TryOpen();
-        if (client.Status == BleHubClientStatus.Connected)
+        if (client.Status == HubClientStatus.Connected)
             _ = this.TryOpen();
     }
 
@@ -38,10 +37,10 @@ internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContr
     /// </summary>
     public async Task<MediaLink> GetLink(CancellationToken cancellationToken)
     {
-        if (this.client.Status != BleHubClientStatus.Connected)
-            throw new BleHubException($"Connect the {typeof(TContract).Name} client before calling");
+        if (this.client.Status != HubClientStatus.Connected)
+            throw new HubException($"Connect the {typeof(TContract).Name} client before calling");
         if (!this.client.CanOpenMediaChannel)
-            throw new BleHubException("This host doesn't take calls - it has no media channels");
+            throw new HubException("This host doesn't take calls - it has no media channels");
 
         return await this.Open(cancellationToken).ConfigureAwait(false);
     }
@@ -71,7 +70,7 @@ internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContr
                 return open;
 
             var channel = await this.client.OpenMediaChannel(cancellationToken).ConfigureAwait(false);
-            var profile = ((BleHubClient)(object)this.client).ExternalTransport != null ? CallProfile.Wifi : CallProfile.Ble;
+            var profile = ((HubProxy)(object)this.client).ExternalTransport != null ? CallProfile.Wifi : CallProfile.Ble;
             var link = new MediaLink(channel, "", profile, this.logger);
             link.KeyFrameNeeded += (_, callId) => this.calls.OnKeyFrameNeeded(callId);
             this.link = link;
@@ -142,7 +141,7 @@ internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
     internal int RelayedCalls => this.routes.Count;
 
 
-    void Attach(string connectionId, IBleHubMediaChannel channel)
+    void Attach(string connectionId, IHubMediaChannel channel)
     {
         // Multipeer and Nearby upgrade to Wi-Fi bandwidth, so only BLE gets the low-bandwidth profile
         var profile = HubConnection.GetTransport(connectionId) == HubTransports.Ble ? CallProfile.Ble : CallProfile.Wifi;

@@ -1,4 +1,4 @@
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// Rebuilds logical messages from frames for a single peer. Not thread safe - feed it from one place per peer.
@@ -19,9 +19,9 @@ public sealed class MessageReassembler(
 
     /// <summary>
     /// Adds a frame. Returns the message once its last frame arrives, otherwise null.
-    /// Throws <see cref="BleHubProtocolException"/> (with the offending message id when known) for bad frames - the partial message is dropped.
+    /// Throws <see cref="HubProtocolException"/> (with the offending message id when known) for bad frames - the partial message is dropped.
     /// </summary>
-    public BleHubMessage? Add(ReadOnlySpan<byte> frame)
+    public HubMessage? Add(ReadOnlySpan<byte> frame)
     {
         this.PurgeExpired();
         var header = FrameCodec.ReadHeader(frame);
@@ -33,10 +33,10 @@ public sealed class MessageReassembler(
             this.partials.Remove(header.MessageId);
 
             if (header.TotalLength > maxPayloadSize + 256)
-                throw new BleHubProtocolException($"Message {header.MessageId} is {header.TotalLength} bytes which exceeds the {maxPayloadSize} byte limit", header.MessageId);
+                throw new HubProtocolException($"Message {header.MessageId} is {header.TotalLength} bytes which exceeds the {maxPayloadSize} byte limit", header.MessageId);
 
             if (header.TotalLength < chunk.Length)
-                throw new BleHubProtocolException($"Message {header.MessageId} first frame is larger than its declared length", header.MessageId);
+                throw new HubProtocolException($"Message {header.MessageId} first frame is larger than its declared length", header.MessageId);
 
             var body = new byte[header.TotalLength];
             chunk.CopyTo(body);
@@ -44,31 +44,31 @@ public sealed class MessageReassembler(
             if (header.IsLast)
             {
                 if (chunk.Length != body.Length)
-                    throw new BleHubProtocolException($"Message {header.MessageId} ended before its declared length", header.MessageId);
+                    throw new HubProtocolException($"Message {header.MessageId} ended before its declared length", header.MessageId);
 
                 return FrameCodec.ParseBody(header.Kind, header.MessageId, body);
             }
 
             if (this.partials.Count >= maxPartialMessages)
-                throw new BleHubProtocolException("Too many partial messages in flight", header.MessageId);
+                throw new HubProtocolException("Too many partial messages in flight", header.MessageId);
 
             this.partials[header.MessageId] = new Partial(header.Kind, body, chunk.Length, 1, this.time.GetUtcNow());
             return null;
         }
 
         if (!this.partials.TryGetValue(header.MessageId, out var partial))
-            throw new BleHubProtocolException($"Continuation frame for unknown message {header.MessageId}", header.MessageId);
+            throw new HubProtocolException($"Continuation frame for unknown message {header.MessageId}", header.MessageId);
 
         if (partial.Kind != header.Kind || partial.NextSequence != header.Sequence)
         {
             this.partials.Remove(header.MessageId);
-            throw new BleHubProtocolException($"Out of order frame for message {header.MessageId} (expected {partial.NextSequence}, got {header.Sequence})", header.MessageId);
+            throw new HubProtocolException($"Out of order frame for message {header.MessageId} (expected {partial.NextSequence}, got {header.Sequence})", header.MessageId);
         }
 
         if (partial.Received + chunk.Length > partial.Body.Length)
         {
             this.partials.Remove(header.MessageId);
-            throw new BleHubProtocolException($"Message {header.MessageId} overflowed its declared length", header.MessageId);
+            throw new HubProtocolException($"Message {header.MessageId} overflowed its declared length", header.MessageId);
         }
 
         chunk.CopyTo(partial.Body.AsSpan(partial.Received));
@@ -81,7 +81,7 @@ public sealed class MessageReassembler(
 
         this.partials.Remove(header.MessageId);
         if (partial.Received != partial.Body.Length)
-            throw new BleHubProtocolException($"Message {header.MessageId} ended before its declared length", header.MessageId);
+            throw new HubProtocolException($"Message {header.MessageId} ended before its declared length", header.MessageId);
 
         return FrameCodec.ParseBody(header.Kind, header.MessageId, partial.Body);
     }

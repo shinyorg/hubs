@@ -2,7 +2,6 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
@@ -33,7 +32,7 @@ public interface IDynamicHubCalls
 
 /// <summary>
 /// Creates hub clients while the app runs, for hubs it has no compiled contract for. Each one discovers and connects like
-/// any universal hub client; its <see cref="IBleHubClient{TContract}.Hub"/> calls by name. Register with
+/// any universal hub client; its <see cref="IHubProxy{TContract}.Hub"/> calls by name. Register with
 /// <c>services.AddDynamicHubClients(o => ...)</c>.
 /// </summary>
 public interface IDynamicHubClients
@@ -73,7 +72,7 @@ public static class DynamicHubClientExtensions
         var shared = new UniversalHubClientOptions().UseHttp(configure: http);
         configure?.Invoke(shared);
         // and BLE, which every dynamic hub client uses
-        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, BleHubProtocolOptions.DefaultServiceUuid);
+        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, HubProtocolOptions.DefaultServiceUuid);
         foreach (var c in shared.ServiceActions)
             c(services);
 
@@ -96,7 +95,7 @@ internal sealed class DynamicHubClients(IServiceProvider services, Action<Univer
         configure?.Invoke(options);
         options.UseBluetoothLE(options.DynamicBleServiceUuid, characteristic);
 
-        var proxy = new DynamicHubProxy(services.GetRequiredService<BleHubClientServices>(), characteristic);
+        var proxy = new DynamicHubProxy(services.GetRequiredService<HubClientServices>(), characteristic);
         return new UniversalHubClient<IDynamicHubCalls>(
             proxy,
             options,
@@ -110,8 +109,8 @@ internal sealed class DynamicHubClients(IServiceProvider services, Action<Univer
 /// <summary>
 /// The proxy a dynamic hub client calls through - what the generator writes for a contract, by name instead
 /// </summary>
-internal sealed class DynamicHubProxy(BleHubClientServices services, string hubName)
-    : BleHubClient(services, hubName), IDynamicHubCalls, IBleHubClient<IDynamicHubCalls>
+internal sealed class DynamicHubProxy(HubClientServices services, string hubName)
+    : HubProxy(services, hubName), IDynamicHubCalls, IHubProxy<IDynamicHubCalls>
 {
     public IDynamicHubCalls Hub => this;
 
@@ -126,7 +125,7 @@ internal sealed class DynamicHubProxy(BleHubClientServices services, string hubN
             yield return item;
     }
 
-    protected override void OnPush(string name, BleHubArgumentReader args)
+    protected override void OnPush(string name, HubArgumentReader args)
     {
         var values = new ReadOnlyMemory<byte>[args.Count];
         for (var i = 0; i < values.Length; i++)
@@ -135,7 +134,7 @@ internal sealed class DynamicHubProxy(BleHubClientServices services, string hubN
         this.Pushed?.Invoke(name, values);
     }
 
-    BleHubArgumentWriter Write(IReadOnlyList<ReadOnlyMemory<byte>> arguments)
+    HubArgumentWriter Write(IReadOnlyList<ReadOnlyMemory<byte>> arguments)
     {
         ArgumentNullException.ThrowIfNull(arguments);
         var writer = this.CreateArguments();

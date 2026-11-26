@@ -4,37 +4,37 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 
-namespace Shiny.BluetoothLE.Hubs;
+namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Transport independent runtime for one hub - admits clients, runs hub methods, delivers pushes, holds dropped clients
-/// for resume and tracks groups. Every transport reaches it as an <see cref="IBleHubTransportEndpoint"/> - BLE through
+/// for resume and tracks groups. Every transport reaches it as an <see cref="IHubEndpoint"/> - BLE through
 /// <see cref="FrameHostSession"/>.
 /// </summary>
-internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
+internal sealed class HubRuntime : IGroupManager, IHubEndpoint
 {
     // by connection id: clients with a live link - the ones a transport can reach right now
     readonly ConcurrentDictionary<string, HostPeer> peers = new(StringComparer.OrdinalIgnoreCase);
     // by connection id: every admitted client, including one held for resume (it has no link until it comes back)
     readonly ConcurrentDictionary<string, HostPeer> connections = new(StringComparer.OrdinalIgnoreCase);
     readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> groups = new(StringComparer.Ordinal);
-    readonly BleHubRegistration registration;
-    readonly IBleHubDispatcher dispatcher;
+    readonly HubDefinition registration;
+    readonly IHubDispatcher dispatcher;
     readonly IServiceProvider services;
-    readonly BleHubProtocolOptions options;
+    readonly HubProtocolOptions options;
     readonly ILogger? logger;
     readonly Func<object>? createHub;
     CancellationTokenSource lifetime = new();
 
 
     public HubRuntime(
-        BleHubRegistration registration,
-        IBleHubDispatcher dispatcher,
+        HubDefinition registration,
+        IHubDispatcher dispatcher,
         IServiceProvider services,
-        BleHubProtocolOptions options,
-        IBleHubSerializer serializer,
+        HubProtocolOptions options,
+        IHubSerializer serializer,
         ILogger? logger,
         string? name = null,
         Func<object>? createHub = null
@@ -51,14 +51,14 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    public BleHubRegistration Registration => this.registration;
+    public HubDefinition Registration => this.registration;
 
     /// <summary>
     /// The hub's name in logs and errors - its class name, or the name a handler hub was added under
     /// </summary>
     public string Name { get; }
     public Type ContractType => this.dispatcher.ContractType;
-    public IBleHubSerializer Serializer { get; }
+    public IHubSerializer Serializer { get; }
     public IGroupManager Groups => this;
 
     /// <summary>
@@ -87,22 +87,22 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     /// Admitted clients, held ones included - pushes to a held client are kept for its resume
     /// </summary>
     public IEnumerable<HostPeer> ReadyPeers => this.connections.Values.Where(x => x.Client != null);
-    public IReadOnlyList<BleHubConnectedClient> Clients => this.ReadyPeers.Select(x => x.Client!).ToList();
+    public IReadOnlyList<HubConnectedClient> Clients => this.ReadyPeers.Select(x => x.Client!).ToList();
 
-    public event EventHandler<BleHubConnectedClient>? ClientConnected;
-    public event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected;
-    public event EventHandler<BleHubClientRenamedEventArgs>? ClientRenamed;
-    public event EventHandler<BleHubMediaChannelEventArgs>? MediaChannelOpened;
+    public event EventHandler<HubConnectedClient>? ClientConnected;
+    public event EventHandler<HubClientDisconnectedEventArgs>? ClientDisconnected;
+    public event EventHandler<HubClientRenamedEventArgs>? ClientRenamed;
+    public event EventHandler<HubMediaChannelEventArgs>? MediaChannelOpened;
 
 
     /// <summary>
     /// The admitted clients - held ones too - whose last channel <paramref name="channel"/> recognizes: one transport's own
     /// </summary>
-    public IReadOnlyList<string> ConnectionIds(Func<IBleHubPeerChannel?, bool> channel)
+    public IReadOnlyList<string> ConnectionIds(Func<IHubPeerChannel?, bool> channel)
         => this.connections.Values.Where(x => x.Client != null && channel(x.Channel)).Select(x => x.Id).ToList();
 
 
-    public BleHubConnectedClient? FindClient(string connectionId)
+    public HubConnectedClient? FindClient(string connectionId)
         => this.connections.TryGetValue(connectionId, out var peer) ? peer.Client : null;
 
 
@@ -196,7 +196,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
                 foreach (var group in this.groups.Values)
                     group.TryRemove(client.Id, out _);
 
-                this.ClientDisconnected?.Invoke(this, new BleHubClientDisconnectedEventArgs(client, disconnect));
+                this.ClientDisconnected?.Invoke(this, new HubClientDisconnectedEventArgs(client, disconnect));
             }
         });
     }
@@ -261,7 +261,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     Task DeliverLocked(HostPeer peer, QueuedSend item, CancellationToken cancellationToken)
     {
         if (peer.Channel == null)
-            throw new BleHubException("The client has no link");
+            throw new HubException("The client has no link");
 
         return item.Kind == FrameKind.HostRenamed
             ? peer.Channel.HostRenamed(ProtocolSerializer.ReadRename(item.Payload).Name, cancellationToken)
@@ -429,7 +429,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     /// <summary>
     /// The handshake rules every transport shares. Returns null when the client is in.
     /// </summary>
-    async Task<string?> Admit(HostPeer peer, HandshakeInfo info, Action<BleHubConnectedClient>? configure)
+    async Task<string?> Admit(HostPeer peer, HandshakeInfo info, Action<HubConnectedClient>? configure)
     {
         var hubOptions = this.registration.Options;
         string? rejection;
@@ -443,7 +443,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         {
             // registered and OnConnectedAsync completed before the ack goes out, so the client is never told it is in
             // before the hub knows about it (and has had a chance to put it in groups)
-            var client = new BleHubConnectedClient(peer.Id, info.Name, info.AppVersion, info.Properties ?? new(), 0);
+            var client = new HubConnectedClient(peer.Id, info.Name, info.AppVersion, info.Properties ?? new(), 0);
             configure?.Invoke(client);
             peer.Client = client;
             this.connections[peer.Id] = peer;
@@ -472,7 +472,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     /// The rename rules every transport shares: ValidateClient sees the new name, then OnRenamedAsync runs. Returns null
     /// when the client has its new name.
     /// </summary>
-    async Task<string?> Rename(HostPeer peer, BleHubConnectedClient client, string? name)
+    async Task<string?> Rename(HostPeer peer, HubConnectedClient client, string? name)
     {
         // one rename at a time per client, so the previous name each hook sees is the one it replaced
         await peer.RenameLock.WaitAsync().ConfigureAwait(false);
@@ -498,7 +498,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             }
 
             this.logger?.LogInformation("Client {Client} on {Hub} renamed from '{Previous}'", client, this.Name, previous);
-            this.ClientRenamed?.Invoke(this, new BleHubClientRenamedEventArgs(client, previous));
+            this.ClientRenamed?.Invoke(this, new HubClientRenamedEventArgs(client, previous));
             return null;
         }
         finally
@@ -523,7 +523,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 
     // ---- media channels ----
 
-    public IBleHubMediaChannel? GetMediaChannel(string connectionId)
+    public IHubMediaChannel? GetMediaChannel(string connectionId)
         => this.connections.TryGetValue(connectionId, out var peer) && peer.Media is { IsOpen: true } media ? media : null;
 
 
@@ -531,7 +531,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     /// Gives a connected client its media channel - replacing (and closing) any it had - and raises MediaChannelOpened.
     /// Returns false when the client isn't connected.
     /// </summary>
-    public bool AttachMediaChannel(string connectionId, IBleHubMediaChannel channel)
+    public bool AttachMediaChannel(string connectionId, IHubMediaChannel channel)
     {
         if (!this.connections.TryGetValue(connectionId, out var peer) || peer.Client is not { } client || peer.IsHeld)
             return false;
@@ -554,7 +554,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         this.logger?.LogInformation("Client {Client} opened a media channel on {Hub}", client, this.Name);
         try
         {
-            this.MediaChannelOpened?.Invoke(this, new BleHubMediaChannelEventArgs(client, channel));
+            this.MediaChannelOpened?.Invoke(this, new HubMediaChannelEventArgs(client, channel));
         }
         catch (Exception ex)
         {
@@ -564,23 +564,23 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    bool IBleHubTransportEndpoint.MediaChannelOpened(string connectionId, IBleHubMediaChannel channel)
+    bool IHubEndpoint.MediaChannelOpened(string connectionId, IHubMediaChannel channel)
         => this.AttachMediaChannel(connectionId, channel);
 
 
-    // ---- IBleHubTransportEndpoint: clients connected through another transport ----
+    // ---- IHubEndpoint: clients connected through another transport ----
 
-    public BleHubMethodKind GetMethodKind(string method) => this.dispatcher.GetMethodKind(method);
+    public HubMethodKind GetMethodKind(string method) => this.dispatcher.GetMethodKind(method);
 
 
-    public Task<string?> Connect(string connectionId, HandshakeInfo info, IBleHubPeerChannel channel, CancellationToken cancellationToken)
+    public Task<string?> Connect(string connectionId, HandshakeInfo info, IHubPeerChannel channel, CancellationToken cancellationToken)
         => this.Connect(connectionId, info, channel, null);
 
 
     /// <summary>
     /// <paramref name="configure"/> fills in what the transport knows about the client (its link) before the hub hears of it
     /// </summary>
-    public async Task<string?> Connect(string connectionId, HandshakeInfo info, IBleHubPeerChannel channel, Action<BleHubConnectedClient>? configure)
+    public async Task<string?> Connect(string connectionId, HandshakeInfo info, IHubPeerChannel channel, Action<HubConnectedClient>? configure)
     {
         if (this.connections.ContainsKey(connectionId))
             return "Connection id is already in use";
@@ -601,7 +601,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    public async Task<BleHubInvocationResult> Invoke(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken)
+    public async Task<HubInvocationResult> Invoke(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken)
     {
         var (peer, client) = this.GetExternal(connectionId);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token, peer.Aborted, cancellationToken);
@@ -616,10 +616,10 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             abortReason = reason;
         });
         var result = await this.dispatcher
-            .Invoke(hub, method, new BleHubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token)
+            .Invoke(hub, method, new HubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token)
             .ConfigureAwait(false);
 
-        return new BleHubInvocationResult(result, abortRequested, abortReason);
+        return new HubInvocationResult(result, abortRequested, abortReason);
     }
 
 
@@ -637,7 +637,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
                 abortRequested = true;
                 abortReason = reason;
             });
-            var items = this.dispatcher.Stream(hub, method, new BleHubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token);
+            var items = this.dispatcher.Stream(hub, method, new HubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token);
             await foreach (var item in items.WithCancellation(cts.Token).ConfigureAwait(false))
                 yield return item;
         }
@@ -650,7 +650,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public void Disconnected(string connectionId, HubDisconnect disconnect) => this.OnPeerGone(connectionId, disconnect);
 
 
-    public void Disconnected(string connectionId, IBleHubPeerChannel channel, HubDisconnect disconnect)
+    public void Disconnected(string connectionId, IHubPeerChannel channel, HubDisconnect disconnect)
     {
         // a link the client already replaced by resuming somewhere else
         if (this.peers.TryGetValue(connectionId, out var peer) && ReferenceEquals(peer.Channel, channel))
@@ -667,7 +667,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    public Task<string?> Resume(string resumeToken, string connectionIdPrefix, IBleHubPeerChannel channel, Func<string, Task> accepted, CancellationToken cancellationToken)
+    public Task<string?> Resume(string resumeToken, string connectionIdPrefix, IHubPeerChannel channel, Func<string, Task> accepted, CancellationToken cancellationToken)
         // like Connect, the transport checks whether it is running - IsRunning is BLE's
         => this.Resume(resumeToken, connectionIdPrefix, null, channel, accepted);
 
@@ -676,7 +676,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     /// Resumes a connection made through the calling transport: its id starts with <paramref name="connectionIdPrefix"/>
     /// and, when given, <paramref name="ownChannel"/> recognizes its last channel
     /// </summary>
-    public async Task<string?> Resume(string resumeToken, string connectionIdPrefix, Func<IBleHubPeerChannel, bool>? ownChannel, IBleHubPeerChannel channel, Func<string, Task> accepted)
+    public async Task<string?> Resume(string resumeToken, string connectionIdPrefix, Func<IHubPeerChannel, bool>? ownChannel, IHubPeerChannel channel, Func<string, Task> accepted)
     {
         var peer = this.FindResumable(resumeToken, x =>
             x.Channel != null
@@ -706,29 +706,29 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    (HostPeer Peer, BleHubConnectedClient Client) GetExternal(string connectionId)
+    (HostPeer Peer, HubConnectedClient Client) GetExternal(string connectionId)
     {
         if (!this.peers.TryGetValue(connectionId, out var peer) || peer.Channel == null || peer.Client is not { } client)
-            throw new BleHubProtocolException("Handshake required");
+            throw new HubProtocolException("Handshake required");
 
         return (peer, client);
     }
 
 
-    object CreateHub(IServiceProvider scope, HostPeer peer, BleHubConnectedClient client, Action<string?>? abort = null)
+    object CreateHub(IServiceProvider scope, HostPeer peer, HubConnectedClient client, Action<string?>? abort = null)
     {
         // a handler hub has no class to resolve - it stands in for one
         var hub = this.createHub?.Invoke() ?? scope.GetRequiredService(this.registration.HubType);
         abort ??= reason => _ = this.Disconnect(peer.Id, new HubDisconnect(HubDisconnectReason.ServerDisconnect, reason));
-        ((IBleHubInternal)hub).Initialize(new BleHubCallerContext(client, abort, peer.Aborted), this);
+        ((IHubInternal)hub).Initialize(new HubCallerContext(client, abort, peer.Aborted), this);
         return hub;
     }
 
 
-    async Task RunLifecycle(HostPeer peer, BleHubConnectedClient client, Func<IBleHubInternal, Task> action)
+    async Task RunLifecycle(HostPeer peer, HubConnectedClient client, Func<IHubInternal, Task> action)
     {
         await using var scope = this.services.CreateAsyncScope();
-        var hub = (IBleHubInternal)this.CreateHub(scope.ServiceProvider, peer, client);
+        var hub = (IHubInternal)this.CreateHub(scope.ServiceProvider, peer, client);
         try
         {
             await action(hub).ConfigureAwait(false);
@@ -942,7 +942,7 @@ internal sealed class HostPeer(string id)
     }
     public SemaphoreSlim SendLock { get; } = new(1, 1);
     public SemaphoreSlim RenameLock { get; } = new(1, 1);
-    public BleHubConnectedClient? Client
+    public HubConnectedClient? Client
     {
         get => this.client;
         set
@@ -952,12 +952,12 @@ internal sealed class HostPeer(string id)
                 value.Channel = this.channel;
         }
     }
-    BleHubConnectedClient? client;
+    HubConnectedClient? client;
 
-    IBleHubMediaChannel? media;
-    public IBleHubMediaChannel? Media => Volatile.Read(ref this.media);
-    public IBleHubMediaChannel? SetMedia(IBleHubMediaChannel channel) => Interlocked.Exchange(ref this.media, channel);
-    public void ClearMedia(IBleHubMediaChannel channel) => Interlocked.CompareExchange(ref this.media, null, channel);
+    IHubMediaChannel? media;
+    public IHubMediaChannel? Media => Volatile.Read(ref this.media);
+    public IHubMediaChannel? SetMedia(IHubMediaChannel channel) => Interlocked.Exchange(ref this.media, channel);
+    public void ClearMedia(IHubMediaChannel channel) => Interlocked.CompareExchange(ref this.media, null, channel);
 
     public void CloseMedia()
     {
@@ -968,7 +968,7 @@ internal sealed class HostPeer(string id)
     /// <summary>
     /// How the hub reaches the client - set by the transport it is connected through
     /// </summary>
-    public IBleHubPeerChannel? Channel
+    public IHubPeerChannel? Channel
     {
         get => this.channel;
         set
@@ -979,7 +979,7 @@ internal sealed class HostPeer(string id)
                 this.client.Channel = value;
         }
     }
-    IBleHubPeerChannel? channel;
+    IHubPeerChannel? channel;
     public CancellationToken Aborted => this.aborted.Token;
 
 
@@ -998,7 +998,7 @@ internal sealed class HostPeer(string id)
 /// </summary>
 /// <param name="Client">Who left</param>
 /// <param name="Disconnect">Why</param>
-public sealed record BleHubClientDisconnectedEventArgs(BleHubConnectedClient Client, HubDisconnect Disconnect)
+public sealed record HubClientDisconnectedEventArgs(HubConnectedClient Client, HubDisconnect Disconnect)
 {
     /// <summary>
     /// <see cref="HubDisconnect.Description"/>
@@ -1010,6 +1010,6 @@ public sealed record BleHubClientDisconnectedEventArgs(BleHubConnectedClient Cli
 /// <summary>
 /// A connected client changed its name
 /// </summary>
-/// <param name="Client">Who renamed - <see cref="BleHubConnectedClient.Name"/> is the new name</param>
+/// <param name="Client">Who renamed - <see cref="HubConnectedClient.Name"/> is the new name</param>
 /// <param name="PreviousName">The name it had before</param>
-public sealed record BleHubClientRenamedEventArgs(BleHubConnectedClient Client, string? PreviousName);
+public sealed record HubClientRenamedEventArgs(HubConnectedClient Client, string? PreviousName);

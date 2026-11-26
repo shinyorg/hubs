@@ -4,8 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
-using Shiny.BluetoothLE.Hubs;
-using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs.Protocol;
 using Shiny.Net.HttpServer.Switchboard.Client;
 
 namespace Shiny.UniversalHubs;
@@ -14,10 +13,10 @@ namespace Shiny.UniversalHubs;
 /// Carries one hub connection over a Switchboard line. Calls go through hub.invoke / hub.stream, pushes arrive as
 /// hub.push, and files use the host's plain HTTP routes.
 /// </summary>
-internal sealed class SwitchboardTransport : IBleHubClientTransport
+internal sealed class SwitchboardTransport : IHubConnectionTransport
 {
 
-    readonly IBleHubClientTransportEvents events;
+    readonly IHubConnectionTransportEvents events;
     readonly HttpClient http;
     readonly SwitchboardLine line;
     readonly Uri filesUri;
@@ -36,7 +35,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
         Uri hubUri,
         Uri filesUri,
         Uri mediaUri,
-        IBleHubClientTransportEvents events,
+        IHubConnectionTransportEvents events,
         HttpClientTransportOptions options,
         bool automaticReconnect,
         ILoggerFactory? loggerFactory
@@ -148,7 +147,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
     /// <summary>
     /// The media WebSocket, opened once per connection and closed with it
     /// </summary>
-    public async Task<IBleHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
+    public async Task<IHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken)
     {
         if (!this.CanOpenMediaChannel)
             throw new NotSupportedException("The host has no media channels");
@@ -236,7 +235,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
 
     HttpRequestMessage FileRequest(HttpMethod method, string fileName)
     {
-        var token = this.fileToken ?? throw new BleHubFileTransferNotSupportedException("The host does not serve file transfers");
+        var token = this.fileToken ?? throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
         var request = new HttpRequestMessage(method, new Uri(this.filesUri.ToString().TrimEnd('/') + "/" + Uri.EscapeDataString(fileName)));
         request.Headers.Add(UniversalHubProtocol.FileTokenHeader, token);
         return request;
@@ -253,8 +252,8 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport
             message = response.ReasonPhrase ?? response.StatusCode.ToString();
 
         throw response.StatusCode == HttpStatusCode.NotFound && message.Contains("does not serve files", StringComparison.Ordinal)
-            ? new BleHubFileTransferNotSupportedException(message)
-            : new BleHubException($"{what} failed ({(int)response.StatusCode}): {message}");
+            ? new HubFileTransferNotSupportedException(message)
+            : new HubException($"{what} failed ({(int)response.StatusCode}): {message}");
     }
 
 

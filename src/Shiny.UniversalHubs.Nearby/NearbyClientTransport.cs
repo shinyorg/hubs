@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reactive.Linq;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -74,7 +73,7 @@ public sealed class NearbyClientTransport : IHubClientTransport
     public async Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)
     {
         var connectOptions = client.ConnectOptions;
-        var endpointId = host.Endpoint<NearbyHubEndpoint>()?.EndpointId ?? throw new BleHubException($"{host.Name} was not seen over Nearby");
+        var endpointId = host.Endpoint<NearbyHubEndpoint>()?.EndpointId ?? throw new HubException($"{host.Name} was not seen over Nearby");
         var endpointName = options.EndpointName ?? connectOptions.Name ?? "Hub client";
         var connection = await link.Connect(endpointId, endpointName, options.ConnectTimeout, cancellationToken).ConfigureAwait(false);
         try

@@ -2,14 +2,14 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// A media channel over a byte stream (an L2CAP channel), framed by <see cref="MediaFrameCodec"/>. Transport-free: the
 /// owner feeds it received bytes (<see cref="OnData"/>) and reports the stream closing (<see cref="Close"/>); it writes
 /// through the delegate it was given.
 /// </summary>
-internal sealed class FramedMediaChannel : IBleHubMediaChannel
+internal sealed class FramedMediaChannel : IHubMediaChannel
 {
     readonly Func<byte[], CancellationToken, Task> write;
     readonly Action? onClose;
@@ -122,7 +122,7 @@ internal sealed class FramedMediaChannel : IBleHubMediaChannel
             foreach (var frame in frames)
                 this.inbound.Writer.TryWrite(frame);
         }
-        catch (BleHubProtocolException ex)
+        catch (HubProtocolException ex)
         {
             this.logger?.LogWarning(ex, "Bad media frame - closing the channel");
             this.Close();
@@ -164,7 +164,7 @@ internal sealed class FramedMediaChannel : IBleHubMediaChannel
 
 
     /// <summary>
-    /// Reads the next frame as a control frame. Throws <see cref="BleHubException"/> when the channel closes first and
+    /// Reads the next frame as a control frame. Throws <see cref="HubException"/> when the channel closes first and
     /// <see cref="TimeoutException"/> when nothing arrives in time.
     /// </summary>
     internal async Task<byte[]> ReadControl(TimeSpan timeout, CancellationToken cancellationToken)
@@ -178,7 +178,7 @@ internal sealed class FramedMediaChannel : IBleHubMediaChannel
         }
         catch (ChannelClosedException)
         {
-            throw new BleHubException("The media channel was closed before it opened");
+            throw new HubException("The media channel was closed before it opened");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -190,14 +190,14 @@ internal sealed class FramedMediaChannel : IBleHubMediaChannel
     async ValueTask SendFrame(ReadOnlyMemory<byte> packet, CancellationToken cancellationToken)
     {
         if (!this.IsOpen)
-            throw new BleHubException("The media channel is closed");
+            throw new HubException("The media channel is closed");
 
         var writes = MediaFrameCodec.Encode(packet.Span, this.maxWriteSize);
         await this.sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!this.IsOpen)
-                throw new BleHubException("The media channel is closed");
+                throw new HubException("The media channel is closed");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.lifetime.Token);
             try
@@ -212,7 +212,7 @@ internal sealed class FramedMediaChannel : IBleHubMediaChannel
                 if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
                     throw;
 
-                throw new BleHubException("The media channel is closed", ex);
+                throw new HubException("The media channel is closed", ex);
             }
         }
         finally

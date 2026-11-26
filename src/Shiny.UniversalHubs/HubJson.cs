@@ -3,20 +3,19 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Converts between the hub's encoded values and the JSON a Switchboard carries. Hub arguments, results, stream items and
-/// pushes are serialized by IBleHubSerializer exactly as over BLE - here they are only re-framed, never re-serialized, so
+/// pushes are serialized by IHubSerializer exactly as over BLE - here they are only re-framed, never re-serialized, so
 /// the serializer must produce JSON (the default does).
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class HubJson
 {
     /// <summary>
-    /// <c>[count:1]</c> then <c>count x ([length:4][value])</c> (BleHubArgumentWriter's format) → a JSON array of the values
+    /// <c>[count:1]</c> then <c>count x ([length:4][value])</c> (HubArgumentWriter's format) → a JSON array of the values
     /// </summary>
     public static JsonElement ArgumentsToJson(ReadOnlySpan<byte> encoded)
     {
@@ -31,12 +30,12 @@ public static class HubJson
                 for (var i = 0; i < count; i++)
                 {
                     if (offset + 4 > encoded.Length)
-                        throw new BleHubProtocolException("Argument header is truncated");
+                        throw new HubProtocolException("Argument header is truncated");
 
                     var length = (int)BinaryPrimitives.ReadUInt32LittleEndian(encoded[offset..]);
                     offset += 4;
                     if (length < 0 || offset + length > encoded.Length)
-                        throw new BleHubProtocolException("Argument value is truncated");
+                        throw new HubProtocolException("Argument value is truncated");
 
                     WriteRaw(writer, encoded.Slice(offset, length));
                     offset += length;
@@ -49,16 +48,16 @@ public static class HubJson
 
 
     /// <summary>
-    /// A JSON array of values → BleHubArgumentWriter's format
+    /// A JSON array of values → HubArgumentWriter's format
     /// </summary>
     public static byte[] ArgumentsFromJson(JsonElement array)
     {
         if (array.ValueKind != JsonValueKind.Array)
-            throw new BleHubProtocolException("Arguments must be a JSON array");
+            throw new HubProtocolException("Arguments must be a JSON array");
 
         var count = array.GetArrayLength();
         if (count > byte.MaxValue)
-            throw new BleHubProtocolException($"A hub call can have at most {byte.MaxValue} arguments");
+            throw new HubProtocolException($"A hub call can have at most {byte.MaxValue} arguments");
 
         var values = new List<ReadOnlyMemory<byte>>(count);
         foreach (var item in array.EnumerateArray())
@@ -154,7 +153,7 @@ public static class HubJson
         ThrowIfError(envelope);
         return envelope.ValueKind == JsonValueKind.Object && envelope.TryGetProperty("item", out var item)
             ? Raw(item)
-            : throw new BleHubProtocolException("Stream item envelope has no item");
+            : throw new HubProtocolException("Stream item envelope has no item");
     }
 
 
@@ -162,13 +161,13 @@ public static class HubJson
         => JsonSerializer.SerializeToElement(value, UniversalHubJsonContext.Default.HubHandshake);
 
     internal static HubHandshake ReadHandshake(JsonElement value)
-        => value.Deserialize(UniversalHubJsonContext.Default.HubHandshake) ?? throw new BleHubProtocolException("Empty handshake");
+        => value.Deserialize(UniversalHubJsonContext.Default.HubHandshake) ?? throw new HubProtocolException("Empty handshake");
 
     internal static JsonElement Serialize(HubHandshakeReply value)
         => JsonSerializer.SerializeToElement(value, UniversalHubJsonContext.Default.HubHandshakeReply);
 
     internal static HubHandshakeReply ReadHandshakeReply(JsonElement value)
-        => value.Deserialize(UniversalHubJsonContext.Default.HubHandshakeReply) ?? throw new BleHubProtocolException("Empty handshake reply");
+        => value.Deserialize(UniversalHubJsonContext.Default.HubHandshakeReply) ?? throw new HubProtocolException("Empty handshake reply");
 
 
     /// <summary>
@@ -205,7 +204,7 @@ public static class HubJson
         {
             var type = error.TryGetProperty("type", out var t) ? t.GetString() : null;
             var message = error.TryGetProperty("message", out var m) ? m.GetString() : null;
-            throw new BleHubRemoteException(type ?? "Error", message ?? "The hub reported an error");
+            throw new HubRemoteException(type ?? "Error", message ?? "The hub reported an error");
         }
     }
 
@@ -218,8 +217,8 @@ public static class HubJson
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
-            throw new BleHubException(
-                "UniversalHubs carries hub values as JSON, but the registered IBleHubSerializer produced something else. " +
+            throw new HubException(
+                "UniversalHubs carries hub values as JSON, but the registered IHubSerializer produced something else. " +
                 "Use the default serializer (or another JSON one) when hubs are served over Wi-Fi.",
                 ex
             );

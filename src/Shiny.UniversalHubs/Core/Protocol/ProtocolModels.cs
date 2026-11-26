@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Shiny.BluetoothLE.Hubs.Protocol;
+namespace Shiny.UniversalHubs.Protocol;
 
 /// <summary>
 /// Sent by the client once it is subscribed to the outbox
@@ -90,4 +90,4 @@ public sealed record RenameInfo(string? Name);
 [JsonSerializable(typeof(DisconnectInfo))]
 [JsonSerializable(typeof(RenameInfo))]
 [JsonSerializable(typeof(ResumeInfo))]
-internal partial class BleHubProtocolJsonContext : JsonSerializerContext;
+internal partial class HubProtocolJsonContext : JsonSerializerContext;

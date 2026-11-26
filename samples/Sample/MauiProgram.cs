@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Shiny;
 using Shiny.Net.HttpServer.Ssh;
-using Shiny.BluetoothLE.Hubs;
 using Shiny.UniversalHubs;
 using Sample.Calls;
 using Sample.Game;

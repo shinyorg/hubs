@@ -49,7 +49,7 @@
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Multipeer\Shiny.UniversalHubs.Multipeer.csproj" />
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Nearby\Shiny.UniversalHubs.Nearby.csproj" />
         <!-- the hub proxies and dispatchers: a project reference doesn't carry the generator the way the package does -->
-        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+        <ProjectReference Include="..\..\src\Shiny.UniversalHubs.SourceGenerators\Shiny.UniversalHubs.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 
 </Project>

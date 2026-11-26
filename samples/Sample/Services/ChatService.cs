@@ -2,11 +2,10 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.Extensions.Logging;
 using Shiny.Actors;
-using Shiny.BluetoothLE.Hubs;
+using Shiny.UniversalHubs;
 using Shiny.Infrastructure;
 using Shiny.Net.HttpServer.Ssh;
 using Shiny.Notifications;
-using Shiny.UniversalHubs;
 using Sample.Hub;
 
 namespace Sample.Services;
@@ -218,7 +217,7 @@ public class ChatService
     /// </summary>
     public async Task<Conversation> Visit(HubHostInfo info, CancellationToken cancellationToken = default)
     {
-        if (this.client.Status != BleHubClientStatus.Disconnected)
+        if (this.client.Status != HubClientStatus.Disconnected)
             await this.client.Disconnect();
 
         this.logger.LogInformation("Visiting {Host} - reachable over {Transports}, connecting over {Over}", info.Name, info.Transports, this.settings.ConnectChoice);
@@ -252,7 +251,7 @@ public class ChatService
     /// </summary>
     public bool ShouldSwitchTransport(HubHostInfo host)
         => this.settings.ConnectOver is var over and not HubTransports.None
-           && this.client.Status == BleHubClientStatus.Connected
+           && this.client.Status == HubClientStatus.Connected
            && this.client.Transport != over
            && host.Transports.HasFlag(over);
 
@@ -267,7 +266,7 @@ public class ChatService
         ChatLine line;
         if (conversation.IsVisiting)
         {
-            if (!ReferenceEquals(this.remote, conversation) || this.client.Status != BleHubClientStatus.Connected)
+            if (!ReferenceEquals(this.remote, conversation) || this.client.Status != HubClientStatus.Connected)
                 throw new InvalidOperationException($"Not connected to {conversation.Name}");
 
             line = await this.client.Hub.Send(text, clientMessageId);
@@ -325,7 +324,7 @@ public class ChatService
 
         if (conversation.IsVisiting)
         {
-            if (!ReferenceEquals(this.remote, conversation) || this.client.Status != BleHubClientStatus.Connected)
+            if (!ReferenceEquals(this.remote, conversation) || this.client.Status != HubClientStatus.Connected)
                 throw new InvalidOperationException($"Not connected to {conversation.Name}");
 
             await this.client.UploadFile(localPath, fileName);
