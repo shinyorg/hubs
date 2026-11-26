@@ -4,7 +4,6 @@ using System.Reactive.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
 using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
@@ -48,10 +47,10 @@ public abstract class HubProxy : IHubConnection, IDisposable
         this.Status == HubClientStatus.Connected && this.connection?.External?.CanOpenMediaChannel == true;
 
     /// <summary>
-    /// The transport carrying this connection when it isn't BLE, otherwise null
+    /// The link carrying this connection, null while disconnected
     /// </summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public IHubConnectionTransport? ExternalTransport => this.connection?.External is FrameClientTransport ? null : this.connection?.External;
+    public IHubConnectionTransport? ConnectionTransport => this.connection?.External;
 
     public event EventHandler<HubStatusChangedEventArgs>? StatusChanged;
     public event EventHandler? Connected;
@@ -60,24 +59,7 @@ public abstract class HubProxy : IHubConnection, IDisposable
 
 
     /// <summary>
-    /// Connects over a caller supplied frame link (tests / in-memory). Frames from the host go to <see cref="ReceiveFrame"/>.
-    /// </summary>
-    internal Task ConnectTransport(
-        Func<byte[], CancellationToken, Task> write,
-        int mtu,
-        HubHandshakeOptions? options,
-        CancellationToken cancellationToken,
-        Func<ushort, bool, CancellationToken, Task<L2CapChannel>>? openL2Cap = null,
-        Func<CancellationToken, Task<int>>? relink = null
-    ) => this.ConnectTransportCore(
-        events => new FrameClientTransport(this.services.Options, new DelegateFrameLink(write, mtu, openL2Cap, relink), events, this.logger),
-        options,
-        cancellationToken
-    );
-
-
-    /// <summary>
-    /// Connects over a transport other than BLE. <paramref name="createTransport"/> receives the callbacks for pushes and
+    /// Connects over a transport's link. <paramref name="createTransport"/> receives the callbacks for pushes and
     /// closes, and returns the transport for this one connection.
     /// </summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
@@ -119,22 +101,6 @@ public abstract class HubProxy : IHubConnection, IDisposable
             this.connectLock.Release();
         }
     }
-
-
-    FrameClientTransport? FrameTransport => this.connection?.External as FrameClientTransport;
-
-    internal void ReceiveFrame(ReadOnlySpan<byte> frame) => this.FrameTransport?.OnFrame(frame);
-
-    /// <summary>
-    /// Simulates the link dropping with no resume (tests)
-    /// </summary>
-    internal Task LoseConnection(string reason)
-        => this.FrameTransport?.Lose(new HubDisconnect(HubDisconnectReason.ClientTimeout, reason)) ?? Task.CompletedTask;
-
-    /// <summary>
-    /// Simulates the link dropping the way the radio reports it - resumed when it can be (tests)
-    /// </summary>
-    internal void DropLink(string reason) => this.FrameTransport?.OnLinkLost(new HubDisconnect(HubDisconnectReason.ClientTimeout, reason));
 
 
     async Task CloseMedia(Connection conn)

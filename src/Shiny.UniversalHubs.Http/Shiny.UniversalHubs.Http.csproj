@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.UniversalHubs</RootNamespace>
+        <Description>Shiny.UniversalHubs over HTTP - hubs served as WebSockets on Shiny.Net.HttpServer, found over mDNS, reachable through tunnels</Description>
+        <PackageTags>$(PackageTags) http websocket wifi mdns bonjour</PackageTags>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
+        <PackageReference Include="Shiny.Net.HttpServer" />
+        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.BluetoothLE.Tests" />
+    </ItemGroup>
+</Project>

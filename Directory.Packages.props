@@ -13,6 +13,7 @@
         <PackageVersion Include="Shiny.Net.HttpServer" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Discovery" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Testing" Version="$(HttpServerVersion)"/>
+        <PackageVersion Include="Shiny.Core" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE.Hosting" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Xamarin.GooglePlayServices.Nearby" Version="119.5.0"/>
@@ -30,6 +31,7 @@
     <ItemGroup>
         <!-- Shiny.BluetoothLE.Hubs: the argument codec, and the source generator -->
         <PackageVersion Include="Shiny.Extensions.Serialization" Version="6.0.0"/>
+        <PackageVersion Include="System.Reactive" Version="7.0.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0"/>
         <PackageVersion Include="Microsoft.Maui.Platforms.MacOS" Version="$(MauiLabsVersion)"/>

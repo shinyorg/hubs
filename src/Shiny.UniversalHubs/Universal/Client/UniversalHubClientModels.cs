@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
@@ -65,25 +64,6 @@ public sealed record HubHostInfo(string Key, string Name, string? HostId)
             Endpoints = endpoints,
             Transports = endpoints.Keys.OrderBy(Rank).ToList()
         };
-    }
-
-
-    /// <summary>
-    /// A host you have the address of rather than discovered - a tunnel's public URL, a typed address, a QR code.
-    /// Pass it to <see cref="IUniversalHubClient{TContract}.Connect"/>; it is reached over HTTP only.
-    /// </summary>
-    /// <param name="serverUrl">The server's address, eg. <c>https://abc.a.pinggy.link</c> or <c>http://192.168.1.20:5000</c></param>
-    /// <param name="endpoint">The server's base path - the host's HttpTransportOptions.BasePath, <c>/hubs</c> unless it was changed</param>
-    public static HubHostInfo FromUrl(Uri serverUrl, string endpoint = UniversalHubProtocol.DefaultBasePath)
-    {
-        ArgumentNullException.ThrowIfNull(serverUrl);
-        if (!serverUrl.IsAbsoluteUri || (serverUrl.Scheme != Uri.UriSchemeHttp && serverUrl.Scheme != Uri.UriSchemeHttps))
-            throw new ArgumentException("An absolute http or https address is required", nameof(serverUrl));
-
-        var root = serverUrl.GetLeftPart(UriPartial.Authority);
-        var baseAddress = new Uri(root + UniversalHubProtocol.NormalizeBasePath(endpoint));
-        var server = new DiscoveredHttpServer(serverUrl.Host, baseAddress, [], serverUrl.Port, new Dictionary<string, string>());
-        return new HubHostInfo(root, serverUrl.Host, null).With(typeof(HttpClientTransport), new HttpHubEndpoint(server), []);
     }
 }
 

@@ -136,7 +136,7 @@ public class NearbyTests : IAsyncLifetime
     async Task<IUniversalHubClient<ITestHub>> ConnectHttp(string name)
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
-        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name).Only<HttpClientTransport>());
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name).Only<HttpClientTransport>());
         return client;
     }
 

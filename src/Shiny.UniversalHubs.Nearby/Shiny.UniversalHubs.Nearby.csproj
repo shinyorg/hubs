@@ -17,6 +17,8 @@
     </ItemGroup>
 
     <ItemGroup Condition="$(TargetFramework.Contains('-android'))">
+        <!-- AndroidPlatform: the current activity Nearby needs -->
+        <PackageReference Include="Shiny.Core" />
         <PackageReference Include="Xamarin.GooglePlayServices.Nearby" />
         <!--
             Google Play services brings androidx.fragment 1.9, which absorbed fragment-ktx. MAUI apps still carry

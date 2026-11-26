@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
 using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;

@@ -105,7 +105,7 @@ public class ExternalTransportTests : IAsyncLifetime
         var (hub, client, _) = await this.Connect();
 
         Assert.Equal(HubClientStatus.Connected, client.Status);
-        Assert.NotNull(client.ExternalTransport);
+        Assert.NotNull(client.ConnectionTransport);
         Assert.Contains("connected:Alice", this.log.Entries);
         Assert.Equal(["wifi-1"], this.runtime.GetMembers("everyone"));
 

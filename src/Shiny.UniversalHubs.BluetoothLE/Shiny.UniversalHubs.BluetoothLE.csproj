@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <!-- the platform targets register the platform BLE central and peripheral stacks -->
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <IsAotCompatible>true</IsAotCompatible>
+        <RootNamespace>Shiny.UniversalHubs</RootNamespace>
+        <Description>Shiny.UniversalHubs over Bluetooth LE - hubs served as GATT characteristics, with files and media channels over L2CAP</Description>
+        <PackageTags>$(PackageTags) ble bluetooth bluetoothle gatt l2cap</PackageTags>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
+        <PackageReference Include="Shiny.BluetoothLE" />
+        <PackageReference Include="Shiny.BluetoothLE.Hosting" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.BluetoothLE.Tests" />
+    </ItemGroup>
+</Project>

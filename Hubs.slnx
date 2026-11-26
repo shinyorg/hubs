@@ -13,6 +13,8 @@
   <Project Path="samples/Sample.MacOS/Sample.MacOS.csproj" />
   <Project Path="src/Shiny.UniversalHubs.SourceGenerators/Shiny.UniversalHubs.SourceGenerators.csproj" />
   <Project Path="src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj" />
+  <Project Path="src/Shiny.UniversalHubs.BluetoothLE/Shiny.UniversalHubs.BluetoothLE.csproj" />
+  <Project Path="src/Shiny.UniversalHubs.Http/Shiny.UniversalHubs.Http.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Nearby/Shiny.UniversalHubs.Nearby.csproj" />
   <Project Path="tests/Shiny.UniversalHubs.BluetoothLE.Tests/Shiny.UniversalHubs.BluetoothLE.Tests.csproj" />

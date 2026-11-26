@@ -440,7 +440,7 @@ public partial class InboxViewModel(
         }
 
         var person = this.NewPerson();
-        person.Host = HubHostInfo.FromUrl(uri);
+        person.Host = HttpHubHost.FromUrl(uri);
         person.LastSeen = DateTimeOffset.UtcNow;
         await this.Message(person);
     }

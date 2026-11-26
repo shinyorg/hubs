@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
 using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;

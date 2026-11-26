@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
 
 namespace Shiny.UniversalHubs;
 

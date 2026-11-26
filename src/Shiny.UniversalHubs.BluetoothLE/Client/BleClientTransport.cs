@@ -51,6 +51,7 @@ public static class BleClientExtensions
         services.AddBluetoothLE();
 #endif
         services.TryAddSingleton<BleConnectionTracker>();
+        services.TryAddSingleton<LocalHubAdvertisement>();
     }
 }
 

@@ -1,15 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
+        <TargetFramework>net11.0</TargetFramework>
         <IsAotCompatible>true</IsAotCompatible>
         <RootNamespace>Shiny.UniversalHubs</RootNamespace>
-        <Description>Shiny.UniversalHubs - SignalR style hubs over any transport: hosts, clients, the wire protocols and the hub source generator</Description>
+        <Description>Shiny.UniversalHubs - SignalR style hubs over any transport: hubs, hosts, clients, the transport seams, the wire protocols and the hub source generator</Description>
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="Shiny.Extensions.Serialization" />
-        <PackageReference Include="Shiny.BluetoothLE" />
-        <PackageReference Include="Shiny.BluetoothLE.Hosting" />
-        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
+        <PackageReference Include="System.Reactive" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.BluetoothLE" />
+        <InternalsVisibleTo Include="Shiny.UniversalHubs.Http" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Multipeer" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Nearby" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />

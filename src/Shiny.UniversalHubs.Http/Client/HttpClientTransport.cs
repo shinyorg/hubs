@@ -11,7 +11,7 @@ namespace Shiny.UniversalHubs;
 public static class HttpHubClientExtensions
 {
     /// <summary>
-    /// Reaches the hub over HTTP: hosts found over mDNS, or an address you have (<see cref="HubHostInfo.FromUrl"/>)
+    /// Reaches the hub over HTTP: hosts found over mDNS, or an address you have (<see cref="HttpHubHost.FromUrl"/>)
     /// </summary>
     /// <param name="mdnsServiceType">The mDNS service type to browse - the one the host gave the hub's UseHttp. Null for the default.</param>
     /// <param name="configure">Timeouts, and the HTTP stack</param>
@@ -66,7 +66,32 @@ public sealed class HttpClientTransportOptions
 
 
 /// <summary>
-/// A host seen over mDNS, or given by address (<see cref="HubHostInfo.FromUrl"/>)
+/// Hosts you have the address of rather than discovered
+/// </summary>
+public static class HttpHubHost
+{
+    /// <summary>
+    /// A host you have the address of - a tunnel's public URL, a typed address, a QR code. Pass it to
+    /// <see cref="IUniversalHubClient{TContract}.Connect"/>; it is reached over HTTP only.
+    /// </summary>
+    /// <param name="serverUrl">The server's address, eg. <c>https://abc.a.pinggy.link</c> or <c>http://192.168.1.20:5000</c></param>
+    /// <param name="basePath">The server's base path - the host's HttpTransportOptions.BasePath, <c>/hubs</c> unless it was changed</param>
+    public static HubHostInfo FromUrl(Uri serverUrl, string basePath = UniversalHubProtocol.DefaultBasePath)
+    {
+        ArgumentNullException.ThrowIfNull(serverUrl);
+        if (!serverUrl.IsAbsoluteUri || (serverUrl.Scheme != Uri.UriSchemeHttp && serverUrl.Scheme != Uri.UriSchemeHttps))
+            throw new ArgumentException("An absolute http or https address is required", nameof(serverUrl));
+
+        var root = serverUrl.GetLeftPart(UriPartial.Authority);
+        var baseAddress = new Uri(root + UniversalHubProtocol.NormalizeBasePath(basePath));
+        var server = new DiscoveredHttpServer(serverUrl.Host, baseAddress, [], serverUrl.Port, new Dictionary<string, string>());
+        return new HubHostInfo(root, serverUrl.Host, null).With(typeof(HttpClientTransport), new HttpHubEndpoint(server), []);
+    }
+}
+
+
+/// <summary>
+/// A host seen over mDNS, or given by address (<see cref="HttpHubHost.FromUrl"/>)
 /// </summary>
 public sealed record HttpHubEndpoint(DiscoveredHttpServer Server) : HubEndpoint;
 
@@ -144,7 +169,7 @@ public sealed class HttpClientTransport : IHubClientTransport
 
     async Task<DiscoveredHttpServer?> Rediscover(string hubName, DiscoveredHttpServer stale, CancellationToken cancellationToken)
     {
-        // an address the app was given (HubHostInfo.FromUrl) has no advertisement to look up again
+        // an address the app was given (HttpHubHost.FromUrl) has no advertisement to look up again
         if (stale.TxtRecords.Count == 0 || this.options.RediscoverTimeout <= TimeSpan.Zero || this.locator.Value is not { } wifi)
             return null;
 

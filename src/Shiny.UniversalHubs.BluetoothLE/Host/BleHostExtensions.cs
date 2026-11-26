@@ -90,6 +90,7 @@ public static class BleHostExtensions
         foreach (var c in server.GetConfigurations<BleHostTransport, BluetoothLETransportOptions>())
             c(options);
 
+        services.TryAddSingleton<LocalHubAdvertisement>();
         services.AddSingleton(options);
         services.TryAddSingleton(sp => new BleHostTransport(
             sp.GetRequiredService<IBleHostingManager>(),

@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using Shiny.BluetoothLE;
 using Shiny.UniversalHubs.Protocol;
 
 namespace Shiny.UniversalHubs;
