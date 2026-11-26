@@ -32,8 +32,8 @@ public static class HttpHubExtensions
         if (mdnsServiceType != null)
             UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
 
-        hub.Use(HubTransports.Http, new HttpHubSettings(mdnsServiceType, allowTunnel));
-        hub.Server.SetUpTransport(HubTransports.Http, AddHttpTransport);
+        hub.Use<HttpHostTransport>(new HttpHubSettings(mdnsServiceType, allowTunnel));
+        hub.Server.SetUpTransport<HttpHostTransport>(AddHttpTransport);
         return hub;
     }
 
@@ -45,8 +45,8 @@ public static class HttpHubExtensions
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(configure);
-        server.Configure(HubTransports.Http, configure);
-        server.SetUpTransport(HubTransports.Http, AddHttpTransport);
+        server.Configure<HttpHostTransport, HttpTransportOptions>(configure);
+        server.SetUpTransport<HttpHostTransport>(AddHttpTransport);
         return server;
     }
 
@@ -59,8 +59,8 @@ public static class HttpHubExtensions
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(configure);
-        server.Configure(HubTransports.Http, configure);
-        server.SetUpTransport(HubTransports.Http, AddHttpTransport);
+        server.Configure<HttpHostTransport, ShinyHttpServerBuilder>(configure);
+        server.SetUpTransport<HttpHostTransport>(AddHttpTransport);
         return server;
     }
 
@@ -68,7 +68,7 @@ public static class HttpHubExtensions
     static void AddHttpTransport(IServiceCollection services, UniversalServerBuilder server)
     {
         var options = new HttpTransportOptions();
-        foreach (var c in server.GetConfigurations<HttpTransportOptions>(HubTransports.Http))
+        foreach (var c in server.GetConfigurations<HttpHostTransport, HttpTransportOptions>())
             c(options);
 
         var serverExisted = services.Any(x => x.ServiceType == typeof(HttpServerOptions));
@@ -80,7 +80,7 @@ public static class HttpHubExtensions
                 http.Options.Address = IPAddress.Any;
                 http.Options.Port = 0;
             }
-            foreach (var c in server.GetConfigurations<ShinyHttpServerBuilder>(HubTransports.Http))
+            foreach (var c in server.GetConfigurations<HttpHostTransport, ShinyHttpServerBuilder>())
                 c(http);
 
             http.AddSwitchboard();
@@ -88,8 +88,16 @@ public static class HttpHubExtensions
             http.Services.AddSingleton(options);
             http.Services.TryAddSingleton<FileTokens>();
             http.Services.TryAddSingleton<MediaTokens>();
-            http.Services.TryAddSingleton<HttpHubTransport>();
-            http.Services.AddSingleton<IUniversalHubTransport>(sp => sp.GetRequiredService<HttpHubTransport>());
+            http.Services.TryAddSingleton(sp => new HttpHostTransport(
+                sp,
+                sp.GetRequiredService<HttpTransportOptions>(),
+                sp.GetRequiredService<UniversalServerOptions>(),
+                sp.GetRequiredService<FileTokens>(),
+                sp.GetRequiredService<MediaTokens>(),
+                sp.GetRequiredService<UniversalHubHost>(),
+                sp.GetService<ILogger<HttpHostTransport>>()
+            ));
+            http.Services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<HttpHostTransport>());
             http.Configure(app =>
             {
                 // before routing: a hub that isn't shared over a tunnel doesn't exist as far as the internet can tell
@@ -112,7 +120,7 @@ public static class HttpHubExtensions
             });
 
             var mapper = new HttpHubMapper(http, options);
-            foreach (var hub in server.Hubs.Where(x => x.Transports.HasFlag(HubTransports.Http)))
+            foreach (var hub in server.Hubs.Where(x => x.Transports.Contains(typeof(HttpHostTransport))))
                 hub.Accept(mapper);
 
             if (server.DynamicHubs != null)
@@ -143,9 +151,10 @@ public static class HttpHubExtensions
 
 
 /// <summary>
-/// Serves hubs over HTTP: each on its Switchboard, advertised over mDNS, with file and media routes beside them
+/// Serves hubs over HTTP: each on its Switchboard, advertised over mDNS, with file and media routes beside them. Added with
+/// <c>hub.UseHttp(...)</c>.
 /// </summary>
-internal sealed class HttpHubTransport : IUniversalHubTransport, IListeningTransport
+public sealed class HttpHostTransport : IHubTransport, IListeningTransport
 {
     readonly IServiceProvider services;
     readonly HttpTransportOptions options;
@@ -159,14 +168,14 @@ internal sealed class HttpHubTransport : IUniversalHubTransport, IListeningTrans
     bool startedServer;
 
 
-    public HttpHubTransport(
+    internal HttpHostTransport(
         IServiceProvider services,
         HttpTransportOptions options,
         UniversalServerOptions serverOptions,
         FileTokens fileTokens,
         MediaTokens mediaTokens,
         UniversalHubHost host,
-        ILogger<HttpHubTransport>? logger = null
+        ILogger<HttpHostTransport>? logger = null
     )
     {
         this.services = services;
@@ -185,7 +194,8 @@ internal sealed class HttpHubTransport : IUniversalHubTransport, IListeningTrans
     }
 
 
-    public HubTransports Transport => HubTransports.Http;
+    public string DisplayName => "HTTP";
+    public bool IsSupported => true;
 
     public bool AnyRunning
     {

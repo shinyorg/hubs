@@ -14,9 +14,14 @@ namespace Shiny.UniversalHubs;
 public interface IUniversalHubHost
 {
     /// <summary>
+    /// Every transport set up on this server, supported here or not (<see cref="IHubTransport.IsSupported"/>)
+    /// </summary>
+    IReadOnlyList<IHubTransport> Transports { get; }
+
+    /// <summary>
     /// The transports at least one hub is accepting clients on
     /// </summary>
-    HubTransports RunningTransports { get; }
+    IReadOnlyList<IHubTransport> RunningTransports { get; }
 
     /// <summary>
     /// The addresses the HTTP server listens on while any hub is hosted over HTTP
@@ -24,11 +29,16 @@ public interface IUniversalHubHost
     IReadOnlyList<string> ListenUrls { get; }
 
     /// <summary>
-    /// Starts every hub on the requested transports (each hub only on those it was set up with). A transport that can't
-    /// start (Bluetooth off, no network, not this platform) is skipped as long as another one starts - the result says
-    /// which did. Throws when none could.
+    /// Starts every hub on every transport it was set up with. A transport that can't start (Bluetooth off, no network,
+    /// not this platform) is skipped as long as another one starts - the result says which did. Throws when none could.
     /// </summary>
-    Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<IHubTransport>> Start(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Starts every hub on <paramref name="transports"/> only (each hub only on those it was set up with) - the types of
+    /// transports set up on this server. See <see cref="Start(CancellationToken)"/>.
+    /// </summary>
+    Task<IReadOnlyList<IHubTransport>> Start(IEnumerable<Type> transports, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops every hub on every transport. Connected clients are told why (<see cref="HubDisconnectReason.ServerShutdown"/>).
@@ -36,9 +46,20 @@ public interface IUniversalHubHost
     Task Stop(string? reason = null);
 
     /// <summary>
-    /// Starts only <typeparamref name="THub"/>, like <see cref="Start"/>
+    /// Stops every hub on <paramref name="transports"/> only; their clients on those transports are told why. A hub left
+    /// running on another transport keeps its other clients.
     /// </summary>
-    Task<HubTransports> StartHub<THub>(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default) where THub : class;
+    Task Stop(IEnumerable<Type> transports, string? reason = null);
+
+    /// <summary>
+    /// Starts only <typeparamref name="THub"/>, like <see cref="Start(CancellationToken)"/>
+    /// </summary>
+    Task<IReadOnlyList<IHubTransport>> StartHub<THub>(CancellationToken cancellationToken = default) where THub : class;
+
+    /// <summary>
+    /// Starts only <typeparamref name="THub"/> on <paramref name="transports"/> only
+    /// </summary>
+    Task<IReadOnlyList<IHubTransport>> StartHub<THub>(IEnumerable<Type> transports, CancellationToken cancellationToken = default) where THub : class;
 
     /// <summary>
     /// Stops only <typeparamref name="THub"/> on every transport; its clients are told why
@@ -46,9 +67,19 @@ public interface IUniversalHubHost
     Task StopHub<THub>(string? reason = null) where THub : class;
 
     /// <summary>
+    /// Stops only <typeparamref name="THub"/> on <paramref name="transports"/> only
+    /// </summary>
+    Task StopHub<THub>(IEnumerable<Type> transports, string? reason = null) where THub : class;
+
+    /// <summary>
     /// The transports <typeparamref name="THub"/> is accepting clients on
     /// </summary>
-    HubTransports GetRunningTransports<THub>() where THub : class;
+    IReadOnlyList<IHubTransport> GetRunningTransports<THub>() where THub : class;
+
+    /// <summary>
+    /// A hub started or stopped on a transport - <see cref="RunningTransports"/> may have changed
+    /// </summary>
+    event EventHandler? RunningChanged;
 
     /// <summary>
     /// Changes the host's name without stopping anything: sets <see cref="UniversalServerOptions.LocalName"/>, re-advertises
@@ -65,6 +96,52 @@ public interface IUniversalHubHost
     /// Progress of a file moving over L2CAP
     /// </summary>
     event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+}
+
+
+public static class UniversalHubHostExtensions
+{
+    /// <summary>
+    /// Starts every hub set up with <typeparamref name="TTransport"/> on it
+    /// </summary>
+    public static Task<IReadOnlyList<IHubTransport>> Start<TTransport>(this IUniversalHubHost host, CancellationToken cancellationToken = default)
+        where TTransport : IHubTransport
+        => host.Start([typeof(TTransport)], cancellationToken);
+
+    /// <summary>
+    /// Stops every hub on <typeparamref name="TTransport"/>
+    /// </summary>
+    public static Task Stop<TTransport>(this IUniversalHubHost host, string? reason = null) where TTransport : IHubTransport
+        => host.Stop([typeof(TTransport)], reason);
+
+    /// <summary>
+    /// Starts <typeparamref name="THub"/> on <typeparamref name="TTransport"/>
+    /// </summary>
+    public static Task<IReadOnlyList<IHubTransport>> StartHub<THub, TTransport>(this IUniversalHubHost host, CancellationToken cancellationToken = default)
+        where THub : class
+        where TTransport : IHubTransport
+        => host.StartHub<THub>([typeof(TTransport)], cancellationToken);
+
+    /// <summary>
+    /// Stops <typeparamref name="THub"/> on <typeparamref name="TTransport"/>
+    /// </summary>
+    public static Task StopHub<THub, TTransport>(this IUniversalHubHost host, string? reason = null)
+        where THub : class
+        where TTransport : IHubTransport
+        => host.StopHub<THub>([typeof(TTransport)], reason);
+
+    /// <summary>
+    /// Whether any hub is accepting clients on <typeparamref name="TTransport"/>
+    /// </summary>
+    public static bool IsRunning<TTransport>(this IUniversalHubHost host) where TTransport : IHubTransport
+        => host.RunningTransports.Any(x => x.GetType() == typeof(TTransport));
+
+    /// <summary>
+    /// The transport of type <typeparamref name="TTransport"/> (exactly - a transport's type is its identity), null when it
+    /// isn't set up on this server
+    /// </summary>
+    public static TTransport? GetTransport<TTransport>(this IUniversalHubHost host) where TTransport : class, IHubTransport
+        => (TTransport?)host.Transports.FirstOrDefault(x => x.GetType() == typeof(TTransport));
 }
 
 
@@ -133,17 +210,23 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     /// <summary>
     /// Every transport set up on this server
     /// </summary>
-    public IReadOnlyList<IUniversalHubTransport> Transports => this.services.GetServices<IUniversalHubTransport>().ToList();
+    public IReadOnlyList<IHubTransport> Transports => this.transports ??= this.services.GetServices<IHubTransport>().ToList();
+    IReadOnlyList<IHubTransport>? transports;
 
-    public HubTransports RunningTransports => this.Transports.Aggregate(
-        HubTransports.None,
-        (all, transport) => this.Hubs.Any(transport.IsRunning) ? all | transport.Transport : all
-    );
+    public IReadOnlyList<IHubTransport> RunningTransports
+    {
+        get
+        {
+            var hubs = this.Hubs;
+            return this.Transports.Where(x => hubs.Any(x.IsRunning)).ToList();
+        }
+    }
 
     public IReadOnlyList<string> ListenUrls => this.Transports.OfType<IListeningTransport>().FirstOrDefault()?.ListenUrls ?? [];
 
     public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
     public event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+    public event EventHandler? RunningChanged;
 
     /// <summary>
     /// A client left its hub, on any transport - transports drop what they issued it (file and media tokens)
@@ -159,7 +242,13 @@ internal sealed class UniversalHubHost : IUniversalHubHost
         => key == null ? null : this.Hubs.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
 
 
-    public Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<IHubTransport>> Start(CancellationToken cancellationToken = default)
+        => this.StartAll(null, cancellationToken);
+
+    public Task<IReadOnlyList<IHubTransport>> Start(IEnumerable<Type> transports, CancellationToken cancellationToken = default)
+        => this.StartAll(this.Resolve(transports), cancellationToken);
+
+    Task<IReadOnlyList<IHubTransport>> StartAll(IReadOnlyList<IHubTransport>? transports, CancellationToken cancellationToken)
     {
         var hubs = this.Hubs;
         if (hubs.Count == 0)
@@ -168,64 +257,93 @@ internal sealed class UniversalHubHost : IUniversalHubHost
         return this.StartHubs(hubs, transports, cancellationToken);
     }
 
-    public Task Stop(string? reason = null) => this.StopHubs(this.Hubs, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason));
+    public Task Stop(string? reason = null)
+        => this.StopHubs(this.Hubs, null, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason));
 
-    public Task<HubTransports> StartHub<THub>(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default) where THub : class
-        => this.StartHubs([this.Get(typeof(THub))], transports, cancellationToken);
+    public Task Stop(IEnumerable<Type> transports, string? reason = null)
+        => this.StopHubs(this.Hubs, this.Resolve(transports), new HubDisconnect(HubDisconnectReason.ServerShutdown, reason));
+
+    public Task<IReadOnlyList<IHubTransport>> StartHub<THub>(CancellationToken cancellationToken = default) where THub : class
+        => this.StartHubs([this.Get(typeof(THub))], null, cancellationToken);
+
+    public Task<IReadOnlyList<IHubTransport>> StartHub<THub>(IEnumerable<Type> transports, CancellationToken cancellationToken = default) where THub : class
+        => this.StartHubs([this.Get(typeof(THub))], this.Resolve(transports), cancellationToken);
 
     public Task StopHub<THub>(string? reason = null) where THub : class
-        => this.StopHubs([this.Get(typeof(THub))], new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
+        => this.StopHubs([this.Get(typeof(THub))], null, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
-    public HubTransports GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Get(typeof(THub)));
+    public Task StopHub<THub>(IEnumerable<Type> transports, string? reason = null) where THub : class
+        => this.StopHubs([this.Get(typeof(THub))], this.Resolve(transports), new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
-
-    public HubTransports RunningOn(IHubBinding hub) => this.Transports.Aggregate(
-        HubTransports.None,
-        (all, transport) => transport.IsRunning(hub) ? all | transport.Transport : all
-    );
+    public IReadOnlyList<IHubTransport> GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Get(typeof(THub)));
 
 
-    public async Task<HubTransports> StartHubs(IReadOnlyList<HubEntry> hubs, HubTransports transports, CancellationToken cancellationToken)
+    public IReadOnlyList<IHubTransport> RunningOn(IHubBinding hub) => this.Transports.Where(x => x.IsRunning(hub)).ToList();
+
+
+    /// <summary>
+    /// The transports set up on this server of the requested types - asking for one that isn't is a mistake
+    /// </summary>
+    public IReadOnlyList<IHubTransport> Resolve(IEnumerable<Type> types)
     {
-        if (transports == HubTransports.None)
-            throw new ArgumentException("Pick at least one transport", nameof(transports));
+        ArgumentNullException.ThrowIfNull(types);
+        var wanted = types.Distinct().ToList();
+        if (wanted.Count == 0)
+            throw new ArgumentException("Pick at least one transport", nameof(types));
 
+        var missing = wanted.FirstOrDefault(t => !this.Transports.Any(x => x.GetType() == t));
+        if (missing != null)
+            throw new ArgumentException($"{missing.Name} is not a transport set up on this server", nameof(types));
+
+        return this.Transports.Where(x => wanted.Contains(x.GetType())).ToList();
+    }
+
+
+    /// <param name="transports">The transports to start on - null for every one</param>
+    public async Task<IReadOnlyList<IHubTransport>> StartHubs(IReadOnlyList<HubEntry> hubs, IReadOnlyList<IHubTransport>? transports, CancellationToken cancellationToken)
+    {
+        var asked = transports ?? this.Transports;
         await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var errors = new List<Exception>();
-            var wanted = hubs.Aggregate(HubTransports.None, (all, hub) => all | hub.Transports) & transports;
-
-            var toStart = this.Transports
-                .Where(x => wanted.HasFlag(x.Transport))
-                .Select(x => (Transport: x, Hubs: hubs.Where(h => h.Transports.HasFlag(x.Transport) && !x.IsRunning(h)).ToList<IHubBinding>()))
+            var toStart = asked
+                .Select(x => (Transport: x, Hubs: hubs.Where(h => h.UsesTransport(x) && !x.IsRunning(h)).ToList<IHubBinding>()))
                 .Where(x => x.Hubs.Count > 0);
 
             foreach (var (transport, stopped) in toStart)
             {
-                try
+                if (transport.IsSupported)
                 {
-                    await transport.Start(stopped, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await transport.Start(stopped, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // a transport this platform doesn't have is expected, not a problem
+                        if (ex is PlatformNotSupportedException)
+                            this.logger?.LogDebug("{Transport} hosting is not available here: {Message}", transport.DisplayName, ex.Message);
+                        else
+                            this.logger?.LogWarning(ex, "{Transport} hosting did not start", transport.DisplayName);
+                        errors.Add(ex);
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                else
                 {
-                    // a transport this platform doesn't have (Multipeer on Android) is expected, not a problem
-                    if (ex is PlatformNotSupportedException)
-                        this.logger?.LogDebug("{Transport} hosting is not available here: {Message}", transport.Transport, ex.Message);
-                    else
-                        this.logger?.LogWarning(ex, "{Transport} hosting did not start", transport.Transport);
-                    errors.Add(ex);
+                    this.logger?.LogDebug("{Transport} hosting is not available here", transport.DisplayName);
+                    errors.Add(new PlatformNotSupportedException($"{transport.DisplayName} is not available on this device"));
                 }
             }
             this.UpdateRunning(hubs);
 
-            var running = hubs.Aggregate(HubTransports.None, (all, hub) => all | this.RunningOn(hub)) & transports;
-            if (running == HubTransports.None)
+            var running = asked.Where(x => hubs.Any(x.IsRunning)).ToList();
+            if (running.Count == 0)
             {
                 throw errors.Count switch
                 {
                     // eg. Multipeer alone, when no hub was set up with it
-                    0 => new InvalidOperationException($"None of {transports} is set up for these hubs"),
+                    0 => new InvalidOperationException($"None of {String.Join(", ", asked.Select(x => x.DisplayName))} is set up for these hubs"),
                     1 => errors[0],
                     _ => new AggregateException("No transport could start", errors)
                 };
@@ -235,16 +353,18 @@ internal sealed class UniversalHubHost : IUniversalHubHost
         finally
         {
             this.gate.Release();
+            this.RunningChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
 
-    public async Task StopHubs(IReadOnlyList<HubEntry> hubs, HubDisconnect disconnect)
+    /// <param name="transports">The transports to stop on - null for every one</param>
+    public async Task StopHubs(IReadOnlyList<HubEntry> hubs, IReadOnlyList<IHubTransport>? transports, HubDisconnect disconnect)
     {
         await this.gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var toStop = this.Transports
+            var toStop = (transports ?? this.Transports)
                 .Select(x => (Transport: x, Hubs: hubs.Where(x.IsRunning).ToList<IHubBinding>()))
                 .Where(x => x.Hubs.Count > 0);
 
@@ -256,7 +376,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
                 }
                 catch (Exception ex)
                 {
-                    this.logger?.LogWarning(ex, "{Transport} hosting did not stop cleanly", transport.Transport);
+                    this.logger?.LogWarning(ex, "{Transport} hosting did not stop cleanly", transport.DisplayName);
                 }
             }
             this.UpdateRunning(hubs);
@@ -268,6 +388,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
         finally
         {
             this.gate.Release();
+            this.RunningChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -276,7 +397,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     void UpdateRunning(IEnumerable<HubEntry> hubs)
     {
         foreach (var hub in hubs)
-            hub.Runtime.IsRunning = this.RunningOn(hub) != HubTransports.None;
+            hub.Runtime.IsRunning = this.Transports.Any(x => x.IsRunning(hub));
     }
 
 
@@ -297,7 +418,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    this.logger?.LogWarning(ex, "{Transport} could not re-advertise under the new name", transport.Transport);
+                    this.logger?.LogWarning(ex, "{Transport} could not re-advertise under the new name", transport.DisplayName);
                 }
             }
 
@@ -317,7 +438,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     /// <summary>
     /// Adds a hub while the app runs. It doesn't start until asked.
     /// </summary>
-    public HubEntry AddDynamic(string key, string name, BleHubOptions options, IBleHubHandler handler, HubTransports transports, IReadOnlyDictionary<Type, object> settings)
+    public HubEntry AddDynamic(string key, string name, BleHubOptions options, IBleHubHandler handler, IReadOnlySet<Type> transports, IReadOnlyDictionary<Type, object> settings)
     {
         lock (this.dynamicGate)
         {
@@ -344,7 +465,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     public async Task RemoveDynamic(HubEntry entry, string? reason)
     {
         var disconnect = new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub removed");
-        await this.StopHubs([entry], disconnect).ConfigureAwait(false);
+        await this.StopHubs([entry], null, disconnect).ConfigureAwait(false);
         await entry.Runtime.DisconnectAll(disconnect).ConfigureAwait(false);
         this.dynamic.TryRemove(new KeyValuePair<string, HubEntry>(entry.Key, entry));
         this.logger?.LogInformation("Removed hub {Hub}", entry.Name);

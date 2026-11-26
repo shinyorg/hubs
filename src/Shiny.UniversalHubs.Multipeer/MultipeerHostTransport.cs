@@ -14,14 +14,13 @@ namespace Shiny.UniversalHubs;
 /// limit of an MCSession never applies and clients never mesh with each other. Each session reaches its hub through the
 /// blehubs transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with BLE and HTTP clients.
 /// </summary>
-internal sealed class MultipeerHostTransport(
-    IServiceProvider services,
-    IMultipeerLink link,
-    MultipeerHostOptions options,
-    UniversalServerOptions serverOptions,
-    ILogger<MultipeerHostTransport>? logger = null
-) : IUniversalHubTransport, IPeerHostTransport
+public sealed class MultipeerHostTransport : IHubTransport, IPeerHostTransport
 {
+    readonly IServiceProvider services;
+    readonly IMultipeerLink link;
+    readonly MultipeerHostOptions options;
+    readonly UniversalServerOptions serverOptions;
+    readonly ILogger<MultipeerHostTransport>? logger;
     readonly object gate = new();
     readonly List<IHubBinding> running = new();
     // keyed by the session itself: a session that resumes a held connection takes that connection's id
@@ -29,17 +28,34 @@ internal sealed class MultipeerHostTransport(
     IDisposable? advertisement;
 
 
-    public HubTransports Transport => HubTransports.Multipeer;
-    public string ConnectionPrefix => HubConnection.MultipeerPrefix;
+    internal MultipeerHostTransport(
+        IServiceProvider services,
+        IMultipeerLink link,
+        MultipeerHostOptions options,
+        UniversalServerOptions serverOptions,
+        ILogger<MultipeerHostTransport>? logger = null
+    )
+    {
+        this.services = services;
+        this.link = link;
+        this.options = options;
+        this.serverOptions = serverOptions;
+        this.logger = logger;
+    }
 
-    public UniversalHubHost Host => services.GetRequiredService<UniversalHubHost>();
-    public UniversalServerOptions ServerOptions => serverOptions;
-    public ILogger? Logger => logger;
+
+    public string DisplayName => "Multipeer";
+    public bool IsSupported => link.IsSupported;
+    string IPeerHostTransport.ConnectionPrefix => HubConnection.MultipeerPrefix;
+
+    UniversalHubHost IPeerHostTransport.Host => services.GetRequiredService<UniversalHubHost>();
+    UniversalServerOptions IPeerHostTransport.ServerOptions => serverOptions;
+    ILogger? IPeerHostTransport.Logger => logger;
 
     /// <summary>
     /// The Multipeer display name hosts advertise as: the configured one, else the BLE local name
     /// </summary>
-    internal string DisplayName => MultipeerNames.Truncate(options.DisplayName ?? serverOptions.LocalName ?? "Hub host");
+    internal string AdvertisedName => MultipeerNames.Truncate(options.DisplayName ?? serverOptions.LocalName ?? "Hub host");
 
 
     public bool IsRunning(IHubBinding hub)
@@ -69,7 +85,7 @@ internal sealed class MultipeerHostTransport(
                 throw;
             }
         }
-        logger?.LogInformation("Multipeer hosting {Hubs} as {Name} ({ServiceType})", String.Join(", ", hubs.Select(x => x.Name)), this.DisplayName, options.ServiceType);
+        logger?.LogInformation("Multipeer hosting {Hubs} as {Name} ({ServiceType})", String.Join(", ", hubs.Select(x => x.Name)), this.AdvertisedName, options.ServiceType);
         return Task.CompletedTask;
     }
 
@@ -104,18 +120,18 @@ internal sealed class MultipeerHostTransport(
     /// <summary>
     /// The running hub a handshake asks for, by characteristic UUID
     /// </summary>
-    public IHubBinding? FindRunning(string? key)
+    IHubBinding? IPeerHostTransport.FindRunning(string? key)
     {
         lock (this.gate)
             return this.running.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
     }
 
 
-    public object CreatePeer(IPeerConnection connection) => new MultipeerPeer(connection.RemoteName);
+    object IPeerHostTransport.CreatePeer(IPeerConnection connection) => new MultipeerPeer(connection.RemoteName);
 
-    public void Remove(PeerHostSession session) => this.sessions.TryRemove(session, out _);
+    void IPeerHostTransport.Remove(PeerHostSession session) => this.sessions.TryRemove(session, out _);
 
-    public IEnumerable<PeerHostSession> Sessions => this.sessions.Keys;
+    IEnumerable<PeerHostSession> IPeerHostTransport.Sessions => this.sessions.Keys;
 
 
     // under the gate
@@ -132,10 +148,10 @@ internal sealed class MultipeerHostTransport(
         {
             [MultipeerProtocol.InfoProtocol] = PeerProtocol.Version.ToString(),
             [MultipeerProtocol.InfoHostId] = serverOptions.HostId,
-            [MultipeerProtocol.InfoName] = serverOptions.LocalName ?? this.DisplayName,
+            [MultipeerProtocol.InfoName] = serverOptions.LocalName ?? this.AdvertisedName,
             [MultipeerProtocol.InfoHubs] = hubs
         };
-        this.advertisement = link.Advertise(options.ServiceType, this.DisplayName, info, this.Accepted);
+        this.advertisement = link.Advertise(options.ServiceType, this.AdvertisedName, info, this.Accepted);
     }
 
 

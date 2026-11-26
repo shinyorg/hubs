@@ -73,13 +73,14 @@ internal static class HubBoardRegistration
 internal abstract class HttpHub
 {
     readonly UniversalHubHost host;
-    readonly HttpHubTransport transport;
+    readonly HttpHostTransport transport;
+    protected HttpHostTransport Transport => this.transport;
     readonly FileTokens fileTokens;
     readonly MediaTokens mediaTokens;
     readonly ILogger logger;
 
 
-    protected HttpHub(UniversalHubHost host, HttpHubTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILogger logger)
+    protected HttpHub(UniversalHubHost host, HttpHostTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILogger logger)
     {
         this.host = host;
         this.transport = transport;
@@ -280,7 +281,7 @@ internal sealed class HttpHub<THub> : HttpHub where THub : class
     readonly Lazy<IOperator<HubBoard<THub>>> board;
 
 
-    public HttpHub(IServiceProvider services, UniversalHubHost host, HttpHubTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILoggerFactory? loggerFactory = null)
+    public HttpHub(IServiceProvider services, UniversalHubHost host, HttpHostTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILoggerFactory? loggerFactory = null)
         : base(host, transport, fileTokens, mediaTokens, (ILogger?)loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{typeof(THub).Name}") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
     {
         this.Binding = host.Get(typeof(THub));
@@ -292,15 +293,17 @@ internal sealed class HttpHub<THub> : HttpHub where THub : class
 
     public override Task HangUpAll(HubDisconnect disconnect) => this.board.Value.Lines.HangUpAllAsync(HubJson.HangUpMessage(disconnect), allowReconnect: false);
 
-    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Value.Clients, this.board.Value.Lines, lineId);
+    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Value.Clients, this.board.Value.Lines, lineId, this.Transport);
 }
 
 
 /// <summary>
 /// How the hub reaches one Wi-Fi client: pushes and hang-ups go through the Switchboard's operator
 /// </summary>
-internal sealed class LineChannel(ISwitchboardCallerClients clients, ILineManager lines, string lineId) : IBleHubPeerChannel
+internal sealed class LineChannel(ISwitchboardCallerClients clients, ILineManager lines, string lineId, IHubTransport transport) : IBleHubPeerChannel
 {
+    public IHubTransport Transport => transport;
+
     public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken)
         => clients.Line(lineId).SendCoreAsync(UniversalHubProtocol.PushMethod, [eventName, HubJson.ArgumentsToJson(arguments)], cancellationToken);
 

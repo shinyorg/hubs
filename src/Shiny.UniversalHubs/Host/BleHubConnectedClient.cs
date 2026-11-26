@@ -41,6 +41,11 @@ public sealed class BleHubConnectedClient
     public DateTimeOffset ConnectedAt { get; } = DateTimeOffset.UtcNow;
 
     /// <summary>
+    /// How the hub reaches the client right now - set by the runtime, changes when the client resumes on a new link
+    /// </summary>
+    internal IBleHubPeerChannel? Channel { get; set; }
+
+    /// <summary>
     /// Your own per connection state
     /// </summary>
     public ConcurrentDictionary<string, object> Items { get; } = new();

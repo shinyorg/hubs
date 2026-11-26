@@ -77,10 +77,10 @@ internal sealed class HubContext<THub>(Func<HubRuntime> getRuntime, UniversalHub
     public bool IsRunning => this.Runtime.IsRunning;
 
     public Task Start(CancellationToken cancellationToken = default)
-        => this.Host.StartHubs([this.Host.Get(typeof(THub))], HubTransports.All, cancellationToken);
+        => this.Host.StartHubs([this.Host.Get(typeof(THub))], null, cancellationToken);
 
     public Task Stop(string? reason = null)
-        => this.Host.StopHubs([this.Host.Get(typeof(THub))], new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
+        => this.Host.StopHubs([this.Host.Get(typeof(THub))], null, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
     public IGroupManager Groups => this.Runtime;
     public IBleHubTransportEndpoint TransportEndpoint => this.Runtime;

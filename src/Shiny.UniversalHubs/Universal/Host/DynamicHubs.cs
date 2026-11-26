@@ -146,12 +146,18 @@ public interface IDynamicHub
     /// <summary>
     /// The transports this hub is accepting clients on
     /// </summary>
-    HubTransports RunningTransports { get; }
+    IReadOnlyList<IHubTransport> RunningTransports { get; }
 
     /// <summary>
-    /// Starts this hub, like IUniversalHubHost.StartHub - a transport that can't start is skipped as long as another does
+    /// Starts this hub on every transport the server has, like IUniversalHubHost.StartHub - a transport that can't start is
+    /// skipped as long as another does
     /// </summary>
-    Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<IHubTransport>> Start(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Starts this hub on <paramref name="transports"/> only - the types of transports set up on the server
+    /// </summary>
+    Task<IReadOnlyList<IHubTransport>> Start(IEnumerable<Type> transports, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stops this hub on every transport; its clients are told why
@@ -271,7 +277,7 @@ internal sealed class DynamicHubRegistry(
                 throw new InvalidOperationException($"Characteristic {characteristic} is already used by another hub - each hub needs its own");
 
             // every transport the server has
-            var transports = host.Transports.Aggregate(HubTransports.None, (all, x) => all | x.Transport);
+            var transports = host.Transports.Select(x => x.GetType()).ToHashSet();
             var bleService = options.BleServiceUuid
                 ?? host.Hubs.Select(x => x.GetSettings<BleHubSettings>()?.ServiceUuid).FirstOrDefault(x => x != null)
                 ?? BleHubProtocolOptions.DefaultServiceUuid;
@@ -280,9 +286,9 @@ internal sealed class DynamicHubRegistry(
                 [typeof(BleHubSettings)] = new BleHubSettings(BleUuid.Normalize(bleService, nameof(options.BleServiceUuid)), characteristic),
                 [typeof(HttpHubSettings)] = new HttpHubSettings(definition.ServiceType, definition.AllowTunnel)
             };
-            if (!transports.HasFlag(HubTransports.Ble))
+            if (!transports.Contains(typeof(BleHostTransport)))
                 settings.Remove(typeof(BleHubSettings));
-            if (!transports.HasFlag(HubTransports.Http))
+            if (!transports.Contains(typeof(HttpHostTransport)))
                 settings.Remove(typeof(HttpHubSettings));
 
             // the characteristic stays the hub's key for now - it is how dynamic clients ask for it
@@ -327,7 +333,7 @@ internal sealed class DynamicHubRegistry(
     DynamicHttpHub GetHttp(HubEntry entry) => this.httpHubs.GetOrAdd(entry, e => new DynamicHttpHub(
         e,
         host,
-        services.GetRequiredService<HttpHubTransport>(),
+        services.GetRequiredService<HttpHostTransport>(),
         services.GetRequiredService<FileTokens>(),
         services.GetRequiredService<MediaTokens>(),
         services.GetRequiredService<IOperator<DynamicHubBoard>>(),
@@ -459,13 +465,16 @@ internal sealed class DynamicHub(DynamicHubDefinition definition, HubEntry entry
     public DynamicHubDefinition Definition => definition;
     public HubEntry Entry => entry;
 
-    public HubTransports RunningTransports => host.RunningOn(entry);
+    public IReadOnlyList<IHubTransport> RunningTransports => host.RunningOn(entry);
 
-    public Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default)
-        => host.StartHubs([entry], transports, cancellationToken);
+    public Task<IReadOnlyList<IHubTransport>> Start(CancellationToken cancellationToken = default)
+        => host.StartHubs([entry], null, cancellationToken);
+
+    public Task<IReadOnlyList<IHubTransport>> Start(IEnumerable<Type> transports, CancellationToken cancellationToken = default)
+        => host.StartHubs([entry], host.Resolve(transports), cancellationToken);
 
     public Task Stop(string? reason = null)
-        => host.StopHubs([entry], new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
+        => host.StopHubs([entry], null, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
     public IReadOnlyList<HubConnection> Connections => entry.Runtime.Clients.Select(HubConnection.From).ToList();
     public IGroupManager Groups => entry.Runtime;
@@ -503,7 +512,7 @@ internal sealed class DynamicHttpHub : HttpHub
     public DynamicHttpHub(
         HubEntry entry,
         UniversalHubHost host,
-        HttpHubTransport transport,
+        HttpHostTransport transport,
         FileTokens fileTokens,
         MediaTokens mediaTokens,
         IOperator<DynamicHubBoard> board,
@@ -514,7 +523,7 @@ internal sealed class DynamicHttpHub : HttpHub
         this.board = board;
         entry.Runtime.ClientDisconnected += (_, e) =>
         {
-            if (HubConnection.GetTransport(e.Client.Id) == HubTransports.Http)
+            if (e.Client.Id.StartsWith(HubConnection.HttpPrefix, StringComparison.Ordinal))
                 this.lines.TryRemove(e.Client.Id[HubConnection.HttpPrefix.Length..], out byte _);
         };
     }
@@ -532,5 +541,5 @@ internal sealed class DynamicHttpHub : HttpHub
         return Task.WhenAll(ids.Select(x => this.board.Lines.HangUpAsync(x, message, allowReconnect: false)));
     }
 
-    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Clients, this.board.Lines, lineId);
+    protected override IBleHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Clients, this.board.Lines, lineId, this.Transport);
 }

@@ -11,9 +11,8 @@ namespace Shiny.UniversalHubs;
 /// What a peer-link session needs from the add-on transport that accepted it (Shiny.UniversalHubs.Multipeer,
 /// Shiny.UniversalHubs.Nearby). Everything past advertising is the same for every peer-to-peer radio.
 /// </summary>
-internal interface IPeerHostTransport
+internal interface IPeerHostTransport : IHubTransport
 {
-    HubTransports Transport { get; }
 
     /// <summary>
     /// Prefixed to the session id to make the connection id: <c>mc:</c>, <c>nb:</c>
@@ -180,7 +179,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         else
             PeerLinkPeers.Remove(this.ConnectionId);
         transport.Remove(this);
-        this.Logger?.LogDebug("{Transport} session {Id} closed", transport.Transport, this.ConnectionId);
+        this.Logger?.LogDebug("{Transport} session {Id} closed", transport.DisplayName, this.ConnectionId);
     }
 
 
@@ -188,6 +187,8 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
 
     // ---- to the client (IBleHubPeerChannel) ----
+
+    public IHubTransport Transport => transport;
 
     public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken)
     {

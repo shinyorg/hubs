@@ -95,7 +95,7 @@ public class BleHubHostTests : IAsyncLifetime
         this.Build();
         await this.host.Start();
 
-        Assert.True((this.host.RunningTransports != HubTransports.None));
+        Assert.True(this.host.RunningTransports.Count > 0);
         Assert.True(this.testHub.IsRunning);
         Assert.True(this.secondHub.IsRunning);
         Assert.Contains($"add-service:{ServiceA}:2", this.hosting.Log);
@@ -137,7 +137,7 @@ public class BleHubHostTests : IAsyncLifetime
 
         Assert.True(this.testHub.IsRunning);
         Assert.False(this.secondHub.IsRunning);
-        Assert.True((this.host.RunningTransports != HubTransports.None));
+        Assert.True(this.host.RunningTransports.Count > 0);
 
         // the shared service holds both characteristics, but only the running hub accepts clients
         await this.Connect<ITestHub>(TestChar, "c1");
@@ -178,7 +178,7 @@ public class BleHubHostTests : IAsyncLifetime
         await this.testHub.Stop();
         await this.secondHub.Stop();
 
-        Assert.False((this.host.RunningTransports != HubTransports.None));
+        Assert.False(this.host.RunningTransports.Count > 0);
         Assert.False(this.hosting.HasService(ServiceA));
         Assert.False(this.hosting.IsAdvertising);
     }

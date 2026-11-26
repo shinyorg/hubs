@@ -942,7 +942,17 @@ internal sealed class HostPeer(string id)
     }
     public SemaphoreSlim SendLock { get; } = new(1, 1);
     public SemaphoreSlim RenameLock { get; } = new(1, 1);
-    public BleHubConnectedClient? Client { get; set; }
+    public BleHubConnectedClient? Client
+    {
+        get => this.client;
+        set
+        {
+            this.client = value;
+            if (value != null)
+                value.Channel = this.channel;
+        }
+    }
+    BleHubConnectedClient? client;
 
     IBleHubMediaChannel? media;
     public IBleHubMediaChannel? Media => Volatile.Read(ref this.media);
@@ -958,7 +968,18 @@ internal sealed class HostPeer(string id)
     /// <summary>
     /// How the hub reaches the client - set by the transport it is connected through
     /// </summary>
-    public IBleHubPeerChannel? Channel { get; set; }
+    public IBleHubPeerChannel? Channel
+    {
+        get => this.channel;
+        set
+        {
+            this.channel = value;
+            // a client that resumes on another transport's channel reports that transport from then on
+            if (this.client != null && value != null)
+                this.client.Channel = value;
+        }
+    }
+    IBleHubPeerChannel? channel;
     public CancellationToken Aborted => this.aborted.Token;
 
 

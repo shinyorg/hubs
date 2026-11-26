@@ -5,12 +5,15 @@ using Shiny.Net.HttpServer.Switchboard;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A client connected to a hub, over either transport
+/// A client connected to a hub, over any transport
 /// </summary>
-/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over Wi-Fi, <c>mc:{id}</c> over Multipeer, <c>nb:{id}</c> over Nearby</param>
-/// <param name="Transport">How the client is connected - <see cref="HubTransports.Ble"/>, <see cref="HubTransports.Http"/>, <see cref="HubTransports.Multipeer"/> or <see cref="HubTransports.Nearby"/></param>
+/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over HTTP, <c>mc:{id}</c> over Multipeer, <c>nb:{id}</c> over Nearby</param>
+/// <param name="Transport">
+/// The transport the client is connected through right now (<c>connection.Transport is BleHostTransport</c>) - null for a
+/// client connected through a channel outside the universal host
+/// </param>
 /// <param name="Client">The client's handshake details and per connection state</param>
-public sealed record HubConnection(string Id, HubTransports Transport, BleHubConnectedClient Client)
+public sealed record HubConnection(string Id, IHubTransport? Transport, BleHubConnectedClient Client)
 {
     /// <summary>
     /// Your own state for this connection, kept for as long as it is connected - the same bag on every transport
@@ -20,15 +23,15 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     public IDictionary<string, object> Properties => this.Client.Items;
 
     /// <summary>
-    /// The BLE central the client is connected through - null over HTTP
+    /// The BLE central the client is connected through - null on the other transports
     /// </summary>
     public Shiny.BluetoothLE.Hosting.IPeripheral? Ble => this.Client.Peripheral;
 
     /// <summary>
     /// The Switchboard line the client is connected through, with the request being handled right now
     /// (<see cref="CallerContext.HttpContext"/>: the connect request in OnConnectedAsync, the call's request in a hub
-    /// method), its User, line id and the line's own Items. Null over BLE, and in OnDisconnectedAsync - the line's
-    /// requests are over by then.
+    /// method), its User, line id and the line's own Items. Null on the other transports, and in OnDisconnectedAsync - the
+    /// line's requests are over by then.
     /// </summary>
     public CallerContext? Http { get; init; }
 
@@ -43,7 +46,7 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     public NearbyPeer? Nearby { get; init; }
 
     /// <summary>
-    /// Prefixed to the Switchboard line id to make a Wi-Fi connection id
+    /// Prefixed to the Switchboard line id to make an HTTP connection id
     /// </summary>
     internal const string HttpPrefix = "sb:";
 
@@ -57,33 +60,18 @@ public sealed record HubConnection(string Id, HubTransports Transport, BleHubCon
     /// </summary>
     internal const string NearbyPrefix = "nb:";
 
-    /// <summary>
-    /// Which transport a connection id belongs to. Wi-Fi ids are <c>sb:{lineId}</c>, Multipeer ids <c>mc:{id}</c>, Nearby
-    /// ids <c>nb:{id}</c>; anything else is a BLE peripheral.
-    /// </summary>
-    public static HubTransports GetTransport(string connectionId)
-    {
-        if (connectionId.StartsWith(HttpPrefix, StringComparison.Ordinal))
-            return HubTransports.Http;
-
-        if (connectionId.StartsWith(MultipeerPrefix, StringComparison.Ordinal))
-            return HubTransports.Multipeer;
-
-        return connectionId.StartsWith(NearbyPrefix, StringComparison.Ordinal) ? HubTransports.Nearby : HubTransports.Ble;
-    }
-
     public static HubConnection From(BleHubConnectedClient client)
     {
-        var transport = GetTransport(client.Id);
+        var transport = client.Channel?.Transport;
         return new(client.Id, transport, client)
         {
-            Http = transport == HubTransports.Http ? HttpCall.Current : null,
-            Multipeer = transport == HubTransports.Multipeer ? PeerLinkPeers.Find(client.Id) as MultipeerPeer : null,
-            Nearby = transport == HubTransports.Nearby ? PeerLinkPeers.Find(client.Id) as NearbyPeer : null
+            Http = transport is HttpHostTransport ? HttpCall.Current : null,
+            Multipeer = transport is IPeerHostTransport ? PeerLinkPeers.Find(client.Id) as MultipeerPeer : null,
+            Nearby = transport is IPeerHostTransport ? PeerLinkPeers.Find(client.Id) as NearbyPeer : null
         };
     }
 
-    public override string ToString() => $"{this.Client.Name ?? "(unnamed)"} [{this.Id}] over {this.Transport}";
+    public override string ToString() => $"{this.Client.Name ?? "(unnamed)"} [{this.Id}] over {this.Transport?.DisplayName ?? "an external channel"}";
 }
 
 

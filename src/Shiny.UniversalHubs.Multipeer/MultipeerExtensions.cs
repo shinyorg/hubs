@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -10,7 +11,7 @@ public static class MultipeerExtensions
     /// <summary>
     /// Also serves the universal server's hubs over Apple's MultipeerConnectivity, advertised under
     /// <paramref name="serviceType"/>. Apple devices then reach the host with no shared network at all, at Wi-Fi speed.
-    /// <c>Start(HubTransports.All)</c> includes it; on platforms without MultipeerConnectivity it is skipped.
+    /// <c>Start()</c> includes it; on platforms without MultipeerConnectivity it is skipped.
     /// <code>
     /// services.AddUniversalServer(server => server
     ///     .Multipeer("unigame-mc")
@@ -34,14 +35,21 @@ public static class MultipeerExtensions
         var options = new MultipeerHostOptions(serviceType);
         configure?.Invoke(options);
 
-        if (server.TransportSetups.ContainsKey(HubTransports.Multipeer))
+        if (server.IsSetUp<MultipeerHostTransport>())
             throw new InvalidOperationException("Multipeer can only be set up once per universal server");
 
-        server.SetUpTransport(HubTransports.Multipeer, (services, _) =>
+        server.SetUpTransport<MultipeerHostTransport>((services, _) =>
         {
             services.AddMultipeerLink();
             services.AddSingleton(options);
-            services.AddSingleton<IUniversalHubTransport, MultipeerHostTransport>();
+            services.AddSingleton(sp => new MultipeerHostTransport(
+                sp,
+                sp.GetRequiredService<IMultipeerLink>(),
+                options,
+                sp.GetRequiredService<UniversalServerOptions>(),
+                sp.GetService<ILogger<MultipeerHostTransport>>()
+            ));
+            services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<MultipeerHostTransport>());
         });
         return server;
     }
@@ -53,7 +61,7 @@ public static class MultipeerExtensions
     public static UniversalHubBuilder UseMultipeer(this UniversalHubBuilder hub)
     {
         ArgumentNullException.ThrowIfNull(hub);
-        hub.Use(HubTransports.Multipeer, new MultipeerHubSettings());
+        hub.Use<MultipeerHostTransport>(new MultipeerHubSettings());
         return hub;
     }
 

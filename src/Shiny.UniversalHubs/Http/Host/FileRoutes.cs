@@ -140,7 +140,7 @@ internal static class FileRoutes
 
         var host = ctx.RequestServices.GetRequiredService<UniversalHubHost>();
         ft = host.Options.FileTransfers;
-        if (!ctx.RequestServices.GetRequiredService<HttpHubTransport>().AnyRunning || ft == null)
+        if (!ctx.RequestServices.GetRequiredService<HttpHostTransport>().AnyRunning || ft == null)
             return (StatusCodes.Status404NotFound, "This host does not serve files");
 
         client = ctx.RequestServices.GetRequiredService<FileTokens>().Find(ctx.Request.Headers[UniversalHubProtocol.FileTokenHeader].ToString());

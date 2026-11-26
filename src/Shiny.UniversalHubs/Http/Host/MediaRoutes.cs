@@ -27,7 +27,7 @@ internal static class MediaRoutes
     {
         var host = ctx.RequestServices.GetRequiredService<UniversalHubHost>();
         var maxPacketSize = host.MediaMaxPacketSize;
-        if (!ctx.RequestServices.GetRequiredService<HttpHubTransport>().AnyRunning || maxPacketSize == null)
+        if (!ctx.RequestServices.GetRequiredService<HttpHostTransport>().AnyRunning || maxPacketSize == null)
         {
             await Refuse(ctx, StatusCodes.Status404NotFound, "This host has no media channels");
             return;

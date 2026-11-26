@@ -62,7 +62,7 @@ public class HandlerHubTests : IAsyncLifetime
         name,
         new BleHubOptions(),
         this.handler,
-        HubTransports.Ble,
+        new HashSet<Type> { typeof(BleHostTransport) },
         new Dictionary<Type, object> { [typeof(BleHubSettings)] = new BleHubSettings(ServiceUuid, characteristicUuid) }
     ));
 
@@ -73,7 +73,7 @@ public class HandlerHubTests : IAsyncLifetime
     sealed record Handle(UniversalHubHost Host, HubEntry Entry)
     {
         public bool IsRunning => this.Entry.Runtime.IsRunning;
-        public Task Start() => this.Host.StartHubs([this.Entry], HubTransports.All, CancellationToken.None);
+        public Task Start() => this.Host.StartHubs([this.Entry], null, CancellationToken.None);
 
         public IHubClients<BleHubPush<IBleHubHandler>> Clients
             => new HubClients<BleHubPush<IBleHubHandler>>(this.Entry.Runtime, target => new BleHubPush<IBleHubHandler>(target, this.Entry.Runtime.Serializer));
@@ -247,7 +247,7 @@ public class HandlerHubTests : IAsyncLifetime
     {
         this.Build();
         this.Add(HandlerChar, "game");
-        this.services!.GetRequiredService<BleHubTransport>().Dispose();
+        this.services!.GetRequiredService<BleHostTransport>().Dispose();
 
         Assert.Empty(this.hosting.Log);
     }

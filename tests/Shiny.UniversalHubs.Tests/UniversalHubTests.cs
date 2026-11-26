@@ -36,7 +36,7 @@ public class UniversalHubTests : IAsyncLifetime
         this.host = this.app.Services.GetRequiredService<IUniversalHubHost>();
         this.log = this.app.Services.GetRequiredService<HubLog>();
 
-        Assert.Equal(HubTransports.Http, await this.host.Start(HubTransports.Http));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.Start([typeof(HttpHostTransport)]));
     }
 
 
@@ -262,15 +262,6 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
-    [Theory]
-    [InlineData("sb:f8bf8a8b3ec3252c", HubTransports.Http)]
-    [InlineData("mc:5f1e2d3c4b5a69788796a5b4c3d2e1f0", HubTransports.Multipeer)]
-    [InlineData("6E400001-B5A3-F393-E0A9-E50E24DCCA9E", HubTransports.Ble)]
-    [InlineData("AA:BB:CC:DD:EE:FF", HubTransports.Ble)]
-    public void ConnectionIdsMapToTheirTransport(string connectionId, HubTransports expected)
-        => Assert.Equal(expected, HubConnection.GetTransport(connectionId));
-
-
     [Fact]
     public void UniversalServerAppliesEachHubsServiceTypeAndTheEndpoint()
     {
@@ -290,7 +281,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task UniversalServerServesHubsAtItsEndpoint()
     {
         await using var server = this.BuildHost("/game");
-        await server.Services.GetRequiredService<IUniversalHubHost>().Start(HubTransports.Http);
+        await server.Services.GetRequiredService<IUniversalHubHost>().Start([typeof(HttpHostTransport)]);
 
         var client = this.CreateClient(server);
         await client.Connect(HttpHost("/game"), new HubConnectOptions("Alice", "1.0"));
@@ -331,8 +322,8 @@ public class UniversalHubTests : IAsyncLifetime
 
         // no BLE anywhere - the hub is served over HTTP alone
         var host = app.Services.GetRequiredService<IUniversalHubHost>();
-        Assert.Equal(HubTransports.Http, await host.Start());
-        Assert.Equal(HubTransports.Http, host.GetRunningTransports<TestHub>());
+        TransportAssert.Equal([typeof(HttpHostTransport)], await host.Start());
+        TransportAssert.Equal([typeof(HttpHostTransport)], host.GetRunningTransports<TestHub>());
 
         var services = new ServiceCollection()
             .AddLogging()
@@ -366,9 +357,9 @@ public class UniversalHubTests : IAsyncLifetime
             .BuildServiceProvider();
 
         var host = sp.GetRequiredService<UniversalHubHost>();
-        Assert.Equal(HubTransports.Ble | HubTransports.Http, host.Get(typeof(TestHub)).Transports);
+        TransportAssert.Equal([typeof(BleHostTransport), typeof(HttpHostTransport)], host.Get(typeof(TestHub)).Transports);
         Assert.Equal(custom, host.Get(typeof(TestHub)).GetSettings<BleHubSettings>()!.ServiceUuid);
-        Assert.Equal(HubTransports.Http, host.Get(typeof(OtherHub)).Transports);
+        TransportAssert.Equal([typeof(HttpHostTransport)], host.Get(typeof(OtherHub)).Transports);
         Assert.Null(host.Get(typeof(OtherHub)).GetSettings<BleHubSettings>());
         Assert.Equal(TimeSpan.FromSeconds(7), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
     }
@@ -385,7 +376,7 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void HubsAreAdvertisedOncePerServiceType()
     {
-        var ads = HttpHubTransport.GetAdvertisements(
+        var ads = HttpHostTransport.GetAdvertisements(
             [
                 new FakeBinding("aaaa", "_chess._tcp"),
                 new FakeBinding("BBBB", "_unigame._tcp"),
@@ -406,7 +397,7 @@ public class UniversalHubTests : IAsyncLifetime
     {
         public Type? HubType => typeof(TestHub);
         public string Name => "Fake";
-        public HubTransports Transports => HubTransports.Http;
+        public IReadOnlySet<Type> Transports { get; } = new HashSet<Type> { typeof(HttpHostTransport) };
         public IBleHubTransportEndpoint Endpoint => throw new NotSupportedException();
         public T? GetSettings<T>() where T : class => typeof(T) == typeof(HttpHubSettings) ? (T)(object)new HttpHubSettings(this.ServiceType, this.AllowTunnel) : null;
     }
@@ -434,11 +425,11 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task StartingOneHubLeavesTheOtherRefusingClients()
     {
         await this.host.Stop();
-        Assert.Equal(HubTransports.Http, await this.host.StartHub<TestHub>(HubTransports.Http));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<TestHub>([typeof(HttpHostTransport)]));
 
-        Assert.Equal(HubTransports.Http, this.host.GetRunningTransports<TestHub>());
-        Assert.Equal(HubTransports.None, this.host.GetRunningTransports<OtherHub>());
-        Assert.Equal(HubTransports.Http, this.host.RunningTransports);
+        TransportAssert.Equal([typeof(HttpHostTransport)], this.host.GetRunningTransports<TestHub>());
+        Assert.Empty(this.host.GetRunningTransports<OtherHub>());
+        TransportAssert.Equal([typeof(HttpHostTransport)], this.host.RunningTransports);
 
         var test = await this.Connect();
         Assert.Equal("Alice", await test.Hub.WhoAmI());
@@ -462,12 +453,12 @@ public class UniversalHubTests : IAsyncLifetime
 
         await WaitFor(() => otherLeft != null);
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "Chat closed"), otherLeft);
-        Assert.Equal(HubTransports.None, this.host.GetRunningTransports<OtherHub>());
-        Assert.Equal(HubTransports.Http, this.host.RunningTransports);
+        Assert.Empty(this.host.GetRunningTransports<OtherHub>());
+        TransportAssert.Equal([typeof(HttpHostTransport)], this.host.RunningTransports);
         Assert.Equal(new Payload("still", 1), await test.Hub.Echo(new Payload("still", 1)));
 
         // and back again
-        Assert.Equal(HubTransports.Http, await this.host.StartHub<OtherHub>(HubTransports.Http));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<OtherHub>([typeof(HttpHostTransport)]));
         var again = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
         await again.Connect(HttpHost(), new HubConnectOptions("Bob"));
         Assert.Equal("pong", await again.Hub.Ping());
@@ -665,7 +656,7 @@ public class UniversalHubTests : IAsyncLifetime
         };
 
         await this.host.Stop("Game over");
-        Assert.Equal(HubTransports.None, this.host.RunningTransports);
+        Assert.Empty(this.host.RunningTransports);
 
         await WaitFor(() => disconnect != null);
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "Game over"), disconnect);

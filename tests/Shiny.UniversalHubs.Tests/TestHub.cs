@@ -76,7 +76,7 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
         log.Add($"connected:{connection.Client.Name}");
         log.Add($"connected-request:{connection.Http?.HttpContext?.Request.Method}");
         connection.Properties["greeting"] = $"hello {connection.Client.Name}";
-        log.Add($"connected-via:{connection.Transport}:{connection.Id}");
+        log.Add($"connected-via:{TransportAssert.Name(connection.Transport)}:{connection.Id}");
         log.Add($"connected-peer:{connection.Multipeer?.DisplayName ?? connection.Nearby?.EndpointName}");
         return Task.CompletedTask;
     }
@@ -85,7 +85,7 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
     {
         log.Add($"disconnected:{connection.Client.Name}:{disconnect.Description}");
         log.Add($"reason:{connection.Client.Name}:{disconnect.Reason}");
-        log.Add($"disconnected-via:{connection.Transport}:{connection.Id}");
+        log.Add($"disconnected-via:{TransportAssert.Name(connection.Transport)}:{connection.Id}");
         log.Add($"disconnected-http:{(connection.Http == null ? "none" : "set")}");
         log.Add($"disconnected-peer:{connection.Multipeer?.DisplayName ?? connection.Nearby?.EndpointName}");
         return Task.CompletedTask;
@@ -100,7 +100,7 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
         $"ble:{(this.Connection.Ble == null ? "none" : "set")}"
     ));
 
-    public Task<string> MyConnection() => Task.FromResult($"{this.Connection.Transport}:{this.Connection.Id}");
+    public Task<string> MyConnection() => Task.FromResult($"{TransportAssert.Name(this.Connection.Transport)}:{this.Connection.Id}");
 
     public Task Record(string value)
     {

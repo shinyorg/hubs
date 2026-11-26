@@ -50,7 +50,7 @@ public class DynamicHubTests : IAsyncLifetime
 
         this.dynamicHubs = this.app.Services.GetRequiredService<IDynamicHubs>();
         this.hub = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType) { MaxClients = 2 }, this.handler);
-        Assert.Equal(HubTransports.Http, await this.hub.Start(HubTransports.Http));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.hub.Start([typeof(HttpHostTransport)]));
     }
 
 
@@ -144,7 +144,7 @@ public class DynamicHubTests : IAsyncLifetime
         Assert.Equal(new Payload("hi", 42), await client.Hub.Echo(new Payload("hi", 42)));
 
         var call = this.handler.Calls.Single(x => x.Method == "Echo");
-        Assert.Equal(HubTransports.Http, call.Transport);
+        Assert.Equal("Http", call.Transport);
         Assert.Equal("Alice", call.Client);
         // the exact JSON the client's serializer wrote - the host never deserialized it
         Assert.Equal(new Payload("hi", 42), JsonSerializer.Deserialize(call.Arguments.Single(), TestJsonContext.Default.Payload));
@@ -154,7 +154,7 @@ public class DynamicHubTests : IAsyncLifetime
     [Fact]
     public async Task CompiledHubsKeepTheirOwnRoutes()
     {
-        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>(HubTransports.Http);
+        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)]);
         var compiled = await this.Connect<ITestHub>(CompiledUuid);
         Assert.Equal(new Payload("compiled", 1), await compiled.Hub.Echo(new Payload("compiled", 1)));
         Assert.DoesNotContain(this.handler.Calls, x => x.Method == "Echo");
@@ -239,7 +239,7 @@ public class DynamicHubTests : IAsyncLifetime
     public async Task AStoppedOrUnknownHubRefusesClients()
     {
         await this.hub.Stop("closed");
-        Assert.Equal(HubTransports.None, this.hub.RunningTransports);
+        Assert.Empty(this.hub.RunningTransports);
         var stopped = await Assert.ThrowsAsync<BleHubException>(() => this.Connect());
         Assert.Contains("not running", stopped.Message);
 
@@ -263,7 +263,7 @@ public class DynamicHubTests : IAsyncLifetime
 
         // the same definition can come back - after a web app update, say
         var again = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType), this.handler);
-        await again.Start(HubTransports.Http);
+        await again.Start([typeof(HttpHostTransport)]);
         var returning = await this.Connect("Again");
         Assert.Equal(new Payload("back", 2), await returning.Hub.Echo(new Payload("back", 2)));
     }
@@ -301,7 +301,7 @@ public class DynamicHubTests : IAsyncLifetime
         var hubs = server.Services.GetRequiredService<IDynamicHubs>();
         var handler = new ScriptedHandler();
         var added = hubs.Add(new DynamicHubDefinition("solo", DynamicUuid, ServiceType), handler);
-        await added.Start(HubTransports.Http);
+        await added.Start([typeof(HttpHostTransport)]);
 
         var client = await this.Connect<IDynamicTestHub>(DynamicUuid, server: server);
         Assert.Equal(new Payload("solo", 3), await client.Hub.Echo(new Payload("solo", 3)));
@@ -386,7 +386,7 @@ public class DynamicHubTests : IAsyncLifetime
     [Fact]
     public async Task ADynamicClientCallsACompiledHubToo()
     {
-        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>(HubTransports.Http);
+        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)]);
         var client = this.CreateDynamicClient(CompiledUuid);
         await client.Connect(Host(CompiledUuid), new HubConnectOptions("Dyna", "1.0"));
 
@@ -407,7 +407,7 @@ public class DynamicHubTests : IAsyncLifetime
     internal sealed class ScriptedHandler : IDynamicHubHandler
     {
         readonly List<string> log = new();
-        readonly List<(string Method, string? Client, HubTransports Transport, byte[][] Arguments)> calls = new();
+        readonly List<(string Method, string? Client, string Transport, byte[][] Arguments)> calls = new();
 
         public string? RefuseWith { get; set; }
 
@@ -416,7 +416,7 @@ public class DynamicHubTests : IAsyncLifetime
             get { lock (this.log) return this.log.ToList(); }
         }
 
-        public IReadOnlyList<(string Method, string? Client, HubTransports Transport, byte[][] Arguments)> Calls
+        public IReadOnlyList<(string Method, string? Client, string Transport, byte[][] Arguments)> Calls
         {
             get { lock (this.calls) return this.calls.ToList(); }
         }
@@ -465,7 +465,7 @@ public class DynamicHubTests : IAsyncLifetime
             if (this.RefuseWith != null)
                 throw new InvalidOperationException(this.RefuseWith);
 
-            this.Add($"connected:{connection.Client.Name}:{connection.Transport}");
+            this.Add($"connected:{connection.Client.Name}:{TransportAssert.Name(connection.Transport)}");
             return Task.CompletedTask;
         }
 
@@ -484,7 +484,7 @@ public class DynamicHubTests : IAsyncLifetime
         void Record(DynamicHubCall call)
         {
             lock (this.calls)
-                this.calls.Add((call.Method, call.Connection.Client.Name, call.Connection.Transport, call.Arguments.Select(x => x.ToArray()).ToArray()));
+                this.calls.Add((call.Method, call.Connection.Client.Name, TransportAssert.Name(call.Connection.Transport), call.Arguments.Select(x => x.ToArray()).ToArray()));
         }
     }
 }

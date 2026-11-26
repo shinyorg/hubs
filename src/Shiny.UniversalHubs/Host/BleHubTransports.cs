@@ -24,6 +24,12 @@ public interface IBleHubPeerChannel
     /// The host has a new name - tell the client. Called in order with <see cref="Push"/>.
     /// </summary>
     Task HostRenamed(string? hostName, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>
+    /// The transport this channel belongs to - what <c>HubConnection.Transport</c> reports. Null for a channel outside the
+    /// universal host.
+    /// </summary>
+    Shiny.UniversalHubs.IHubTransport? Transport => null;
 }
 
 

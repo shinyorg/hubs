@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
 
@@ -9,7 +10,7 @@ public static class NearbyExtensions
     /// <summary>
     /// Also serves the universal server's hubs over Google's Nearby Connections, advertised under
     /// <paramref name="serviceId"/>. Android, iOS and macOS devices then reach the host with no shared network at all -
-    /// over Bluetooth, Wi-Fi Direct, a hotspot or Wi-Fi Aware, whichever Nearby picks. <c>Start(HubTransports.All)</c>
+    /// over Bluetooth, Wi-Fi Direct, a hotspot or Wi-Fi Aware, whichever Nearby picks. <c>Start()</c>
     /// includes it; where Nearby Connections doesn't exist it is skipped.
     /// <code>
     /// services.AddUniversalServer(server => server
@@ -33,14 +34,21 @@ public static class NearbyExtensions
         var options = new NearbyHostOptions(serviceId);
         configure?.Invoke(options);
 
-        if (server.TransportSetups.ContainsKey(HubTransports.Nearby))
+        if (server.IsSetUp<NearbyHostTransport>())
             throw new InvalidOperationException("Nearby can only be set up once per universal server");
 
-        server.SetUpTransport(HubTransports.Nearby, (services, _) =>
+        server.SetUpTransport<NearbyHostTransport>((services, _) =>
         {
             services.AddNearbyLink();
             services.AddSingleton(options);
-            services.AddSingleton<IUniversalHubTransport, NearbyHostTransport>();
+            services.AddSingleton(sp => new NearbyHostTransport(
+                sp,
+                sp.GetRequiredService<NearbyLink>(),
+                options,
+                sp.GetRequiredService<UniversalServerOptions>(),
+                sp.GetService<ILogger<NearbyHostTransport>>()
+            ));
+            services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<NearbyHostTransport>());
         });
         return server;
     }
@@ -52,7 +60,7 @@ public static class NearbyExtensions
     public static UniversalHubBuilder UseNearby(this UniversalHubBuilder hub)
     {
         ArgumentNullException.ThrowIfNull(hub);
-        hub.Use(HubTransports.Nearby, new NearbyHubSettings());
+        hub.Use<NearbyHostTransport>(new NearbyHubSettings());
         return hub;
     }
 

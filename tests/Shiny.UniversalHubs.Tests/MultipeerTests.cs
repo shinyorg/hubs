@@ -41,7 +41,7 @@ public class MultipeerTests : IAsyncLifetime
         this.app.Services.GetRequiredService<IHubContext<TestHub>>().MediaChannelOpened += (_, e) => this.mediaOpened.Enqueue(e);
 
         // no Bluetooth in tests - Wi-Fi and Multipeer start
-        Assert.Equal(HubTransports.Http | HubTransports.Multipeer, await this.host.Start());
+        TransportAssert.Equal([typeof(HttpHostTransport), typeof(MultipeerHostTransport)], await this.host.Start());
     }
 
 
@@ -127,7 +127,7 @@ public class MultipeerTests : IAsyncLifetime
         const string dynamicUuid = "6e400010-b5a3-f393-e0a9-e50e24dcca9e";
         var handler = new DynamicHubTests.ScriptedHandler();
         var hub = this.app.Services.GetRequiredService<IDynamicHubs>().Add(new DynamicHubDefinition("game", dynamicUuid, MdnsServiceType), handler);
-        Assert.Equal(HubTransports.Multipeer, await hub.Start(HubTransports.Multipeer));
+        TransportAssert.Equal([typeof(MultipeerHostTransport)], await hub.Start([typeof(MultipeerHostTransport)]));
 
         var client = this.CreateClient<IDynamicTestHub>(dynamicUuid);
         await client.Connect(await Find(client), new HubConnectOptions("Mia") { Allowed = HubTransports.Multipeer });
@@ -204,9 +204,9 @@ public class MultipeerTests : IAsyncLifetime
         await this.host.Stop();
         Assert.Empty(this.network.Advertisements);
 
-        await this.host.StartHub<TestHub>(HubTransports.Multipeer);
-        Assert.Equal(HubTransports.Multipeer, this.host.GetRunningTransports<TestHub>());
-        Assert.Equal(HubTransports.None, this.host.GetRunningTransports<OtherHub>());
+        await this.host.StartHub<TestHub>([typeof(MultipeerHostTransport)]);
+        TransportAssert.Equal([typeof(MultipeerHostTransport)], this.host.GetRunningTransports<TestHub>());
+        Assert.Empty(this.host.GetRunningTransports<OtherHub>());
         Assert.Equal(CharacteristicUuid, Assert.Single(this.network.Advertisements).Info[MultipeerProtocol.InfoHubs]);
 
         // a client of the stopped hub doesn't list the host...
@@ -217,7 +217,7 @@ public class MultipeerTests : IAsyncLifetime
         Assert.DoesNotContain(seen, x => x.Multipeer != null);
 
         // ...until it starts
-        await this.host.StartHub<OtherHub>(HubTransports.Multipeer);
+        await this.host.StartHub<OtherHub>([typeof(MultipeerHostTransport)]);
         await WaitFor(() => seen.Any(x => x.Multipeer != null));
 
         var found = seen.Last(x => x.Multipeer != null);
@@ -258,8 +258,8 @@ public class MultipeerTests : IAsyncLifetime
         await using var server = this.BuildHost(null);
         var plain = server.Services.GetRequiredService<IUniversalHubHost>();
 
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start(HubTransports.Multipeer));
-        Assert.Equal(HubTransports.Http, await plain.Start());
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(MultipeerHostTransport)]));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start());
     }
 
 
@@ -289,7 +289,7 @@ public class MultipeerTests : IAsyncLifetime
         var id = Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients).Id;
 
         Assert.StartsWith("mc:", id);
-        Assert.Equal(HubTransports.Multipeer, HubConnection.GetTransport(id));
+        Assert.IsType<MultipeerHostTransport>(HubConnection.From(Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients)).Transport);
         Assert.Contains($"connected-via:Multipeer:{id}", this.log.Entries);
         Assert.Contains("connected-peer:Phone", this.log.Entries);
         Assert.Equal($"Multipeer:{id}", await client.Hub.MyConnection());
@@ -543,7 +543,7 @@ public class MultipeerTests : IAsyncLifetime
         var stale = await Find(late);
 
         await this.host.Stop("Game over");
-        Assert.Equal(HubTransports.None, this.host.RunningTransports);
+        Assert.Empty(this.host.RunningTransports);
         Assert.Empty(this.network.Advertisements);
 
         await WaitFor(() => disconnect != null);

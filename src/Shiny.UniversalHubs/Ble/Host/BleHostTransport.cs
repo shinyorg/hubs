@@ -30,9 +30,9 @@ public sealed class BluetoothLETransportOptions
 
 /// <summary>
 /// Serves hubs over BLE: every hub set up with UseBluetoothLE is a write+notify characteristic in its GATT service, its
-/// frames run through a <see cref="FrameHostSession"/>, and files and media channels go over L2CAP
+/// frames run through a frame session, and files and media channels go over L2CAP. Added with <c>hub.UseBluetoothLE(...)</c>.
 /// </summary>
-internal sealed class BleHubTransport : IUniversalHubTransport, IDisposable
+public sealed class BleHostTransport : IHubTransport, IDisposable
 {
     readonly IBleHostingManager hosting;
     readonly UniversalServerOptions serverOptions;
@@ -58,7 +58,7 @@ internal sealed class BleHubTransport : IUniversalHubTransport, IDisposable
     int mediaMaxPacketSize;
 
 
-    public BleHubTransport(
+    internal BleHostTransport(
         IBleHostingManager hosting,
         UniversalServerOptions serverOptions,
         BluetoothLETransportOptions options,
@@ -74,12 +74,13 @@ internal sealed class BleHubTransport : IUniversalHubTransport, IDisposable
         this.protocolOptions = protocolOptions;
         this.services = services;
         this.loggerFactory = loggerFactory;
-        this.logger = loggerFactory?.CreateLogger<BleHubTransport>();
+        this.logger = loggerFactory?.CreateLogger<BleHostTransport>();
         this.localAdvertisement = localAdvertisement;
     }
 
 
-    public HubTransports Transport => HubTransports.Ble;
+    public string DisplayName => "Bluetooth LE";
+    public bool IsSupported => true;
     public bool IsRunning(IHubBinding hub) => this.running.ContainsKey(hub);
     bool AnyRunning => !this.running.IsEmpty;
 
@@ -101,7 +102,8 @@ internal sealed class BleHubTransport : IUniversalHubTransport, IDisposable
             MediaChannelPsm = this.mediaPsm,
             MediaChannelSecure = this.mediaSecure,
             MediaMaxPacketSize = this.mediaMaxPacketSize,
-            IsRunning = () => this.running.ContainsKey(h)
+            IsRunning = () => this.running.ContainsKey(h),
+            Transport = this
         };
         session.Notify = (link, frame, ct) => this.Notify(h, link, frame, ct);
         return session;

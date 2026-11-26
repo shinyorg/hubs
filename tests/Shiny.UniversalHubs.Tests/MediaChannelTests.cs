@@ -53,7 +53,7 @@ public class MediaChannelTests : IAsyncLifetime
 
         this.app = TestHttpServer.For(builder.Build());
         this.app.Services.GetRequiredService<IHubContext<TestHub>>().MediaChannelOpened += (_, e) => this.opened.Enqueue(e);
-        await this.app.Services.GetRequiredService<IUniversalHubHost>().Start(HubTransports.Http);
+        await this.app.Services.GetRequiredService<IUniversalHubHost>().Start([typeof(HttpHostTransport)]);
     }
 
 

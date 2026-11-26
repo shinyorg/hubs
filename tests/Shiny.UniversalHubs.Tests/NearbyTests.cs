@@ -42,7 +42,7 @@ public class NearbyTests : IAsyncLifetime
         this.app.Services.GetRequiredService<IHubContext<TestHub>>().MediaChannelOpened += (_, e) => this.mediaOpened.Enqueue(e);
 
         // no Bluetooth in tests - Wi-Fi and Nearby start
-        Assert.Equal(HubTransports.Http | HubTransports.Nearby, await this.host.Start());
+        TransportAssert.Equal([typeof(HttpHostTransport), typeof(NearbyHostTransport)], await this.host.Start());
     }
 
 
@@ -182,8 +182,8 @@ public class NearbyTests : IAsyncLifetime
         await this.host.Stop();
         Assert.Null(this.hostRadio.AdvertisingService);
 
-        await this.host.StartHub<TestHub>(HubTransports.Nearby);
-        Assert.Equal(HubTransports.Nearby, this.host.GetRunningTransports<TestHub>());
+        await this.host.StartHub<TestHub>([typeof(NearbyHostTransport)]);
+        TransportAssert.Equal([typeof(NearbyHostTransport)], this.host.GetRunningTransports<TestHub>());
         Assert.Equal([NearbyProtocol.HubTag(CharacteristicUuid)], NearbyProtocol.DecodeEndpointInfo(this.hostRadio.AdvertisedInfo!)!.Hubs);
 
         // a client of the stopped hub doesn't list the host...
@@ -199,7 +199,7 @@ public class NearbyTests : IAsyncLifetime
             Assert.DoesNotContain(seen, x => x.Nearby != null);
 
         // ...until it starts
-        await this.host.StartHub<OtherHub>(HubTransports.Nearby);
+        await this.host.StartHub<OtherHub>([typeof(NearbyHostTransport)]);
         await WaitFor(() =>
         {
             lock (seen)
@@ -247,8 +247,8 @@ public class NearbyTests : IAsyncLifetime
         await using var server = this.BuildHost(null);
         var plain = server.Services.GetRequiredService<IUniversalHubHost>();
 
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start(HubTransports.Nearby));
-        Assert.Equal(HubTransports.Http, await plain.Start());
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(NearbyHostTransport)]));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start());
     }
 
 
@@ -278,7 +278,7 @@ public class NearbyTests : IAsyncLifetime
         var id = Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients).Id;
 
         Assert.StartsWith("nb:", id);
-        Assert.Equal(HubTransports.Nearby, HubConnection.GetTransport(id));
+        Assert.IsType<NearbyHostTransport>(HubConnection.From(Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients)).Transport);
         Assert.Contains($"connected-via:Nearby:{id}", this.log.Entries);
         Assert.Contains("connected-peer:Phone", this.log.Entries);
         Assert.Equal($"Nearby:{id}", await client.Hub.MyConnection());
@@ -550,7 +550,7 @@ public class NearbyTests : IAsyncLifetime
         client.Disconnected += (_, d) => disconnect = d;
 
         await this.host.Stop("Game over");
-        Assert.Equal(HubTransports.None, this.host.RunningTransports);
+        Assert.Empty(this.host.RunningTransports);
         Assert.Null(this.hostRadio.AdvertisingService);
 
         await WaitFor(() => disconnect != null);

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Shiny.BluetoothLE.Hosting;
 using Shiny.BluetoothLE.Hubs;
 
 namespace Shiny.UniversalHubs;
@@ -19,8 +21,8 @@ public static class BleHubExtensions
         var service = BleUuid.Normalize(serviceUuid, nameof(serviceUuid));
         var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
 
-        hub.Use(HubTransports.Ble, new BleHubSettings(service, characteristic));
-        hub.Server.SetUpTransport(HubTransports.Ble, AddBleTransport);
+        hub.Use<BleHostTransport>(new BleHubSettings(service, characteristic));
+        hub.Server.SetUpTransport<BleHostTransport>(AddBleTransport);
         return hub;
     }
 
@@ -32,8 +34,8 @@ public static class BleHubExtensions
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(configure);
-        server.Configure(HubTransports.Ble, configure);
-        server.SetUpTransport(HubTransports.Ble, AddBleTransport);
+        server.Configure<BleHostTransport, BluetoothLETransportOptions>(configure);
+        server.SetUpTransport<BleHostTransport>(AddBleTransport);
         return server;
     }
 
@@ -59,11 +61,19 @@ public static class BleHubExtensions
         services.AddBluetoothLeHosting();
 #endif
         var options = new BluetoothLETransportOptions();
-        foreach (var c in server.GetConfigurations<BluetoothLETransportOptions>(HubTransports.Ble))
+        foreach (var c in server.GetConfigurations<BleHostTransport, BluetoothLETransportOptions>())
             c(options);
 
         services.AddSingleton(options);
-        services.TryAddSingleton<BleHubTransport>();
-        services.AddSingleton<IUniversalHubTransport>(sp => sp.GetRequiredService<BleHubTransport>());
+        services.TryAddSingleton(sp => new BleHostTransport(
+            sp.GetRequiredService<IBleHostingManager>(),
+            sp.GetRequiredService<UniversalServerOptions>(),
+            sp.GetRequiredService<BluetoothLETransportOptions>(),
+            sp.GetRequiredService<BleHubProtocolOptions>(),
+            sp,
+            sp.GetService<ILoggerFactory>(),
+            sp.GetService<LocalHubAdvertisement>()
+        ));
+        services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<BleHostTransport>());
     }
 }

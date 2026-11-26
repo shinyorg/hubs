@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hosting;
 using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs;
 
@@ -41,6 +42,11 @@ internal sealed class FrameHostSession
     /// Whether the hub takes handshakes over these frames - the hub's own state unless the transport says otherwise
     /// </summary>
     public Func<bool>? IsRunning { get; set; }
+
+    /// <summary>
+    /// The transport the session's clients are connected through
+    /// </summary>
+    public IHubTransport? Transport { get; init; }
 
     bool Running => this.IsRunning?.Invoke() ?? this.endpoint.IsRunning;
 
@@ -543,6 +549,7 @@ internal sealed class FrameHostLink
     internal sealed class LinkChannel(FrameHostSession session, FrameHostLink link) : IBleHubPeerChannel
     {
         public FrameHostSession Session => session;
+        public IHubTransport? Transport => session.Transport;
 
         public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken)
             => session.Send(link, FrameKind.Push, link.NextHostMessageId(), eventName, arguments, cancellationToken);

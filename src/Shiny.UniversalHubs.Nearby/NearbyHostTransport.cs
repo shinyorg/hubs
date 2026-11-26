@@ -10,14 +10,13 @@ namespace Shiny.UniversalHubs;
 /// running hubs, and every channel a client opens becomes a hub session of its own. Each session reaches its hub through
 /// the blehubs transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with every other transport.
 /// </summary>
-internal sealed class NearbyHostTransport(
-    IServiceProvider services,
-    NearbyLink link,
-    NearbyHostOptions options,
-    UniversalServerOptions serverOptions,
-    ILogger<NearbyHostTransport>? logger = null
-) : IUniversalHubTransport, IPeerHostTransport
+public sealed class NearbyHostTransport : IHubTransport, IPeerHostTransport
 {
+    readonly IServiceProvider services;
+    readonly NearbyLink link;
+    readonly NearbyHostOptions options;
+    readonly UniversalServerOptions serverOptions;
+    readonly ILogger<NearbyHostTransport>? logger;
     readonly SemaphoreSlim gate = new(1, 1);
     readonly List<IHubBinding> running = new();
     // keyed by the session itself: a session that resumes a held connection takes that connection's id
@@ -25,12 +24,29 @@ internal sealed class NearbyHostTransport(
     IDisposable? advertisement;
 
 
-    public HubTransports Transport => HubTransports.Nearby;
-    public string ConnectionPrefix => HubConnection.NearbyPrefix;
+    internal NearbyHostTransport(
+        IServiceProvider services,
+        NearbyLink link,
+        NearbyHostOptions options,
+        UniversalServerOptions serverOptions,
+        ILogger<NearbyHostTransport>? logger = null
+    )
+    {
+        this.services = services;
+        this.link = link;
+        this.options = options;
+        this.serverOptions = serverOptions;
+        this.logger = logger;
+    }
 
-    public UniversalHubHost Host => services.GetRequiredService<UniversalHubHost>();
-    public UniversalServerOptions ServerOptions => serverOptions;
-    public ILogger? Logger => logger;
+
+    public string DisplayName => "Nearby";
+    public bool IsSupported => link.IsSupported;
+    string IPeerHostTransport.ConnectionPrefix => HubConnection.NearbyPrefix;
+
+    UniversalHubHost IPeerHostTransport.Host => services.GetRequiredService<UniversalHubHost>();
+    UniversalServerOptions IPeerHostTransport.ServerOptions => serverOptions;
+    ILogger? IPeerHostTransport.Logger => logger;
 
     /// <summary>
     /// The name hosts advertise as: the configured one, else the BLE local name
@@ -119,18 +135,18 @@ internal sealed class NearbyHostTransport(
     }
 
 
-    public IHubBinding? FindRunning(string? key)
+    IHubBinding? IPeerHostTransport.FindRunning(string? key)
     {
         lock (this.running)
             return this.running.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
     }
 
 
-    public object CreatePeer(IPeerConnection connection) => new NearbyPeer(connection.RemoteName);
+    object IPeerHostTransport.CreatePeer(IPeerConnection connection) => new NearbyPeer(connection.RemoteName);
 
-    public void Remove(PeerHostSession session) => this.sessions.TryRemove(session, out _);
+    void IPeerHostTransport.Remove(PeerHostSession session) => this.sessions.TryRemove(session, out _);
 
-    public IEnumerable<PeerHostSession> Sessions => this.sessions.Keys;
+    IEnumerable<PeerHostSession> IPeerHostTransport.Sessions => this.sessions.Keys;
 
 
     // under the gate

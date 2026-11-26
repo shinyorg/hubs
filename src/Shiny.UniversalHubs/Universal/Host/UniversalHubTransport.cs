@@ -3,16 +3,24 @@ using Shiny.BluetoothLE.Hubs;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A transport hubs are served over - BLE, HTTP, Multipeer, Nearby. It reaches each hub through
-/// <see cref="IHubBinding.Endpoint"/>, so its clients share Clients, Groups, MaxClients and ValidateClient with everyone
-/// else. <see cref="UniversalHubHost"/> starts and stops it, handing it only the hubs set up to use it.
+/// A transport hubs are served over - Bluetooth LE, HTTP, Multipeer, Nearby, or one of your own. Its type is its identity:
+/// hubs pick it with <c>hub.UseTransport&lt;TTransport&gt;()</c> (or a helper such as UseBluetoothLE), and the host starts and
+/// stops it by type (<c>host.Start&lt;TTransport&gt;()</c>). It reaches each hub through <see cref="IHubBinding.Endpoint"/>,
+/// so its clients share Clients, Groups, MaxClients and ValidateClient with everyone else. <see cref="IUniversalHubHost"/>
+/// starts and stops it, handing it only the hubs set up to use it.
 /// </summary>
-internal interface IUniversalHubTransport
+public interface IHubTransport
 {
     /// <summary>
-    /// The one flag this transport answers to
+    /// The transport's name in logs, errors and UI - not its identity, which is its type
     /// </summary>
-    HubTransports Transport { get; }
+    string DisplayName { get; }
+
+    /// <summary>
+    /// Whether this transport can run on this device at all (Multipeer is Apple only). One that can't is skipped quietly,
+    /// so one registration works in a cross-platform app.
+    /// </summary>
+    bool IsSupported { get; }
 
     /// <summary>
     /// Whether <paramref name="hub"/> is accepting clients over this transport
@@ -20,8 +28,8 @@ internal interface IUniversalHubTransport
     bool IsRunning(IHubBinding hub);
 
     /// <summary>
-    /// Starts accepting clients of <paramref name="hubs"/>. Throws when the transport can't run here (no radio, wrong
-    /// platform) - the host skips it as long as another transport starts.
+    /// Starts accepting clients of <paramref name="hubs"/>. Throws when the transport can't run right now (radio off, no
+    /// network) - the host skips it as long as another transport starts.
     /// </summary>
     Task Start(IReadOnlyList<IHubBinding> hubs, CancellationToken cancellationToken);
 
@@ -41,7 +49,7 @@ internal interface IUniversalHubTransport
 /// One hub as the transports see it - whatever it is (a compiled hub class or one added while the app runs) and whichever
 /// transports serve it
 /// </summary>
-internal interface IHubBinding
+public interface IHubBinding
 {
     /// <summary>
     /// How clients ask for the hub on every transport - the HTTP path, the mDNS, Multipeer and Nearby hub lists, the peer
@@ -60,9 +68,9 @@ internal interface IHubBinding
     Type? HubType { get; }
 
     /// <summary>
-    /// The transports this hub is served over
+    /// The types of the transports this hub is served over
     /// </summary>
-    HubTransports Transports { get; }
+    IReadOnlySet<Type> Transports { get; }
 
     /// <summary>
     /// The hub itself
@@ -70,10 +78,19 @@ internal interface IHubBinding
     IBleHubTransportEndpoint Endpoint { get; }
 
     /// <summary>
-    /// What a transport was told about this hub when it was set up to use it (UseBluetoothLE, UseHttp, ...), null when it
-    /// wasn't
+    /// What a transport was told about this hub when it was set up to use it (UseBluetoothLE, UseHttp, UseTransport's
+    /// settings), by the settings' type - null when it wasn't
     /// </summary>
     T? GetSettings<T>() where T : class;
+}
+
+
+public static class HubBindingExtensions
+{
+    /// <summary>
+    /// Whether <paramref name="hub"/> is served over <paramref name="transport"/>
+    /// </summary>
+    public static bool UsesTransport(this IHubBinding hub, IHubTransport transport) => hub.Transports.Contains(transport.GetType());
 }
 
 
@@ -84,7 +101,7 @@ internal sealed class HubEntry : IHubBinding
 {
     readonly IReadOnlyDictionary<Type, object> settings;
 
-    public HubEntry(string key, string name, Type? hubType, HubTransports transports, IReadOnlyDictionary<Type, object> settings, HubRuntime runtime)
+    public HubEntry(string key, string name, Type? hubType, IReadOnlySet<Type> transports, IReadOnlyDictionary<Type, object> settings, HubRuntime runtime)
     {
         this.Key = key;
         this.Name = name;
@@ -97,7 +114,7 @@ internal sealed class HubEntry : IHubBinding
     public string Key { get; }
     public string Name { get; }
     public Type? HubType { get; }
-    public HubTransports Transports { get; }
+    public IReadOnlySet<Type> Transports { get; }
     public HubRuntime Runtime { get; }
     public IBleHubTransportEndpoint Endpoint => this.Runtime;
 
@@ -114,6 +131,6 @@ internal sealed record HubRegistration(
     Type HubType,
     string Key,
     BleHubOptions Options,
-    HubTransports Transports,
+    IReadOnlySet<Type> Transports,
     IReadOnlyDictionary<Type, object> Settings
 );

@@ -89,7 +89,7 @@ public static partial class UniversalServerExtensions
 /// </summary>
 public sealed class UniversalServerBuilder
 {
-    readonly Dictionary<HubTransports, List<object>> configurations = new();
+    readonly Dictionary<Type, List<object>> configurations = new();
 
     internal UniversalServerBuilder() { }
 
@@ -99,9 +99,9 @@ public sealed class UniversalServerBuilder
     internal DynamicHubOptions? DynamicHubs { get; private set; }
 
     /// <summary>
-    /// Each transport the hubs use, and how it registers itself
+    /// Each transport the hubs use, by its type, and how it registers itself
     /// </summary>
-    internal Dictionary<HubTransports, Action<IServiceCollection, UniversalServerBuilder>> TransportSetups { get; } = new();
+    internal Dictionary<Type, Action<IServiceCollection, UniversalServerBuilder>> TransportSetups { get; } = new();
 
     /// <summary>
     /// Registrations an add-on transport makes once the server is set up
@@ -188,26 +188,48 @@ public sealed class UniversalServerBuilder
 
 
     /// <summary>
-    /// Sets up a transport - once, however many hubs use it
+    /// Sets up a transport of your own on the server: <typeparamref name="TTransport"/> is created by DI, once, however
+    /// many hubs use it. Hubs pick it with <see cref="UniversalHubBuilder.UseTransport{TTransport}"/>, which sets it up
+    /// too - call this for a server that only has dynamic hubs, which are served over every transport set up here.
     /// </summary>
-    internal void SetUpTransport(HubTransports transport, Action<IServiceCollection, UniversalServerBuilder> setup)
-        => this.TransportSetups.TryAdd(transport, setup);
+    public UniversalServerBuilder AddTransport<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TTransport>()
+        where TTransport : class, IHubTransport
+    {
+        // a first-party transport's own setup (server.BluetoothLE, UseHttp, ...) wins over this one
+        this.TransportSetups.TryAdd(typeof(TTransport), static (services, _) =>
+        {
+            services.TryAddSingleton<TTransport>();
+            services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<TTransport>());
+        });
+        return this;
+    }
+
+
+    /// <summary>
+    /// Sets up a transport with its own registration - once, however many hubs use it. Replaces a plain
+    /// <see cref="AddTransport{TTransport}"/> setup of the same type.
+    /// </summary>
+    internal void SetUpTransport<TTransport>(Action<IServiceCollection, UniversalServerBuilder> setup) where TTransport : IHubTransport
+        => this.TransportSetups[typeof(TTransport)] = setup;
+
+
+    internal bool IsSetUp<TTransport>() where TTransport : IHubTransport => this.TransportSetups.ContainsKey(typeof(TTransport));
 
 
     /// <summary>
     /// Keeps a transport's settings for when it registers itself
     /// </summary>
-    internal void Configure<T>(HubTransports transport, Action<T> configure)
+    internal void Configure<TTransport, T>(Action<T> configure) where TTransport : IHubTransport
     {
-        if (!this.configurations.TryGetValue(transport, out var list))
-            this.configurations[transport] = list = new();
+        if (!this.configurations.TryGetValue(typeof(TTransport), out var list))
+            this.configurations[typeof(TTransport)] = list = new();
 
         list.Add(configure);
     }
 
 
-    internal IEnumerable<Action<T>> GetConfigurations<T>(HubTransports transport)
-        => this.configurations.TryGetValue(transport, out var list) ? list.OfType<Action<T>>() : [];
+    internal IEnumerable<Action<T>> GetConfigurations<TTransport, T>() where TTransport : IHubTransport
+        => this.configurations.TryGetValue(typeof(TTransport), out var list) ? list.OfType<Action<T>>() : [];
 
 
     /// <summary>
@@ -218,23 +240,15 @@ public sealed class UniversalServerBuilder
         if (this.Hubs.Count == 0 && this.DynamicHubs == null)
             throw new InvalidOperationException("A universal server needs at least one hub - call AddHub (or AllowDynamicHubs to add them while the app runs)");
 
-        foreach (var hub in this.Hubs)
-        {
-            if (hub.Transports == HubTransports.None)
-                throw new InvalidOperationException($"{hub.Name} isn't served over any transport - call UseBluetoothLE, UseHttp, UseMultipeer or UseNearby on it");
-
-            foreach (var transport in Enum.GetValues<HubTransports>().Where(x => x is not (HubTransports.None or HubTransports.All) && hub.Transports.HasFlag(x)))
-            {
-                if (!this.TransportSetups.ContainsKey(transport))
-                    throw new InvalidOperationException($"{hub.Name} is served over {transport}, which isn't set up on the server - call server.{transport}(...)");
-            }
-        }
+        var bare = this.Hubs.FirstOrDefault(x => x.Transports.Count == 0);
+        if (bare != null)
+            throw new InvalidOperationException($"{bare.Name} isn't served over any transport - call UseBluetoothLE, UseHttp, UseMultipeer, UseNearby or UseTransport on it");
 
         if (this.DynamicHubs == null)
         {
-            var unused = this.TransportSetups.Keys.FirstOrDefault(t => !this.Hubs.Any(x => x.Transports.HasFlag(t)));
-            if (unused != HubTransports.None)
-                throw new InvalidOperationException($"{unused} is set up but no hub is served over it - call Use{unused} on a hub");
+            var unused = this.TransportSetups.Keys.FirstOrDefault(t => !this.Hubs.Any(x => x.Transports.Contains(t)));
+            if (unused != null)
+                throw new InvalidOperationException($"{unused.Name} is set up but no hub is served over it - add it to a hub");
         }
         else if (this.TransportSetups.Count == 0)
         {
@@ -271,7 +285,7 @@ public sealed class UniversalHubBuilder
 
     internal UniversalServerBuilder Server { get; }
     internal Type HubType { get; }
-    internal HubTransports Transports { get; private set; }
+    internal HashSet<Type> Transports { get; } = new();
     internal BleHubOptions Options { get; } = new();
 
 
@@ -301,15 +315,32 @@ public sealed class UniversalHubBuilder
 
 
     /// <summary>
-    /// Serves the hub over <paramref name="transport"/>, with what that transport needs to know about it
+    /// Serves the hub over a transport of your own, setting it up on the server too (<see cref="UniversalServerBuilder.AddTransport{TTransport}"/>).
     /// </summary>
-    internal void Use(HubTransports transport, object transportSettings)
+    /// <param name="settings">
+    /// What the transport needs to know about this hub - it reads it back with <see cref="IHubBinding.GetSettings{T}"/>,
+    /// by this object's type
+    /// </param>
+    public UniversalHubBuilder UseTransport<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TTransport>(object? settings = null)
+        where TTransport : class, IHubTransport
     {
-        if (this.Transports.HasFlag(transport))
-            throw new InvalidOperationException($"{this.Name} is already served over {transport}");
+        this.Use<TTransport>(settings);
+        this.Server.AddTransport<TTransport>();
+        return this;
+    }
 
-        this.Transports |= transport;
-        this.settings[transportSettings.GetType()] = transportSettings;
+
+    /// <summary>
+    /// Serves the hub over <typeparamref name="TTransport"/>, with what that transport needs to know about it - the caller
+    /// sets the transport up
+    /// </summary>
+    internal void Use<TTransport>(object? transportSettings) where TTransport : IHubTransport
+    {
+        if (!this.Transports.Add(typeof(TTransport)))
+            throw new InvalidOperationException($"{this.Name} is already served over {typeof(TTransport).Name}");
+
+        if (transportSettings != null)
+            this.settings[transportSettings.GetType()] = transportSettings;
     }
 
 
@@ -321,7 +352,7 @@ public sealed class UniversalHubBuilder
     internal void Register(IServiceCollection services)
     {
         this.register(services);
-        services.AddSingleton(new HubRegistration(this.HubType, this.Name, this.Options, this.Transports, new Dictionary<Type, object>(this.settings)));
+        services.AddSingleton(new HubRegistration(this.HubType, this.Name, this.Options, this.Transports.ToHashSet(), new Dictionary<Type, object>(this.settings)));
     }
 }
 

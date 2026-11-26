@@ -398,7 +398,7 @@ public class MediaChannelTests : IAsyncLifetime
     {
         this.hosting.FailL2Cap = true;
         await this.Start();
-        Assert.True((this.host.RunningTransports != HubTransports.None));
+        Assert.True(this.host.RunningTransports.Count > 0);
 
         var client = await this.Connect("c1");
         Assert.False(client.CanOpenMediaChannel);

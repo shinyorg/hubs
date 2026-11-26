@@ -37,7 +37,7 @@ public class RegistrationTests
         Assert.NotNull(sp.GetRequiredService<IHubContext<TestHub>>());
         Assert.NotNull(sp.GetRequiredService<IHubContext<SecondHub>>());
 
-        Assert.Equal(HubTransports.Ble, await sp.GetRequiredService<IUniversalHubHost>().Start());
+        Assert.IsType<BleHostTransport>(Assert.Single(await sp.GetRequiredService<IUniversalHubHost>().Start()));
         Assert.True(hosting.HasService(Custom));
         Assert.Equal([Custom], hosting.AdvertisedServices);
         Assert.Equal("Host", hosting.AdvertisedName);
