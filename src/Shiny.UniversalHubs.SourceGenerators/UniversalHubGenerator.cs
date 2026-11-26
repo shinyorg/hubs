@@ -74,13 +74,13 @@ public sealed class UniversalHubGenerator : IIncrementalGenerator
                 foreach (var d in hub!.Diagnostics)
                     spc.ReportDiagnostic(d.ToDiagnostic());
 
-                if (hub.Diagnostics.Count > 0 || hub.Contract.Diagnostics.Count > 0)
-                    continue;
+                if (hub.Diagnostics.Count == 0 && hub.Contract.Diagnostics.Count == 0)
+                {
+                    spc.AddSource(HintName("Shiny.UniversalHubs.Generated", hub.MetadataSafeName + "_HubDispatcher"), Emitter.HubDispatcher(hub));
 
-                spc.AddSource(HintName("Shiny.UniversalHubs.Generated", hub.MetadataSafeName + "_HubDispatcher"), Emitter.HubDispatcher(hub));
-
-                if (!hub.Contract.IsLocal && externalPushes.Add(hub.Contract.FullName))
-                    spc.AddSource(HintName(hub.Contract.Namespace, hub.Contract.PushExtensionsName), Emitter.PushExtensions(hub.Contract));
+                    if (!hub.Contract.IsLocal && externalPushes.Add(hub.Contract.FullName))
+                        spc.AddSource(HintName(hub.Contract.Namespace, hub.Contract.PushExtensionsName), Emitter.PushExtensions(hub.Contract));
+                }
             }
         });
     }

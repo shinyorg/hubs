@@ -227,9 +227,11 @@ static class ModelBuilder
                     location,
                     $"'{hub.Name}' does not implement '{sig}' from {contract.Name} (a trailing CancellationToken parameter is optional)"
                 ));
-                continue;
             }
-            bindings.Add(new HubMethodBinding(cm.Name, match.PassToken!.Value));
+            else
+            {
+                bindings.Add(new HubMethodBinding(cm.Name, match.PassToken!.Value));
+            }
         }
 
         var ns = hub.ContainingNamespace.IsGlobalNamespace ? null : hub.ContainingNamespace.ToDisplayString();
@@ -305,11 +307,11 @@ static class ModelBuilder
         if (attribute == null)
             yield break;
 
-        foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols)
-        {
-            if (!assembly.Modules.Any(m => m.ReferencedAssemblies.Any(r => r.Name == "Shiny.UniversalHubs")))
-                continue;
+        var candidates = compilation.SourceModule.ReferencedAssemblySymbols
+            .Where(a => a.Modules.Any(m => m.ReferencedAssemblies.Any(r => r.Name == "Shiny.UniversalHubs")));
 
+        foreach (var assembly in candidates)
+        {
             foreach (var type in GetTypes(assembly.GlobalNamespace))
             {
                 if (type.TypeKind == TypeKind.Interface

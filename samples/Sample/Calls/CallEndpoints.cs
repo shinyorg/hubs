@@ -229,11 +229,8 @@ internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
         if (this.links.TryGetValue(link.Id, out var current) && current == link)
             this.links.TryRemove(link.Id, out _);
 
-        foreach (var (callId, route) in this.routes)
+        foreach (var (callId, route) in this.routes.Where(x => x.Value.A == link || x.Value.B == link))
         {
-            if (route.A != link && route.B != link)
-                continue;
-
             if (this.routes.TryRemove(callId, out _))
                 (route.A == link ? route.B : route.A).Send(CallProtocol.HangUp(callId, CallEndReason.Dropped, "The other side lost its connection"));
         }

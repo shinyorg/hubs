@@ -170,12 +170,12 @@ internal sealed class MediaSender : IAsyncDisposable
                 {
                     next = this.TakeNext();
                 }
-                if (next == null)
-                    continue;
-
-                await this.send(next, ct).ConfigureAwait(false);
-                Interlocked.Increment(ref this.packetsSent);
-                Interlocked.Add(ref this.bytesSent, next.Length);
+                if (next != null)
+                {
+                    await this.send(next, ct).ConfigureAwait(false);
+                    Interlocked.Increment(ref this.packetsSent);
+                    Interlocked.Add(ref this.bytesSent, next.Length);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

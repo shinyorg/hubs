@@ -530,19 +530,20 @@ internal sealed class HubCall : IHubCall
         {
             while (await session.Captured.WaitToReadAsync(ct).ConfigureAwait(false))
             {
+                // muted: captured audio is read and dropped
                 while (session.Captured.TryRead(out var pcm))
                 {
-                    if (this.muted)
-                        continue;
-
-                    var payload = codec == CallAudioCodec.ImaAdpcm ? this.adpcm.Encode(pcm.Span) : pcm;
-                    this.Link.Send(CallProtocol.Audio(this.Id, new AudioPacket(
-                        this.audioSeq++,
-                        codec,
-                        (uint)this.clock.ElapsedMilliseconds,
-                        payload
-                    )));
-                    Interlocked.Increment(ref this.audioSent);
+                    if (!this.muted)
+                    {
+                        var payload = codec == CallAudioCodec.ImaAdpcm ? this.adpcm.Encode(pcm.Span) : pcm;
+                        this.Link.Send(CallProtocol.Audio(this.Id, new AudioPacket(
+                            this.audioSeq++,
+                            codec,
+                            (uint)this.clock.ElapsedMilliseconds,
+                            payload
+                        )));
+                        Interlocked.Increment(ref this.audioSent);
+                    }
                 }
             }
         }
