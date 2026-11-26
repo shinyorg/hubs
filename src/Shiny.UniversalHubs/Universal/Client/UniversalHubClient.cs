@@ -283,7 +283,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         ArgumentNullException.ThrowIfNull(host);
         options ??= new HubConnectOptions();
 
-        var context = new HubClientContext(this.client, options.ToBle() with { AutomaticReconnect = this.options.AutomaticReconnect });
+        var context = new HubClientContext(this.client, options.ToHandshake() with { AutomaticReconnect = this.options.AutomaticReconnect });
         var order = options
             .Order(this.Transports)
             .Where(x => x.IsSupported && this.IsEnabled(x.GetType()) && host.Endpoints.ContainsKey(x.GetType()))

@@ -40,7 +40,7 @@ public class UniversalServerOptions
     /// How long a client whose link dropped (out of range, its app went to the background) is held for it to come back
     /// as the same connection - same id, groups and Items, with the pushes it missed replayed. While it is held the hub
     /// still counts it in ConnectedClients and MaxClients, and OnDisconnectedAsync only runs if the window runs out.
-    /// Covers BLE and the peer-to-peer transports (Multipeer, Nearby); Wi-Fi has its own resume. Zero turns it off.
+    /// Covers every first-party transport (BLE, HTTP, Multipeer, Nearby). Zero turns it off.
     /// </summary>
     public TimeSpan ResumeWindow { get; set; } = TimeSpan.FromSeconds(30);
 

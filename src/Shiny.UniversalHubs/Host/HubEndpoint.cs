@@ -4,7 +4,7 @@ using Shiny.UniversalHubs.Protocol;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// How a hub reaches one client connected through another transport (Wi-Fi, ...). Implemented by that transport.
+/// How a hub reaches one client, through the transport it is connected over. Implemented by that transport.
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IHubPeerChannel
@@ -95,7 +95,7 @@ public interface IHubEndpoint
 
     /// <summary>
     /// Lets a connected client resume after a dropped link. Returns the secret token to hand the client, or null when the
-    /// host doesn't hold dropped clients. A transport with its own resume (Wi-Fi) doesn't call it.
+    /// host doesn't hold dropped clients. A transport with its own resume doesn't call it.
     /// </summary>
     string? EnableResume(string connectionId) => null;
 

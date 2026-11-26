@@ -2,7 +2,7 @@ namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Protocol limits, app-wide for hosts and clients alike. Set them with AddUniversalServer's Protocol or
-/// AddBleHubClient's options.
+/// AddUniversalHubClient's Protocol.
 /// </summary>
 public class HubProtocolOptions
 {

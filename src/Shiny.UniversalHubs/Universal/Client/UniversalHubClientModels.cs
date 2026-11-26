@@ -140,7 +140,7 @@ public sealed record HubConnectOptions(
             .ToList();
     }
 
-    internal HubHandshakeOptions ToBle() => new(this.Name, this.AppVersion, this.Properties);
+    internal HubHandshakeOptions ToHandshake() => new(this.Name, this.AppVersion, this.Properties);
 }
 
 

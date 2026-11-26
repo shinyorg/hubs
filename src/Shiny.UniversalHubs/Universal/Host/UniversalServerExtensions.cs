@@ -131,7 +131,7 @@ public sealed class UniversalServerBuilder
 
 
     /// <summary>
-    /// Serves <typeparamref name="THub"/> - a <see cref="UniversalHub{TContract}"/> or <see cref="BleHub{TContract}"/> - over
+    /// Serves <typeparamref name="THub"/> - a <see cref="UniversalHub{TContract}"/> - over
     /// the transports <paramref name="configure"/> picks (UseBluetoothLE, UseHttp, UseMultipeer, UseNearby; at least one)
     /// </summary>
     /// <param name="name">

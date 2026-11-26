@@ -7,18 +7,18 @@ using System.Text.Json.Serialization.Metadata;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// The wire shared by the peer-to-peer transports (Shiny.UniversalHubs.Multipeer, Shiny.UniversalHubs.Nearby). One radio
-/// session per hub connection, carrying reliable, ordered messages:
+/// The hub session shared by HTTP (one WebSocket per hub connection), Multipeer and Nearby (one radio session or channel
+/// per hub connection), carrying reliable, ordered messages:
 /// <code>
 /// [0]     protocol version
 /// [1]     kind
 /// [2..5]  message id (little endian) - correlates replies, stream items and cancels with their call
 /// [6]     name length
-/// [7..]   name (UTF-8): the hub's characteristic UUID, method or event
+/// [7..]   name (UTF-8): the hub's name (handshake, resume), method or event
 /// [...]   payload: hub arguments and results exactly as IHubSerializer wrote them, or a control record as JSON
 /// </code>
-/// Unlike Wi-Fi, values are never re-framed as JSON, so any IHubSerializer works. Files travel as the radio's own
-/// file transfers, named <see cref="FileResourcePrefix"/> + the request's message id.
+/// Values are never re-framed, so any IHubSerializer works. Files travel as the link's own file transfers (radio resources,
+/// or chunks on the WebSocket), named <see cref="FileResourcePrefix"/> + the request's message id.
 /// </summary>
 public static class PeerProtocol
 {
@@ -160,7 +160,7 @@ public sealed record PeerRename(string? Name);
 public sealed record PeerFileRequest(bool Upload, string Name, long? Size);
 
 /// <summary>
-/// The host's answer to a file request. <paramref name="Status"/> uses HTTP's codes so both Wi-Fi transports read alike:
+/// The host's answer to a file request. <paramref name="Status"/> uses HTTP's status codes:
 /// 200 accepted, 400 bad name, 403 refused, 404 missing or no files, 409 exists, 413 too big.
 /// </summary>
 public sealed record PeerFileReply(int Status, string? Message, long? Length);

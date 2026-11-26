@@ -6,25 +6,25 @@ namespace Shiny.UniversalHubs;
 internal static class HubCoreServiceCollectionExtensions
 {
     /// <summary>
-    /// Adjusts the app-wide protocol limits - AddUniversalServer's Protocol and AddBleHubClient's options call it
+    /// Adjusts the app-wide protocol limits - AddUniversalServer's Protocol and AddUniversalHubClient's Protocol call it
     /// </summary>
     public static IServiceCollection ConfigureHubProtocol(this IServiceCollection services, Action<HubProtocolOptions> configure)
     {
         services.AddHubCore();
-        services.AddSingleton<IConfigureBleHubProtocol>(new ConfigureHubProtocol(configure));
+        services.AddSingleton<IConfigureHubProtocol>(new ConfigureHubProtocol(configure));
         return services;
     }
 
 
     /// <summary>
-    /// Registers the shared protocol services. Called by AddUniversalServer / AddBleHubClient.
+    /// Registers the shared protocol services. Called by AddUniversalServer / AddUniversalHubClient.
     /// </summary>
     public static IServiceCollection AddHubCore(this IServiceCollection services)
     {
         services.TryAddSingleton(sp =>
         {
             var options = new HubProtocolOptions();
-            foreach (var c in sp.GetServices<IConfigureBleHubProtocol>())
+            foreach (var c in sp.GetServices<IConfigureHubProtocol>())
                 c.Configure(options);
             return options;
         });
@@ -35,12 +35,12 @@ internal static class HubCoreServiceCollectionExtensions
 }
 
 
-internal interface IConfigureBleHubProtocol
+internal interface IConfigureHubProtocol
 {
     void Configure(HubProtocolOptions options);
 }
 
-internal sealed class ConfigureHubProtocol(Action<HubProtocolOptions> action) : IConfigureBleHubProtocol
+internal sealed class ConfigureHubProtocol(Action<HubProtocolOptions> action) : IConfigureHubProtocol
 {
     public void Configure(HubProtocolOptions options) => action(options);
 }

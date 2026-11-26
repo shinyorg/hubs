@@ -3,7 +3,7 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// An ordered, bidirectional packet pipe beside one hub connection, for live media (audio and video calls). It skips the
 /// hub's message framing and serializer: you send and receive raw packets. Over BLE it is an L2CAP channel of its own;
-/// another transport (Wi-Fi) can carry it too.
+/// any transport can carry it.
 ///
 /// Packets arrive whole and in the order they were sent, or the channel closes - there is no partial or reordered
 /// delivery. It closes when either side disposes it, when its link fails, and when the hub connection it belongs to ends.

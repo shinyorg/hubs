@@ -7,7 +7,7 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// Serves universal hubs over Nearby Connections. The host advertises once under the Nearby service id, listing its
 /// running hubs, and every channel a client opens becomes a hub session of its own. Each session reaches its hub through
-/// the blehubs transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with every other transport.
+/// the hub transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with every other transport.
 /// </summary>
 public sealed class NearbyHostTransport : IHubTransport, IPeerHostTransport
 {

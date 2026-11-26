@@ -10,7 +10,7 @@ namespace Shiny.UniversalHubs;
 /// Serves universal hubs over MultipeerConnectivity. The host advertises once under the Multipeer service type, listing its
 /// running hubs, and accepts every invitation into a session of its own - one session per hub connection, so the 8-peer
 /// limit of an MCSession never applies and clients never mesh with each other. Each session reaches its hub through the
-/// blehubs transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with BLE and HTTP clients.
+/// hub transport seam, so it shares Clients, Groups, MaxClients and ValidateClient with BLE and HTTP clients.
 /// </summary>
 public sealed class MultipeerHostTransport : IHubTransport, IPeerHostTransport
 {

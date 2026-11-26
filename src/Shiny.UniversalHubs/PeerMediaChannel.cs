@@ -5,7 +5,7 @@ namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// A media channel over the hub connection's own peer-link session (Multipeer, Nearby): one MediaPacket message is one packet. Reliable and
-/// ordered like L2CAP and the Wi-Fi WebSocket, so signalling can share the pipe. The same class serves both ends.
+/// ordered like L2CAP, so signalling can share the pipe. The same class serves both ends.
 /// </summary>
 internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IHubMediaChannel
 {
