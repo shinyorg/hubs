@@ -19,7 +19,7 @@ public class DiscoveryTests
     readonly FakeBleManager ble = new();
 
 
-    ServiceProvider Build(bool withServer, string serviceUuid = HubProtocolOptions.DefaultServiceUuid)
+    ServiceProvider Build(bool withServer, string serviceUuid = HubProtocolOptions.DefaultServiceUuid, string? scanFor = null)
     {
         var services = new ServiceCollection()
             .AddSingleton<IBleHostingManager>(this.hosting)
@@ -29,7 +29,7 @@ public class DiscoveryTests
         if (withServer)
             services.AddUniversalServer(s => s.Configure(o => o.LocalName = "Me").AddHub<TestHub>("test", h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, TestChar)));
 
-        services.AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(serviceUuid, TestChar));
+        services.AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(serviceUuid, TestChar, scanFor));
         return services.BuildServiceProvider();
     }
 
@@ -152,5 +152,23 @@ public class DiscoveryTests
         var host = new HubHostInfo("Host", "Host", null).With(typeof(BleClientTransport), new BleHubEndpoint(stale, "Host", -50), []);
         await Assert.ThrowsAnyAsync<BleException>(() => client.Connect(host));
         Assert.True(current.ConnectCalled);
+    }
+
+
+    [Fact]
+    public async Task AClientScansForItsHubsServiceUnlessToldOtherwise()
+    {
+        await using (var sp = this.Build(withServer: false, serviceUuid: Custom))
+        {
+            using var _ = this.Watch(sp).Scan;
+            Assert.Equal([Custom], this.ble.LastScan!.ServiceUuids);
+        }
+
+        // a hub whose service isn't advertised is found through one the host does advertise
+        await using (var sp = this.Build(withServer: false, serviceUuid: Custom, scanFor: "180D"))
+        {
+            using var _ = this.Watch(sp).Scan;
+            Assert.Equal(["0000180d-0000-1000-8000-00805f9b34fb"], this.ble.LastScan!.ServiceUuids);
+        }
     }
 }

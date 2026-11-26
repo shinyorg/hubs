@@ -387,8 +387,9 @@ internal sealed class BleFrameLink(
         await peripheral.ConnectAsync(new ConnectionConfig(false), cancellationToken).ConfigureAwait(false);
         var attMtu = await NegotiateMtu(peripheral, logger, cancellationToken).ConfigureAwait(false);
 
-        // fail fast if the host does not serve this hub
-        await peripheral.GetCharacteristicAsync(serviceUuid, characteristicUuid, cancellationToken).ConfigureAwait(false);
+        // fail fast, and clearly, if the host does not serve this hub over BLE - a client that found the host through
+        // another service (scanFor) learns here whether the hub's own service is there
+        await this.FindHubCharacteristic(cancellationToken).ConfigureAwait(false);
 
         var subscribed = peripheral.WaitForCharacteristicSubscriptionAsync(serviceUuid, characteristicUuid, cancellationToken);
         this.AddSubscription(peripheral
@@ -409,6 +410,30 @@ internal sealed class BleFrameLink(
             .Subscribe(__ => transport.OnLinkLost(new HubDisconnect(HubDisconnectReason.ClientTimeout))));
 
         return attMtu;
+    }
+
+
+    async Task FindHubCharacteristic(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await peripheral.GetCharacteristicAsync(serviceUuid, characteristicUuid, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // iOS can hand back services it cached from an earlier connection - look again before giving up
+            logger?.LogDebug(ex, "Hub characteristic {Characteristic} not found on {Peripheral} - discovering services again", characteristicUuid, peripheral.Uuid);
+        }
+
+        try
+        {
+            await peripheral.GetCharacteristicAsync(serviceUuid, characteristicUuid, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new HubException($"{peripheral.Name ?? peripheral.Uuid} does not serve this hub over Bluetooth LE - no characteristic {characteristicUuid} in service {serviceUuid}", ex);
+        }
     }
 
 

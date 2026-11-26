@@ -96,7 +96,7 @@ public class RegistrationTests
     public void ServerRefusesInvalidNamesAndUuids()
     {
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("has space", h => h.UseBluetoothLE(Custom, TestChar))));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE("180D", TestChar))));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE("18GD", TestChar))));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, "not-a-uuid"))));
     }
 
@@ -126,7 +126,7 @@ public class RegistrationTests
     [Fact]
     public void ClientRefusesMistakes()
     {
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE("180D", TestChar)));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE("18GD", TestChar)));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(Custom, "nope")));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("not valid", o => o.UseHttp()));
         Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", _ => { }));

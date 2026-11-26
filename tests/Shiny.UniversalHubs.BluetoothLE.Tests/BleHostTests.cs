@@ -219,7 +219,7 @@ public class BleHostTests : IAsyncLifetime
     [Fact]
     public void AnInvalidServiceUuidIsRefused()
     {
-        this.serviceUuid = "180D";
+        this.serviceUuid = "18GD";
         Assert.Throws<ArgumentException>(() => this.Build());
     }
 

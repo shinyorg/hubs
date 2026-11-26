@@ -12,13 +12,14 @@ namespace Shiny.UniversalHubs;
 /// <summary>
 /// What a hub was told by UseBluetoothLE: the GATT service and the characteristic it is served on
 /// </summary>
-internal sealed record BleHubSettings(string ServiceUuid, string CharacteristicUuid);
+/// <param name="Advertise">Whether the hub's service is in the host's advertisement while the hub runs</param>
+internal sealed record BleHubSettings(string ServiceUuid, string CharacteristicUuid, bool Advertise = true);
 
 
 /// <summary>
 /// What a dynamic hub was told by UseBluetoothLE: its characteristic, and its service when not the default
 /// </summary>
-internal sealed record BleDynamicHubSettings(string? ServiceUuid, string CharacteristicUuid);
+internal sealed record BleDynamicHubSettings(string? ServiceUuid, string CharacteristicUuid, bool Advertise);
 
 
 /// <summary>
@@ -101,7 +102,10 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
     readonly ConcurrentDictionary<IHubBinding, FrameHostSession> sessions = new();
     readonly ConcurrentDictionary<IHubBinding, byte> running = new();
     readonly Dictionary<IHubBinding, IGattCharacteristic> characteristics = new();
-    string? serviceUuid;
+    // each GATT service up, with the hubs whose characteristics are in it
+    readonly Dictionary<string, List<IHubBinding>> gattServices = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<IHubBinding> warnedUnadvertised = new();
+    IReadOnlyList<string> advertised = [];
     L2CapInstance? fileServer;
     L2CapInstance? mediaServer;
     Timer? sweepTimer;
@@ -190,9 +194,9 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
                     startedInfrastructure = true;
                 }
 
-                // one GATT service holds every hub - hubs that are stopped stay in it but refuse handshakes, so starting/stopping
-                // one hub never yanks the service out from under another hub's clients
-                await this.EnsureService().ConfigureAwait(false);
+                // a GATT service per service UUID, holding every hub in it - hubs that are stopped stay in it but refuse
+                // handshakes, so starting/stopping one hub never yanks the service out from under another hub's clients
+                await this.EnsureServices(starting).ConfigureAwait(false);
 
                 foreach (var hub in starting)
                 {
@@ -201,6 +205,7 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
                 }
 
                 await this.UpdateAdvertising().ConfigureAwait(false);
+                this.WarnUnadvertised(starting);
                 this.logger?.LogInformation("BLE hosting {Hubs}", String.Join(", ", starting.Select(x => x.Name)));
             }
             catch
@@ -208,7 +213,7 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
                 foreach (var hub in starting)
                     this.running.TryRemove(hub, out _);
 
-                this.RemoveServiceWhenUnused();
+                this.RemoveUnusedServices();
                 if (startedInfrastructure || !this.AnyRunning)
                     await this.StopInfrastructure().ConfigureAwait(false);
                 throw;
@@ -236,9 +241,11 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
 
             await Task.WhenAll(stopping.Select(x => this.DisconnectAll(x, disconnect))).ConfigureAwait(false);
 
-            // the other hubs share the service and the advertisement - both stay until the last hub stops
-            this.RemoveServiceWhenUnused();
-            if (!this.AnyRunning)
+            // a service, and its place in the advertisement, stay while another running hub shares it
+            this.RemoveUnusedServices();
+            if (this.AnyRunning)
+                await this.UpdateAdvertising().ConfigureAwait(false);
+            else
                 await this.StopInfrastructure().ConfigureAwait(false);
 
             this.logger?.LogInformation("Stopped BLE hosting of {Hubs}: {Reason}", String.Join(", ", stopping.Select(x => x.Name)), disconnect.Description);
@@ -273,11 +280,18 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
         if (hubs.Any(x => x.GetSettings<BleHubSettings>()!.CharacteristicUuid.Equals(dynamic.CharacteristicUuid, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"Characteristic {dynamic.CharacteristicUuid} is already used by another hub - each hub needs its own");
 
-        var service = dynamic.ServiceUuid
-            ?? this.options.DynamicServiceUuid
-            ?? hubs.Select(x => x.GetSettings<BleHubSettings>()!.ServiceUuid).FirstOrDefault()
-            ?? HubProtocolOptions.DefaultServiceUuid;
-        return new BleHubSettings(BleUuid.Normalize(service, nameof(dynamic.ServiceUuid)), dynamic.CharacteristicUuid);
+        var service = BleUuid.Normalize(
+            dynamic.ServiceUuid
+                ?? this.options.DynamicServiceUuid
+                ?? hubs.Select(x => x.GetSettings<BleHubSettings>()!.ServiceUuid).FirstOrDefault()
+                ?? HubProtocolOptions.DefaultServiceUuid,
+            nameof(dynamic.ServiceUuid)
+        );
+        var settings = new BleHubSettings(service, dynamic.CharacteristicUuid, dynamic.Advertise);
+
+        // the advertisement must still fit with this hub's service in it
+        BleAdvertisement.Check(hubs.Select(x => x.GetSettings<BleHubSettings>()!).Append(settings));
+        return settings;
     }
 
 
@@ -291,7 +305,7 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
     public void Dispose()
     {
         this.running.Clear();
-        this.RemoveServiceWhenUnused();
+        this.RemoveUnusedServices();
 
         // a host that never started has nothing on the radio to stop - and may be on a device without a usable one
         if (this.infrastructureRunning)
@@ -301,26 +315,38 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
     }
 
 
-    async Task EnsureService()
+    /// <summary>
+    /// Puts up the GATT service of each starting hub, with every hub in that service. A hub added since its service went
+    /// up (a dynamic hub) has no characteristic in it, and a GATT service can't gain one - that service is rebuilt.
+    /// </summary>
+    async Task EnsureServices(IReadOnlyList<IHubBinding> starting)
     {
-        var hubs = this.BleHubs.ToList();
-        if (this.serviceUuid != null)
+        var all = this.BleHubs.ToList();
+        var wanted = starting
+            .Select(x => x.GetSettings<BleHubSettings>()!.ServiceUuid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var serviceUuid in wanted)
         {
-            if (hubs.All(this.characteristics.ContainsKey))
-                return;
-
-            // a hub added since the service went up has no characteristic in it, and a GATT service can't gain one - rebuild
-            // it. BLE clients of the other hubs lose their subscriptions with it, so they're asked to reconnect first.
-            var rebuild = new HubDisconnect(HubDisconnectReason.ServerShutdown, "The host's hubs changed - reconnect");
-            await Task.WhenAll(this.characteristics.Keys.ToList().Select(x => this.DisconnectAll(x, rebuild))).ConfigureAwait(false);
-
-            this.hosting.RemoveService(this.serviceUuid);
-            this.serviceUuid = null;
-            this.characteristics.Clear();
-            this.logger?.LogInformation("Rebuilding the GATT service for a new hub");
+            var hubs = all.Where(x => x.GetSettings<BleHubSettings>()!.ServiceUuid.Equals(serviceUuid, StringComparison.OrdinalIgnoreCase)).ToList();
+            var up = this.gattServices.TryGetValue(serviceUuid, out var current) ? current : null;
+            if (up == null || !hubs.All(up.Contains))
+                await this.AddService(serviceUuid, hubs, up).ConfigureAwait(false);
         }
+    }
 
-        var serviceUuid = hubs.Select(x => x.GetSettings<BleHubSettings>()!.ServiceUuid).Distinct(StringComparer.OrdinalIgnoreCase).Single();
+
+    async Task AddService(string serviceUuid, IReadOnlyList<IHubBinding> hubs, IReadOnlyList<IHubBinding>? replacing)
+    {
+        if (replacing != null)
+        {
+            // its clients lose their subscriptions with it, so they're asked to reconnect first
+            var rebuild = new HubDisconnect(HubDisconnectReason.ServerShutdown, "The host's hubs changed - reconnect");
+            await Task.WhenAll(replacing.Select(x => this.DisconnectAll(x, rebuild))).ConfigureAwait(false);
+            this.RemoveService(serviceUuid);
+            this.logger?.LogInformation("Rebuilding GATT service {Service} for a new hub", serviceUuid);
+        }
 
         // a previous run that crashed may have left the service behind
         this.hosting.RemoveService(serviceUuid);
@@ -335,31 +361,47 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
                 );
             }
         }).ConfigureAwait(false);
-        this.serviceUuid = serviceUuid;
+        this.gattServices[serviceUuid] = hubs.ToList();
     }
 
 
-    /// <summary>
-    /// Removes the GATT service once no hub is running
-    /// </summary>
-    void RemoveServiceWhenUnused()
+    void RemoveService(string serviceUuid)
     {
-        if (this.serviceUuid == null || this.AnyRunning)
+        if (!this.gattServices.Remove(serviceUuid, out var hubs))
             return;
 
-        this.hosting.RemoveService(this.serviceUuid);
-        this.serviceUuid = null;
-        this.characteristics.Clear();
+        this.hosting.RemoveService(serviceUuid);
+        foreach (var hub in hubs)
+            this.characteristics.Remove(hub);
     }
 
 
     /// <summary>
-    /// Advertises the service while any hub is running - starting or stopping one hub beside another changes nothing on air.
-    /// <paramref name="force"/> restarts the advertisement (the name has changed).
+    /// Takes down each GATT service none of whose hubs is running
+    /// </summary>
+    void RemoveUnusedServices()
+    {
+        var unused = this.gattServices.Where(x => !x.Value.Any(this.running.ContainsKey)).Select(x => x.Key).ToList();
+        foreach (var serviceUuid in unused)
+            this.RemoveService(serviceUuid);
+    }
+
+
+    /// <summary>
+    /// Advertises the services of the running hubs set up to be advertised - a stopped hub's service leaves the
+    /// advertisement unless another running hub shares it. <paramref name="force"/> restarts it (the name has changed).
     /// </summary>
     async Task UpdateAdvertising(bool force = false)
     {
-        if (!force && this.hosting.IsAdvertising)
+        var wanted = this.running.Keys
+            .Select(x => x.GetSettings<BleHubSettings>()!)
+            .Where(x => x.Advertise)
+            .Select(x => x.ServiceUuid)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!force && this.hosting.IsAdvertising && wanted.SequenceEqual(this.advertised, StringComparer.OrdinalIgnoreCase))
             return;
 
         if (this.hosting.IsAdvertising)
@@ -367,10 +409,30 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
             this.hosting.StopAdvertising();
             this.localAdvertisement?.Clear();
         }
+        this.advertised = [];
 
-        var uuid = this.serviceUuid!;
-        await this.hosting.StartAdvertising(new AdvertisementOptions(this.serverOptions.LocalName, [uuid])).ConfigureAwait(false);
-        this.localAdvertisement?.Set(uuid, this.serverOptions.LocalName);
+        if (wanted.Count == 0)
+            return;
+
+        await this.hosting.StartAdvertising(new AdvertisementOptions(this.serverOptions.LocalName, wanted.ToArray())).ConfigureAwait(false);
+        this.advertised = wanted;
+        this.localAdvertisement?.Set(wanted, this.serverOptions.LocalName);
+    }
+
+
+    /// <summary>
+    /// A hub that isn't advertised is only found by a client scanning for another service of this host (scanFor) or over
+    /// another transport - said once per hub
+    /// </summary>
+    void WarnUnadvertised(IEnumerable<IHubBinding> hubs)
+    {
+        foreach (var hub in hubs.Where(x => !x.GetSettings<BleHubSettings>()!.Advertise && this.warnedUnadvertised.Add(x)))
+        {
+            this.logger?.LogWarning(
+                "{Hub} isn't advertised over BLE - its clients find this host by scanning for another service it advertises (UseBluetoothLE's scanFor) or over another transport",
+                hub.Name
+            );
+        }
     }
 
 
@@ -391,6 +453,7 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
         if (this.hosting.IsAdvertising)
             this.hosting.StopAdvertising();
 
+        this.advertised = [];
         this.localAdvertisement?.Clear();
         return Task.CompletedTask;
     }

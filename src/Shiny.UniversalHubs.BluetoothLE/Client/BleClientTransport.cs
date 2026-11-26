@@ -15,16 +15,22 @@ public static class BleClientExtensions
     /// </summary>
     /// <param name="serviceUuid">The GATT service the host gave the hub's UseBluetoothLE</param>
     /// <param name="characteristicUuid">The hub's characteristic, as the host set it</param>
-    public static UniversalHubClientOptions UseBluetoothLE(this UniversalHubClientOptions options, string serviceUuid, string characteristicUuid)
+    /// <param name="scanFor">
+    /// The service to scan for when the hub's own isn't advertised (the host set advertise: false) - another service the
+    /// host advertises. Null scans for <paramref name="serviceUuid"/>.
+    /// </param>
+    public static UniversalHubClientOptions UseBluetoothLE(this UniversalHubClientOptions options, string serviceUuid, string characteristicUuid, string? scanFor = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         var service = BleUuid.Normalize(serviceUuid, nameof(serviceUuid));
         var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
+        var scan = scanFor == null ? service : BleUuid.Normalize(scanFor, nameof(scanFor));
 
         return options.UseTransport(
             sp => new BleClientTransport(
                 service,
                 characteristic,
+                scan,
                 sp.GetService<IBleManager>(),
                 sp.GetRequiredService<BleConnectionTracker>(),
                 sp.GetService<LocalHubAdvertisement>()
@@ -76,6 +82,7 @@ public sealed class BleClientTransport : IHubClientTransport
 {
     readonly string serviceUuid;
     readonly string characteristicUuid;
+    readonly string scanUuid;
     readonly IBleManager? ble;
     readonly BleConnectionTracker connections;
     readonly LocalHubAdvertisement? localAdvertisement;
@@ -84,6 +91,7 @@ public sealed class BleClientTransport : IHubClientTransport
     internal BleClientTransport(
         string serviceUuid,
         string characteristicUuid,
+        string scanUuid,
         IBleManager? ble,
         BleConnectionTracker connections,
         LocalHubAdvertisement? localAdvertisement
@@ -91,6 +99,7 @@ public sealed class BleClientTransport : IHubClientTransport
     {
         this.serviceUuid = serviceUuid;
         this.characteristicUuid = characteristicUuid;
+        this.scanUuid = scanUuid;
         this.ble = ble;
         this.connections = connections;
         this.localAdvertisement = localAdvertisement;
@@ -106,12 +115,12 @@ public sealed class BleClientTransport : IHubClientTransport
     public IObservable<HubHostSighting> Discover(HubClientContext client) => Observable
         .FromAsync(() => this.Ble.RequestAccessAsync())
         .SelectMany(access => access == AccessState.Available
-            ? this.Ble.Scan(new ScanConfig(serviceUuid))
+            ? this.Ble.Scan(new ScanConfig(this.scanUuid))
             : Observable.Throw<ScanResult>(new HubException($"Bluetooth is not available ({access})"))
         )
         // a scan on the device that is hosting can report the device's own advertisement - checked per result, since
         // this app's host can start or stop advertising mid-scan
-        .Where(x => localAdvertisement?.IsLocal(serviceUuid, x.AdvertisementData?.LocalName) != true)
+        .Where(x => localAdvertisement?.IsLocal(this.scanUuid, x.AdvertisementData?.LocalName) != true)
         .Select(x =>
         {
             var found = new BleHubEndpoint(x.Peripheral, x.AdvertisementData?.LocalName ?? x.Peripheral.Name, x.Rssi);
