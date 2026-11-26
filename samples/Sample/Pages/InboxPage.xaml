@@ -77,31 +77,8 @@
         </CollectionView>
 
         <VerticalStackLayout Grid.Row="2" Spacing="10">
-            <!-- how this device reaches people, and how they reach it: always on show -->
-            <Grid ColumnDefinitions="*,Auto">
-                <Label Text="🔌 Connect over" VerticalOptions="Center" />
-                <Picker Grid.Column="1" ItemsSource="{Binding ConnectChoices}" SelectedItem="{Binding ConnectChoice}" WidthRequest="120" />
-            </Grid>
-
-            <Label Text="📣 Broadcast over (your chat and the games you host)" />
-            <FlexLayout Wrap="Wrap" JustifyContent="Start" AlignItems="Center">
-                <HorizontalStackLayout Spacing="2" Margin="0,0,12,0">
-                    <Label Text="📶 Wi-Fi" VerticalOptions="Center" />
-                    <Switch IsToggled="{Binding BroadcastWifi}" />
-                </HorizontalStackLayout>
-                <HorizontalStackLayout Spacing="2" Margin="0,0,12,0" IsVisible="{Binding IsMultipeerSupported}">
-                    <Label Text="📡 Multipeer" VerticalOptions="Center" />
-                    <Switch IsToggled="{Binding BroadcastMultipeer}" />
-                </HorizontalStackLayout>
-                <HorizontalStackLayout Spacing="2" Margin="0,0,12,0" IsVisible="{Binding IsNearbySupported}">
-                    <Label Text="🛰️ Nearby" VerticalOptions="Center" />
-                    <Switch IsToggled="{Binding BroadcastNearby}" />
-                </HorizontalStackLayout>
-                <HorizontalStackLayout Spacing="2" Margin="0,0,12,0">
-                    <Label Text="🔵 Bluetooth" VerticalOptions="Center" />
-                    <Switch IsToggled="{Binding BroadcastBle}" />
-                </HorizontalStackLayout>
-            </FlexLayout>
+            <!-- how this device reaches people, and how they reach it - each transport on its own -->
+            <Button Text="🔌 Transports" Command="{Binding TransportsCommand}" />
 
             <!-- the rarely used things, tucked away -->
             <Button Text="{Binding ShowOptions, Converter={StaticResource BoolToTextConverter}, ConverterParameter='Hide options|More options'}"

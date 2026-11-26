@@ -17,7 +17,7 @@ public class GameSession
 {
     public const string HostAvatarFile = "avatar-host.jpg";
 
-    readonly BleHubHostOptions hostOptions;
+    readonly UniversalServerOptions hostOptions;
     readonly IHubContext<GameHub> hub;
     readonly IUniversalHubHost host;
     readonly IUniversalHubClient<IGameHub> client;
@@ -27,7 +27,7 @@ public class GameSession
 
 
     public GameSession(
-        BleHubHostOptions hostOptions,
+        UniversalServerOptions hostOptions,
         IHubContext<GameHub> hub,
         IUniversalHubHost host,
         IUniversalHubClient<IGameHub> client,
@@ -56,14 +56,14 @@ public class GameSession
     public GameState? State { get; private set; }
 
     /// <summary>
-    /// Host: what it is hosting over. Client: what it is connected over.
+    /// Host: the host transports it is hosting over. Client: the client transport it is connected over.
     /// </summary>
-    public HubTransports Transports { get; private set; }
+    public IReadOnlyList<object> Transports { get; private set; } = [];
 
     /// <summary>
-    /// Host: what it was asked to host over - Transports is what of that started
+    /// Host: the transport types it was asked to host over - Transports is what of that started
     /// </summary>
-    public HubTransports Requested { get; private set; }
+    public IReadOnlyList<Type> Requested { get; private set; } = [];
 
     public event EventHandler<GameState>? StateChanged;
     public event EventHandler<(string From, string Emoji)>? EmoteReceived;
@@ -84,7 +84,7 @@ public class GameSession
 
     // ---------- host ----------
 
-    public async Task StartHosting(string playerName, string? avatarPath, HubTransports over)
+    public async Task StartHosting(string playerName, string? avatarPath, IReadOnlyList<Type> over)
     {
         Directory.CreateDirectory(HostFilesDirectory);
         var hostAvatar = Path.Combine(HostFilesDirectory, HostAvatarFile);
@@ -99,7 +99,7 @@ public class GameSession
         await this.Game.Start(playerName, avatarPath == null ? null : HostAvatarFile);
 
         // BLE for nearby phones (on a plane), Wi-Fi for anyone on the same network (at home) - either one is enough.
-        // People → More options → "Broadcast over" picks which. Only the game starts: the chat is already running.
+        // the Transports page picks which. Only the game starts: the chat is already running.
         this.Requested = over;
         this.Transports = await this.host.StartHub<GameHub>(over);
 
@@ -191,7 +191,7 @@ public class GameSession
 
     // ---------- client ----------
 
-    public async Task JoinHost(HubHostInfo hostInfo, string playerName, string? avatarPath, PlayerSettings settings)
+    public async Task JoinHost(HubHostInfo hostInfo, string playerName, string? avatarPath)
     {
         // pushes arrive before Join returns - they must not be read as this device's last role (a past host would look
         // up the remote host's avatar in its own files)
@@ -203,9 +203,9 @@ public class GameSession
         if (Directory.Exists(ClientCacheDirectory))
             Directory.Delete(ClientCacheDirectory, true);
 
-        // Join → "Connect over" - Auto, or only the one picked
-        await this.client.Connect(hostInfo, settings.Route(new HubConnectOptions(playerName, AppInfo.Current.VersionString)));
-        this.Transports = this.client.Transport;
+        // over the first transport the host is seen on that the Transports page has on for connecting
+        await this.client.Connect(hostInfo, new HubConnectOptions(playerName, AppInfo.Current.VersionString));
+        this.Transports = this.client.Transport is { } over ? [over] : [];
         try
         {
             string? avatarFile = null;

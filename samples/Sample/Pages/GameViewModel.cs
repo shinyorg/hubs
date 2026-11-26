@@ -21,6 +21,7 @@ public partial class GameViewModel : ObservableObject,
     readonly IPlatform platform;
     readonly GameSession session;
     readonly PlayerSettings settings;
+    readonly TransportDriver transports;
     CancellationTokenSource? emoteTimer;
     string? xAvatarFile;
     string? oAvatarFile;
@@ -28,12 +29,13 @@ public partial class GameViewModel : ObservableObject,
     bool visible;
 
 
-    public GameViewModel(ShellServices shell, IPlatform platform, GameSession session, PlayerSettings settings)
+    public GameViewModel(ShellServices shell, IPlatform platform, GameSession session, PlayerSettings settings, TransportDriver transports)
     {
         this.shell = shell;
         this.platform = platform;
         this.session = session;
         this.settings = settings;
+        this.transports = transports;
         for (var i = 0; i < 9; i++)
             this.Cells.Add(new CellViewModel(i));
     }
@@ -48,22 +50,23 @@ public partial class GameViewModel : ObservableObject,
     public ObservableCollection<CellViewModel> Cells { get; } = new();
     public bool IsHost => this.session.IsHost;
 
-    public string Transport => (this.session.IsHost, this.session.Transports) switch
+    public string Transport
     {
-        (_, HubTransports.None) => "",
-        (true, var over) when this.session.Requested.HasFlag(HubTransports.Ble) && !over.HasFlag(HubTransports.Ble) => $"Hosting over {Describe(over)} (Bluetooth is unavailable)",
-        (true, var over) => $"Hosting over {Describe(over)}",
-        (false, var over) => $"Connected over {Describe(over)}"
-    };
+        get
+        {
+            var over = this.session.Transports;
+            if (over.Count == 0)
+                return "";
+            if (!this.session.IsHost)
+                return $"Connected over {TransportDriver.Describe(over)}";
 
-    // Multipeer is Apple to Apple - Wi-Fi, peer-to-peer Wi-Fi or Bluetooth, whichever the OS picks
-    static string Describe(HubTransports over) => String.Join(" and ", new[]
-    {
-        over.HasFlag(HubTransports.Http) ? "Wi-Fi" : null,
-        over.HasFlag(HubTransports.Multipeer) ? "Multipeer" : null,
-        over.HasFlag(HubTransports.Nearby) ? "Nearby" : null,
-        over.HasFlag(HubTransports.Ble) ? "Bluetooth" : null
-    }.Where(x => x != null));
+            // asked for, but it didn't start - the radio is off, or the platform doesn't have it
+            var missing = this.session.Requested.Where(t => !over.Any(x => x.GetType() == t)).ToList();
+            return missing.Count == 0
+                ? $"Hosting over {TransportDriver.Describe(over)}"
+                : $"Hosting over {TransportDriver.Describe(over)} ({TransportDriver.Describe(missing)} unavailable)";
+        }
+    }
     public string[] Emotes { get; } = ["👍", "😂", "😱", "🔥", "🤝"];
 
     [ObservableProperty] public partial string Status { get; set; } = "";
@@ -127,9 +130,9 @@ public partial class GameViewModel : ObservableObject,
         try
         {
             if (this.Join == null)
-                await this.session.StartHosting(this.settings.Name, this.settings.AvatarPath, this.settings.BroadcastOver);
+                await this.session.StartHosting(this.settings.Name, this.settings.AvatarPath, this.transports.HostTypes);
             else
-                await this.session.JoinHost(this.Join, this.settings.Name, this.settings.AvatarPath, this.settings);
+                await this.session.JoinHost(this.Join, this.settings.Name, this.settings.AvatarPath);
         }
         catch (Exception ex)
         {

@@ -26,7 +26,8 @@ public class ChatService
     readonly IHubContext<ChatHub> hub;
     readonly IUniversalHubHost host;
     readonly IUniversalHubClient<IChatHub> client;
-    readonly BleHubHostOptions hostOptions;
+    readonly UniversalServerOptions hostOptions;
+    readonly TransportDriver transports;
     readonly INotificationManager notifications;
     readonly PlayerSettings settings;
     readonly QuickTunnel tunnel;
@@ -41,7 +42,8 @@ public class ChatService
         IHubContext<ChatHub> hub,
         IUniversalHubHost host,
         IUniversalHubClient<IChatHub> client,
-        BleHubHostOptions hostOptions,
+        UniversalServerOptions hostOptions,
+        TransportDriver transports,
         INotificationManager notifications,
         PlayerSettings settings,
         QuickTunnel tunnel,
@@ -54,6 +56,7 @@ public class ChatService
         this.host = host;
         this.client = client;
         this.hostOptions = hostOptions;
+        this.transports = transports;
         this.notifications = notifications;
         this.settings = settings;
         this.tunnel = tunnel;
@@ -82,22 +85,10 @@ public class ChatService
     /// <summary>
     /// The transports this device's chat is open on
     /// </summary>
-    public HubTransports HostedOver => this.host.GetRunningTransports<ChatHub>();
+    public IReadOnlyList<IHubTransport> HostedOver => this.host.GetRunningTransports<ChatHub>();
 
     public QuickTunnel Tunnel => this.tunnel;
 
-
-    /// <summary>
-    /// Reopens the chat over <see cref="PlayerSettings.BroadcastOver"/> - StartHub only adds transports, so it stops
-    /// first. Visitors are dropped and come back over whatever is still open.
-    /// </summary>
-    public async Task<HubTransports> Reopen()
-    {
-        await this.host.StopHub<ChatHub>("The chat is reopening");
-        var over = await this.host.StartHub<ChatHub>(this.settings.BroadcastOver);
-        this.logger.LogInformation("Chat reopened over {Transports}", over);
-        return over;
-    }
 
     /// <summary>
     /// The conversation on screen - it doesn't raise notifications
@@ -124,12 +115,13 @@ public class ChatService
     /// </summary>
     public async Task Start()
     {
-        // conversations from earlier runs - offline until their people come back
-        foreach (var info in await this.actors.Get<IChatDirectory>(ChatDirectory.Me).All())
-        {
-            if (this.Find(info.Id) != null)
-                continue;
+        // the Transports page's client choices, remembered from the last run
+        await this.transports.ApplyClients();
 
+        // conversations from earlier runs - offline until their people come back
+        var earlier = (await this.actors.Get<IChatDirectory>(ChatDirectory.Me).All()).Where(x => this.Find(x.Id) == null);
+        foreach (var info in earlier)
+        {
             var conversation = new Conversation(info.Id, info.Name, info.IsVisiting) { Status = "offline" };
             var lines = await this.History(conversation).Lines();
             conversation.LastText = lines.LastOrDefault()?.Text ?? "";
@@ -139,8 +131,9 @@ public class ChatService
         try
         {
             this.hostOptions.LocalName ??= ShortName(this.settings.Name);
-            var over = await this.host.StartHub<ChatHub>(this.settings.BroadcastOver);
-            this.logger.LogInformation("Chat open over {Transports}", over);
+            // over the transports the Transports page has on for hosting
+            var over = await this.host.StartHub<ChatHub>(this.transports.HostTypes);
+            this.logger.LogInformation("Chat open over {Transports}", TransportDriver.Describe(over));
         }
         catch (Exception ex)
         {
@@ -220,14 +213,14 @@ public class ChatService
         if (this.client.Status != HubClientStatus.Disconnected)
             await this.client.Disconnect();
 
-        this.logger.LogInformation("Visiting {Host} - reachable over {Transports}, connecting over {Over}", info.Name, info.Transports, this.settings.ConnectChoice);
+        this.logger.LogInformation("Visiting {Host} - reachable over {Transports}", info.Name, TransportDriver.Describe(info.Transports));
 
-        // People → More options → "Connect over": Auto, or only the one picked
-        await this.client.Connect(info, this.settings.Route(new HubConnectOptions(
+        // over the first transport the host is seen on that the Transports page has on for connecting
+        await this.client.Connect(info, new HubConnectOptions(
             this.settings.Name,
             AppInfo.Current.VersionString,
             new Dictionary<string, string> { [InstallIdProperty] = PlayerSettings.InstallId }
-        )), cancellationToken);
+        ), cancellationToken);
 
         var id = "out:" + info.Key;
         var name = this.client.HostName ?? info.Name;
@@ -246,14 +239,14 @@ public class ChatService
 
 
     /// <summary>
-    /// The chat being visited is on another transport than the one picked to connect over, and the host is reachable
-    /// over the picked one - visiting again switches. Auto keeps whatever connected.
+    /// The chat being visited is on a transport the Transports page has since turned off for connecting, and the host is
+    /// reachable over one still on - visiting again switches
     /// </summary>
     public bool ShouldSwitchTransport(HubHostInfo host)
-        => this.settings.ConnectOver is var over and not HubTransports.None
-           && this.client.Status == HubClientStatus.Connected
-           && this.client.Transport != over
-           && host.Transports.HasFlag(over);
+        => this.client.Status == HubClientStatus.Connected
+           && this.client.Transport is { } current
+           && !this.client.IsEnabled(current.GetType())
+           && host.Transports.Any(this.client.IsEnabled);
 
 
     // ---------- both ----------
@@ -452,18 +445,13 @@ public partial class Conversation(string id, string name, bool isVisiting) : Obs
     public bool IsMine(ChatLine line) => this.IsVisiting ? !line.FromHost : line.FromHost;
 
 
-    public void SetOnline(string? connectionId, HubTransports transport)
+    /// <param name="transport">The host or client transport the person is connected over</param>
+    public void SetOnline(string? connectionId, object? transport)
     {
         this.ConnectionId = connectionId;
         this.IsOnline = true;
-        this.Status = transport switch
-        {
-            HubTransports.Ble => "🔵 here over Bluetooth",
-            HubTransports.Http => "📶 here over Wi-Fi / internet",
-            HubTransports.Multipeer => "📡 here over Multipeer",
-            HubTransports.Nearby => "🛰️ here over Nearby",
-            _ => "here"
-        };
+        var over = TransportDriver.Describe(transport);
+        this.Status = over == "" ? "here" : $"here over {over}";
         this.OnlineChanged?.Invoke(this, EventArgs.Empty);
     }
 

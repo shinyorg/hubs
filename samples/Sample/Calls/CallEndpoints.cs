@@ -10,14 +10,14 @@ namespace Sample.Calls;
 /// </summary>
 internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContract : class
 {
-    readonly IHubProxy<TContract> client;
+    readonly IUniversalHubClient<TContract> client;
     readonly HubCalls calls;
     readonly ILogger? logger;
     readonly SemaphoreSlim opening = new(1, 1);
     MediaLink? link;
 
 
-    public ClientCallEndpoint(IHubProxy<TContract> client, HubCalls calls)
+    public ClientCallEndpoint(IUniversalHubClient<TContract> client, HubCalls calls)
     {
         this.client = client;
         this.calls = calls;
@@ -70,7 +70,8 @@ internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContr
                 return open;
 
             var channel = await this.client.OpenMediaChannel(cancellationToken).ConfigureAwait(false);
-            var profile = ((HubProxy)(object)this.client).ExternalTransport != null ? CallProfile.Wifi : CallProfile.Ble;
+            // Multipeer and Nearby upgrade to Wi-Fi bandwidth, so only BLE gets the low-bandwidth profile
+            var profile = this.client.Transport is BleClientTransport ? CallProfile.Ble : CallProfile.Wifi;
             var link = new MediaLink(channel, "", profile, this.logger);
             link.KeyFrameNeeded += (_, callId) => this.calls.OnKeyFrameNeeded(callId);
             this.link = link;
@@ -113,21 +114,21 @@ internal sealed class ClientCallEndpoint<TContract> : ICallEndpoint where TContr
 internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
 {
     readonly HubCalls calls;
-    readonly BleHubHostOptions? hostOptions;
+    readonly UniversalServerOptions? hostOptions;
     readonly ILogger? logger;
     readonly ConcurrentDictionary<string, MediaLink> links = new();
     readonly ConcurrentDictionary<Guid, (MediaLink A, MediaLink B)> routes = new();
 
 
-    public HostCallRouter(IHubContext<THub> hub, BleHubHostOptions? hostOptions, HubCalls calls)
+    public HostCallRouter(IHubContext<THub> hub, UniversalServerOptions? hostOptions, HubCalls calls)
     {
         this.calls = calls;
         this.hostOptions = hostOptions;
         this.logger = calls.LoggerFactory?.CreateLogger<HostCallRouter<THub>>();
 
         if (hostOptions?.MediaChannels == null)
-            this.logger?.LogWarning("Calls need media channels - call EnableMediaChannels() in AddUniversalServer's Ble(...)");
-        hub.MediaChannelOpened += (_, e) => this.Attach(e.Client.Id, e.Channel);
+            this.logger?.LogWarning("Calls need media channels - call EnableMediaChannels() in AddUniversalServer's Configure(...)");
+        hub.MediaChannelOpened += (_, e) => this.Attach(e.Client, e.Channel);
     }
 
 
@@ -141,10 +142,11 @@ internal sealed class HostCallRouter<THub> : ICallEndpoint where THub : class
     internal int RelayedCalls => this.routes.Count;
 
 
-    void Attach(string connectionId, IHubMediaChannel channel)
+    void Attach(HubConnectedClient client, IHubMediaChannel channel)
     {
         // Multipeer and Nearby upgrade to Wi-Fi bandwidth, so only BLE gets the low-bandwidth profile
-        var profile = HubConnection.GetTransport(connectionId) == HubTransports.Ble ? CallProfile.Ble : CallProfile.Wifi;
+        var connectionId = client.Id;
+        var profile = HubConnection.From(client).Transport is BleHostTransport ? CallProfile.Ble : CallProfile.Wifi;
         var link = new MediaLink(channel, connectionId, profile, this.logger);
         link.KeyFrameNeeded += this.OnKeyFrameNeeded;
 

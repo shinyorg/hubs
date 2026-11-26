@@ -1,5 +1,4 @@
 using Microsoft.Maui.Graphics.Platform;
-using Shiny.UniversalHubs;
 
 namespace Sample.Services;
 
@@ -21,88 +20,6 @@ public class PlayerSettings
             }
             return id;
         }
-    }
-
-
-    /// <summary>
-    /// Multipeer is Apple to Apple - elsewhere it is not offered
-    /// </summary>
-    public static bool IsMultipeerSupported => OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsMacOS();
-
-    /// <summary>
-    /// The choices for <see cref="ConnectOver"/>, as the pickers show them
-    /// </summary>
-    /// <summary>
-    /// Nearby Connections is on Android, iOS and macOS
-    /// </summary>
-    public static bool IsNearbySupported => OperatingSystem.IsAndroid() || OperatingSystem.IsIOS() || OperatingSystem.IsMacOS();
-
-    public static IReadOnlyList<string> ConnectChoices { get; } = new[]
-    {
-        "Auto",
-        "Wi-Fi",
-        IsMultipeerSupported ? "Multipeer" : null,
-        IsNearbySupported ? "Nearby" : null,
-        "Bluetooth"
-    }.OfType<string>().ToList();
-
-
-    /// <summary>
-    /// How to join a host - None is Auto (Wi-Fi, then Multipeer, Nearby, Bluetooth). Any one transport means only that one,
-    /// so each can be tried on its own.
-    /// </summary>
-    public HubTransports ConnectOver
-    {
-        get => (HubTransports)Preferences.Get(nameof(this.ConnectOver), (int)HubTransports.None);
-        set => Preferences.Set(nameof(this.ConnectOver), (int)value);
-    }
-
-
-    /// <summary>
-    /// <see cref="ConnectOver"/> as a <see cref="ConnectChoices"/> label
-    /// </summary>
-    public string ConnectChoice
-    {
-        get => this.ConnectOver switch
-        {
-            HubTransports.Http => "Wi-Fi",
-            HubTransports.Multipeer when IsMultipeerSupported => "Multipeer",
-            HubTransports.Nearby when IsNearbySupported => "Nearby",
-            HubTransports.Ble => "Bluetooth",
-            _ => "Auto"
-        };
-        set => this.ConnectOver = value switch
-        {
-            "Wi-Fi" => HubTransports.Http,
-            "Multipeer" => HubTransports.Multipeer,
-            "Nearby" => HubTransports.Nearby,
-            "Bluetooth" => HubTransports.Ble,
-            _ => HubTransports.None
-        };
-    }
-
-
-    /// <summary>
-    /// Applies <see cref="ConnectOver"/> to a connection
-    /// </summary>
-    public HubConnectOptions Route(HubConnectOptions options) => this.ConnectOver switch
-    {
-        HubTransports.None => options,
-        var only => options with { Prefer = only, Allowed = only }
-    };
-
-
-    /// <summary>
-    /// What this device hosts its chat and games over - at least one
-    /// </summary>
-    public HubTransports BroadcastOver
-    {
-        get
-        {
-            var over = (HubTransports)Preferences.Get(nameof(this.BroadcastOver), (int)HubTransports.All) & HubTransports.All;
-            return over == HubTransports.None ? HubTransports.All : over;
-        }
-        set => Preferences.Set(nameof(this.BroadcastOver), (int)value);
     }
 
 

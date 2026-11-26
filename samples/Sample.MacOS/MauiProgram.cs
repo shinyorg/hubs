@@ -16,6 +16,8 @@ namespace Sample.MacOS;
 public static class MauiProgram
 {
     // the same hubs as the phone app - see samples/Sample/MauiProgram.cs
+    const string GameHubName = "game";
+    const string ChatHubName = "chat";
     const string ServiceUuid = "37625845-7287-4de0-92f8-0b8a25e755ec";
     const string GameHubCharacteristicUuid = "37625846-7287-4de0-92f8-0b8a25e755ec";
     const string GameMdnsServiceType = "_unigame._tcp";
@@ -52,52 +54,49 @@ public static class MauiProgram
 
         builder.Services.AddShinyActors(actors => actors.UseFileStorage(Path.Combine(FileSystem.AppDataDirectory, "actors")));
 
-        // blehubs only registers the BLE stacks on Android, iOS and Mac Catalyst: register Shiny's macOS builds here
+        // Shiny.UniversalHubs.BluetoothLE only registers the BLE stacks on Android, iOS and Mac Catalyst: register Shiny's macOS builds here
         builder.Services.AddBluetoothLE();
         builder.Services.AddBluetoothLeHosting();
 
         // ---- host: the same universal server as the phone app ----
         builder.Services.AddUniversalServer(server => server
-            .ServiceUuid(ServiceUuid)
+            .Configure(o =>
+            {
+                o.HostId = PlayerSettings.InstallId;
+                o.EnableFileTransfers(GameSession.HostFilesDirectory, ft => ft.MaxUploadSize = 25 * 1024 * 1024);
+                o.AuthorizeFile = req => IsSharedFile(req.FileName);
+                o.EnableMediaChannels();   // calls ride a media channel beside each hub connection
+            })
             .Multipeer(MultipeerServiceType)   // iPhones reach the Mac with no shared network
             .Nearby(NearbyServiceId)            // and Android phones too
-            .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
-            {
-                ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
-                ft.Authorize = req => IsSharedFile(req.Request.FileName);
-            }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
-            .Http(o =>
-            {
-                o.AuthorizeFile = req => IsSharedFile(req.FileName);
-                o.HostId = PlayerSettings.InstallId;
-            })
             .HttpServer(http => http.AddQuickTunnel())
-            .AddHub<GameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
-            {
-                o.MaxClients = 6;
-                o.ValidateClient = info => String.IsNullOrWhiteSpace(info.Name) ? "A player name is required" : null;
-            })
-            .AddHub<ChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
-            {
-                o.MaxClients = 20;
-                o.AllowTunnel = true;
-                o.ValidateClient = info => String.IsNullOrWhiteSpace(info.Name) ? "A name is required" : null;
-            })
+            .AddHub<GameHub>(GameHubName, hub => hub
+                .MaxClients(6)
+                .ValidateClient(info => String.IsNullOrWhiteSpace(info.Name) ? "A player name is required" : null)
+                .UseHttp(GameMdnsServiceType)
+                .UseMultipeer()
+                .UseNearby()
+                .UseBluetoothLE(ServiceUuid, GameHubCharacteristicUuid))
+            .AddHub<ChatHub>(ChatHubName, hub => hub
+                .MaxClients(20)
+                .ValidateClient(info => String.IsNullOrWhiteSpace(info.Name) ? "A name is required" : null)
+                .UseHttp(ChatMdnsServiceType, allowTunnel: true)
+                .UseMultipeer()
+                .UseNearby()
+                .UseBluetoothLE(ServiceUuid, ChatHubCharacteristicUuid))
         );
 
-        // ---- client: finds hosts over BLE, mDNS, Multipeer and Nearby ----
-        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
-        {
-            o.ServiceUuid = ServiceUuid;
-            o.Multipeer(MultipeerServiceType);
-            o.Nearby(NearbyServiceId);
-        });
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
-        {
-            o.ServiceUuid = ServiceUuid;
-            o.Multipeer(MultipeerServiceType);
-            o.Nearby(NearbyServiceId);
-        });
+        // ---- clients: find hosts over every transport, and connect over the first that works, in this order ----
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubName, o => o
+            .UseHttp(GameMdnsServiceType)
+            .UseMultipeer(MultipeerServiceType)
+            .UseNearby(NearbyServiceId)
+            .UseBluetoothLE(ServiceUuid, GameHubCharacteristicUuid));
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubName, o => o
+            .UseHttp(ChatMdnsServiceType)
+            .UseMultipeer(MultipeerServiceType)
+            .UseNearby(NearbyServiceId)
+            .UseBluetoothLE(ServiceUuid, ChatHubCharacteristicUuid));
 
         // calls, as on the phones
         builder.Services.AddHubCalls(calls => calls.Host<ChatHub>().Client<IChatHub>());

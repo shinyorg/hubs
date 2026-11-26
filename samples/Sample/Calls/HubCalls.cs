@@ -247,13 +247,13 @@ public sealed class HubCallsBuilder
     /// <summary>
     /// Calls on this host's <typeparamref name="THub"/>: it takes calls from its clients, calls them
     /// (<see cref="IHubCalls.CallClient{THub}"/>), and relays calls between them. The host needs media channels
-    /// (BleHubHostOptions.EnableMediaChannels).
+    /// (UniversalServerOptions.EnableMediaChannels).
     /// </summary>
     public HubCallsBuilder Host<THub>() where THub : class
     {
         this.Add(typeof(HostCallRouter<THub>), (sp, calls) => new HostCallRouter<THub>(
             sp.GetRequiredService<IHubContext<THub>>(),
-            sp.GetService<BleHubHostOptions>(),
+            sp.GetService<UniversalServerOptions>(),
             calls
         ));
         return this;
@@ -267,7 +267,7 @@ public sealed class HubCallsBuilder
     public HubCallsBuilder Client<TContract>() where TContract : class
     {
         this.Add(typeof(ClientCallEndpoint<TContract>), (sp, calls) => new ClientCallEndpoint<TContract>(
-            sp.GetRequiredService<IHubProxy<TContract>>(),
+            sp.GetRequiredService<IUniversalHubClient<TContract>>(),
             calls
         ));
         return this;

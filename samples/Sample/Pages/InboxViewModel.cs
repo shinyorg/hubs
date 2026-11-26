@@ -49,49 +49,12 @@ public partial class InboxViewModel(
 
     public IReadOnlyList<string> VideoCodecs => CallService.VideoCodecChoices;
 
-    public IReadOnlyList<string> ConnectChoices => PlayerSettings.ConnectChoices;
-    public bool IsMultipeerSupported => PlayerSettings.IsMultipeerSupported;
-    public bool IsNearbySupported => PlayerSettings.IsNearbySupported;
-
     /// <summary>
-    /// How to reach people: Auto, or only Wi-Fi, Multipeer, Nearby or Bluetooth
+    /// Host and client transports, one by one - the transport driver
     /// </summary>
-    public string ConnectChoice
-    {
-        get => settings.ConnectChoice;
-        set
-        {
-            settings.ConnectChoice = value;
-            this.OnPropertyChanged();
-        }
-    }
+    [RelayCommand]
+    Task Transports() => shell.Navigator.NavigateToTransports();
 
-    /// <summary>
-    /// What others can reach this device's chat and games over
-    /// </summary>
-    public bool BroadcastBle
-    {
-        get => settings.BroadcastOver.HasFlag(HubTransports.Ble);
-        set => this.SetBroadcast(HubTransports.Ble, value);
-    }
-
-    public bool BroadcastWifi
-    {
-        get => settings.BroadcastOver.HasFlag(HubTransports.Http);
-        set => this.SetBroadcast(HubTransports.Http, value);
-    }
-
-    public bool BroadcastMultipeer
-    {
-        get => settings.BroadcastOver.HasFlag(HubTransports.Multipeer);
-        set => this.SetBroadcast(HubTransports.Multipeer, value);
-    }
-
-    public bool BroadcastNearby
-    {
-        get => settings.BroadcastOver.HasFlag(HubTransports.Nearby);
-        set => this.SetBroadcast(HubTransports.Nearby, value);
-    }
 
     /// <summary>
     /// The video codec this phone offers on calls - force H264 or Jpeg to test each
@@ -127,42 +90,9 @@ public partial class InboxViewModel(
     void ShowOpenOn()
     {
         var over = chat.HostedOver;
-        this.OpenOn = over == HubTransports.None
-            ? "⚠️ Others can't reach you - check Bluetooth and Wi-Fi"
-            : "Others can reach you over " + String.Join(" + ", new[]
-            {
-                over.HasFlag(HubTransports.Ble) ? "🔵 Bluetooth" : null,
-                over.HasFlag(HubTransports.Http) ? "📶 Wi-Fi" : null,
-                over.HasFlag(HubTransports.Multipeer) ? "📡 Multipeer" : null,
-                over.HasFlag(HubTransports.Nearby) ? "🛰️ Nearby" : null
-            }.Where(x => x != null));
-    }
-
-
-    async void SetBroadcast(HubTransports transport, bool on)
-    {
-        var over = on ? settings.BroadcastOver | transport : settings.BroadcastOver & ~transport;
-        if (over == settings.BroadcastOver)
-            return;
-
-        if (over == HubTransports.None)
-        {
-            // the switch flips back - there must be some way in
-            this.OnPropertyChanged(String.Empty);
-            await shell.Dialogs.Alert("Broadcast over", "Keep at least one way open");
-            return;
-        }
-
-        settings.BroadcastOver = over;
-        try
-        {
-            await chat.Reopen();
-        }
-        catch (Exception ex)
-        {
-            await shell.Dialogs.Alert("Could not reopen the chat", ex.Message);
-        }
-        this.ShowOpenOn();
+        this.OpenOn = over.Count == 0
+            ? "⚠️ Others can't reach you - check Bluetooth and Wi-Fi, and the Transports page"
+            : "Others can reach you over " + TransportDriver.Describe(over);
     }
 
 
@@ -245,17 +175,17 @@ public partial class InboxViewModel(
 
     void OnFound(HubHostInfo found)
     {
-        if (found.Transports == HubTransports.None)
+        if (found.Transports.Count == 0)
             return;   // gone - it ages out like any other host
 
-        // heard over Bluetooth just now: alive. Wi-Fi only: listed, but alive only once a probe says so
-        this.OnSeen(found, found.Ble != null ? DateTimeOffset.UtcNow : null);
+        // heard over a radio just now: alive. Wi-Fi only: listed, but alive only once a probe says so
+        this.OnSeen(found, IsWifiOnly(found) ? null : DateTimeOffset.UtcNow);
     }
 
 
     async Task CheckWifiOnly(CancellationToken ct)
     {
-        var hosts = this.People.Where(x => x.Host is { Ble: null, Http: not null }).Select(x => x.Host!).ToList();
+        var hosts = this.People.Where(x => x.Host is { } h && IsWifiOnly(h)).Select(x => x.Host!).ToList();
         var alive = await Task.WhenAll(hosts.Select(async host => (Host: host, Alive: await IsAlive(host, ct))));
         var now = DateTimeOffset.UtcNow;
         platform.InvokeOnMainThread(() =>
@@ -270,11 +200,15 @@ public partial class InboxViewModel(
     }
 
 
+    // mDNS can still list a host that was killed - only a probe tells
+    static bool IsWifiOnly(HubHostInfo host) => host.Transports.Count == 1 && host.IsSeenOver<HttpClientTransport>();
+
+
     static async Task<bool> IsAlive(HubHostInfo host, CancellationToken ct)
     {
-        if (host.Ble != null)
+        if (!IsWifiOnly(host))
             return true;
-        if (host.Http is not { } http)
+        if (host.Endpoint<HttpHubEndpoint>()?.Server is not { } http)
             return false;
 
         // is anything listening where mDNS says it is?
@@ -322,11 +256,8 @@ public partial class InboxViewModel(
     // someone not seen for a while is no longer here - unless they're connected to this device right now
     void ForgetStale(DateTimeOffset now)
     {
-        foreach (var person in this.People.ToList())
+        foreach (var person in this.People.Where(x => x.Host != null && now - x.LastSeen >= ForgetAfter).ToList())
         {
-            if (person.Host == null || now - person.LastSeen < ForgetAfter)
-                continue;
-
             person.Host = null;
             if (person.Conversation == null)
                 this.People.Remove(person);
@@ -599,11 +530,7 @@ public partial class Person : ObservableObject
         this.Reach = online
             ? this.conversation!.Status
             : this.host is { } h
-                ? String.Join("  ", new[]
-                {
-                    h.Http != null ? "📶 on this network" : null,
-                    h.Ble != null ? "🔵 nearby" : null
-                }.Where(x => x != null))
+                ? TransportDriver.Describe(h.Transports)
                 : "offline";
     }
 }

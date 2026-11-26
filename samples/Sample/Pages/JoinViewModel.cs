@@ -20,17 +20,19 @@ public partial class JoinViewModel(
 
     public ObservableCollection<HostItem> Hosts { get; } = new();
     [ObservableProperty] public partial string Status { get; set; } = "Looking for games nearby and on this network...";
-    [ObservableProperty] public partial string ConnectChoice { get; set; } = settings.ConnectChoice;
-    public IReadOnlyList<string> ConnectChoices => PlayerSettings.ConnectChoices;
 
-    partial void OnConnectChoiceChanged(string value) => settings.ConnectChoice = value;
+    /// <summary>
+    /// Which transports this device connects over - the transport driver
+    /// </summary>
+    [RelayCommand]
+    Task Transports() => shell.Navigator.NavigateToTransports();
 
 
     public void OnAppearing()
     {
         this.Hosts.Clear();
 
-        // one list for both transports - a host seen over BLE and Wi-Fi is one entry
+        // one list for every transport - a host seen several ways is one entry
         this.scan = client
             .DiscoverAll()
             .Subscribe(
@@ -50,7 +52,7 @@ public partial class JoinViewModel(
     void OnFound(HubHostInfo info)
     {
         var existing = this.Hosts.FirstOrDefault(x => x.Info.Key == info.Key);
-        if (info.Transports == HubTransports.None)
+        if (info.Transports.Count == 0)
         {
             if (existing != null)
                 this.Hosts.Remove(existing);
@@ -84,17 +86,8 @@ public partial class HostItem(HubHostInfo info) : ObservableObject
         this.Reach = Describe(info);
     }
 
-    static string Describe(HubHostInfo info)
-    {
-        var parts = new List<string>();
-        if (info.Http != null)
-            parts.Add("📶 Wi-Fi");
-        if (info.Multipeer != null)
-            parts.Add("📡 Multipeer");
-        if (info.Nearby != null)
-            parts.Add("🛰️ Nearby");
-        if (info.Ble != null)
-            parts.Add($"🔵 Bluetooth {info.Rssi} dBm");
-        return String.Join("   ", parts);
-    }
+    // in the order a connect would try them
+    static string Describe(HubHostInfo info) => String.Join("   ", info.Transports.Select(t => t == typeof(BleClientTransport) && info.Endpoint<BleHubEndpoint>() is { } ble
+        ? $"{TransportDriver.Describe(t)} {ble.Rssi} dBm"
+        : TransportDriver.Describe(t)));
 }

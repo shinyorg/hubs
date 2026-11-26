@@ -12,13 +12,20 @@ namespace Sample;
 public static class MauiProgram
 {
     /// <summary>
-    /// Every hub (game and chat) is a characteristic in this one BLE service - the only UUID a host advertises and the one
-    /// clients scan for. The library has a default; the sample's own keeps other apps' hosts out of its lists.
+    /// The hubs' names - how clients ask for them on every transport
+    /// </summary>
+    public const string GameHubName = "game";
+    public const string ChatHubName = "chat";
+
+    /// <summary>
+    /// The BLE service both hubs are characteristics in - the one UUID a host advertises and the one clients scan for. Each
+    /// hub could have its own (a 16-bit one, or advertise: false, keeps the advertisement within 31 bytes); sharing one
+    /// keeps a scan finding the host whichever hub it runs.
     /// </summary>
     public const string ServiceUuid = "37625845-7287-4de0-92f8-0b8a25e755ec";
 
     /// <summary>
-    /// The write+notify characteristic that carries the GameHub over BLE - and names its Switchboard over Wi-Fi
+    /// The write+notify characteristic that carries the GameHub over BLE
     /// </summary>
     public const string GameHubCharacteristicUuid = "37625846-7287-4de0-92f8-0b8a25e755ec";
 
@@ -35,9 +42,9 @@ public static class MauiProgram
     public const string ChatMdnsServiceType = "_unichat._tcp";
 
     /// <summary>
-    /// The MultipeerConnectivity service type: one per host, like the BLE service, so both hubs are listed in its one
-    /// advertisement. iPhones and Macs reach each other through it with no shared network. NSBonjourServices lists
-    /// _unihub-mc._tcp and _unihub-mc._udp. On Android it does nothing - Android peers use Wi-Fi or BLE.
+    /// The MultipeerConnectivity service type: one per host, so both hubs are listed in its one advertisement. iPhones and
+    /// Macs reach each other through it with no shared network. NSBonjourServices lists _unihub-mc._tcp and
+    /// _unihub-mc._udp. On Android it isn't supported, and is left out.
     /// </summary>
     public const string MultipeerServiceType = "unihub-mc";
 
@@ -77,49 +84,50 @@ public static class MauiProgram
         // every chat conversation and every hosted game is an actor - conversations are kept on disk, games in memory
         builder.Services.AddShinyActors(actors => actors.UseFileStorage(Path.Combine(FileSystem.AppDataDirectory, "actors")));
 
-        // ---- host: a universal server - GameHub served over BLE, HTTP, Multipeer and Nearby at once (adds the BLE hosting stack too) ----
+        // ---- host: a universal server - each hub served over BLE, HTTP, Multipeer and Nearby at once ----
         builder.Services.AddUniversalServer(server => server
-            .ServiceUuid(ServiceUuid)   // the one BLE service every hub lives in - clients use the same one
+            .Configure(o =>
+            {
+                o.HostId = PlayerSettings.InstallId;
+                // chat photos and files, and avatars - the same rules on every transport
+                o.EnableFileTransfers(GameSession.HostFilesDirectory, ft => ft.MaxUploadSize = 25 * 1024 * 1024);
+                o.AuthorizeFile = req => IsSharedFile(req.FileName);
+                o.EnableMediaChannels();   // calls ride a media channel beside each hub connection
+            })
             .Multipeer(MultipeerServiceType)   // Apple to Apple with no network: Wi-Fi speed instead of BLE
             .Nearby(NearbyServiceId)            // Android and Apple with no network, through Google's Nearby Connections
-            .Ble(o => o.EnableFileTransfers(GameSession.HostFilesDirectory, ft =>
-            {
-                ft.MaxUploadSize = 25 * 1024 * 1024;   // chat photos and files; avatars are much smaller
-                ft.Authorize = req => IsSharedFile(req.Request.FileName);   // L2CAP
-            }).EnableMediaChannels())   // calls ride a media channel beside each hub connection
-            .Http(o =>
-            {
-                o.AuthorizeFile = req => IsSharedFile(req.FileName);       // HTTP
-                o.HostId = PlayerSettings.InstallId;
-            })
             // "Share on the internet" in the chat: a public HTTPS address with no account (pinggy). Started from a button.
             .HttpServer(http => http.AddQuickTunnel())
-            .AddHub<GameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
-            {
-                o.MaxClients = 6; // 1 opponent + spectators, counted across both transports
-                o.ValidateClient = info => String.IsNullOrWhiteSpace(info.Name) ? "A player name is required" : null;
-            })   // started when the player taps Host
-            .AddHub<ChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
-            {
-                o.MaxClients = 20;
-                o.AllowTunnel = true;   // the only hub reachable through the tunnel
-                o.ValidateClient = info => String.IsNullOrWhiteSpace(info.Name) ? "A name is required" : null;
-            })   // started with the app, and left running
+            .AddHub<GameHub>(GameHubName, hub => hub   // started when the player taps Host
+                .MaxClients(6)   // 1 opponent + spectators, counted across every transport
+                .ValidateClient(info => String.IsNullOrWhiteSpace(info.Name) ? "A player name is required" : null)
+                .UseHttp(GameMdnsServiceType)
+                .UseMultipeer()
+                .UseNearby()
+                .UseBluetoothLE(ServiceUuid, GameHubCharacteristicUuid))
+            .AddHub<ChatHub>(ChatHubName, hub => hub   // started with the app, and left running
+                .MaxClients(20)
+                .ValidateClient(info => String.IsNullOrWhiteSpace(info.Name) ? "A name is required" : null)
+                .UseHttp(ChatMdnsServiceType, allowTunnel: true)   // the only hub reachable through the tunnel
+                .UseMultipeer()
+                .UseNearby()
+                .UseBluetoothLE(ServiceUuid, ChatHubCharacteristicUuid))
         );
 
-        // ---- client: discovers hosts over BLE, mDNS, Multipeer and Nearby, connects over whichever works (adds the BLE stack too) ----
-        builder.Services.AddUniversalHubClient<IGameHub>(GameHubCharacteristicUuid, GameMdnsServiceType, o =>
-        {
-            o.ServiceUuid = ServiceUuid;
-            o.Multipeer(MultipeerServiceType);
-            o.Nearby(NearbyServiceId);
-        });
-        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubCharacteristicUuid, ChatMdnsServiceType, o =>
-        {
-            o.ServiceUuid = ServiceUuid;
-            o.Multipeer(MultipeerServiceType);
-            o.Nearby(NearbyServiceId);
-        });
+        // ---- clients: find hosts over every transport, and connect over the first that works, in this order ----
+        builder.Services.AddUniversalHubClient<IGameHub>(GameHubName, o => o
+            .UseHttp(GameMdnsServiceType)
+            .UseMultipeer(MultipeerServiceType)
+            .UseNearby(NearbyServiceId)
+            .UseBluetoothLE(ServiceUuid, GameHubCharacteristicUuid));
+        builder.Services.AddUniversalHubClient<IChatHub>(ChatHubName, o => o
+            .UseHttp(ChatMdnsServiceType)
+            .UseMultipeer(MultipeerServiceType)
+            .UseNearby(NearbyServiceId)
+            .UseBluetoothLE(ServiceUuid, ChatHubCharacteristicUuid));
+
+        // turns each transport on and off, hosting and connecting - the Transports page
+        builder.Services.AddSingleton<TransportDriver>();
 
         // ---- calls: FaceTime the person in a chat, over Wi-Fi or Bluetooth ----
         builder.Services.AddHubCalls(calls => calls
