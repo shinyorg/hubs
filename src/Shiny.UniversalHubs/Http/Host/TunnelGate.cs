@@ -13,18 +13,21 @@ internal static class TunnelGate
     /// </summary>
     public static bool IsAllowed(string path, string basePath, IEnumerable<IHubBinding> hubs, bool dynamicHubs = false)
     {
-        var list = hubs as IReadOnlyCollection<IHubBinding> ?? hubs.ToList();
+        var list = hubs.Where(x => x.GetSettings<HttpHubSettings>() != null).ToList();
         foreach (var hub in list)
         {
-            if (IsUnder(path, UniversalHubProtocol.HubPath(basePath, hub.CharacteristicUuid)))
-                return hub.AllowTunnel;
+            if (IsUnder(path, UniversalHubProtocol.HubPath(basePath, hub.Key)))
+                return AllowsTunnel(hub);
         }
 
         if (IsUnder(path, UniversalHubProtocol.FilesPath(basePath)) || IsUnder(path, UniversalHubProtocol.MediaPath(basePath)))
-            return list.Any(x => x.AllowTunnel);
+            return list.Any(AllowsTunnel);
 
         return !dynamicHubs || !IsUnder(path, UniversalHubProtocol.NormalizeBasePath(basePath));
     }
+
+
+    internal static bool AllowsTunnel(IHubBinding hub) => hub.GetSettings<HttpHubSettings>()?.AllowTunnel == true;
 
 
     static bool IsUnder(string path, string root)

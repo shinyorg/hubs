@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Shiny.BluetoothLE.Hosting;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs.Tests;
 
@@ -18,36 +20,37 @@ public class BleHubHostTests : IAsyncLifetime
     readonly IBleHubSerializer serializer = new ShinyJsonBleHubSerializer();
     string serviceUuid = ServiceA;
     ServiceProvider services = null!;
-    BleHubHost host = null!;
+    UniversalHubHost host = null!;
     IHubContext<TestHub> testHub = null!;
     IHubContext<SecondHub> secondHub = null!;
 
 
     public ValueTask InitializeAsync() => ValueTask.CompletedTask;
-    public async ValueTask DisposeAsync() => await this.services.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        if (this.services != null)
+            await this.services.DisposeAsync();
+    }
 
 
     void Build(TimeSpan? sweepInterval = null)
     {
+        var serviceUuid = this.serviceUuid;
         this.services = new ServiceCollection()
             .AddSingleton<HubLog>()
-            .AddTransient<TestHub>()
-            .AddTransient<SecondHub>()
+            .AddSingleton<IBleHostingManager>(this.hosting)
+            .AddUniversalServer(server => server
+                .Configure(o => o.LocalName = "Host")
+                .Protocol(o => o.RequestTimeout = this.options.RequestTimeout)
+                .BluetoothLE(o => o.ClientSweepInterval = sweepInterval ?? TimeSpan.FromMinutes(5))
+                .AddHub<TestHub>(TestChar, hub => hub.UseBluetoothLE(serviceUuid, TestChar))
+                .AddHub<SecondHub>(SecondChar, hub => hub.UseBluetoothLE(serviceUuid, SecondChar))
+            )
             .BuildServiceProvider();
 
-        this.host = new BleHubHost(
-            this.hosting,
-            [
-                new BleHubRegistration(typeof(TestHub), TestChar, new BleHubOptions()),
-                new BleHubRegistration(typeof(SecondHub), SecondChar, new BleHubOptions())
-            ],
-            new BleHubHostOptions { ServiceUuid = this.serviceUuid, LocalName = "Host", ClientSweepInterval = sweepInterval ?? TimeSpan.FromMinutes(5) },
-            this.options,
-            this.serializer,
-            this.services
-        );
-        this.testHub = new HubContext<TestHub>(() => this.host.GetRuntime(typeof(TestHub)), this.host);
-        this.secondHub = new HubContext<SecondHub>(() => this.host.GetRuntime(typeof(SecondHub)), this.host);
+        this.host = this.services.GetRequiredService<UniversalHubHost>();
+        this.testHub = this.services.GetRequiredService<IHubContext<TestHub>>();
+        this.secondHub = this.services.GetRequiredService<IHubContext<SecondHub>>();
     }
 
 
@@ -92,7 +95,7 @@ public class BleHubHostTests : IAsyncLifetime
         this.Build();
         await this.host.Start();
 
-        Assert.True(this.host.IsRunning);
+        Assert.True((this.host.RunningTransports != HubTransports.None));
         Assert.True(this.testHub.IsRunning);
         Assert.True(this.secondHub.IsRunning);
         Assert.Contains($"add-service:{ServiceA}:2", this.hosting.Log);
@@ -122,7 +125,7 @@ public class BleHubHostTests : IAsyncLifetime
         Assert.True(frames.Count > 1);
         Assert.All(frames[..^1], x => Assert.Equal(182, x.Length));
         Assert.True(frames[^1].Length <= 182);
-        Assert.Equal(185, this.host.GetRuntime(typeof(TestHub)).FindClient("c1")!.Mtu);
+        Assert.Equal(185, this.host.Get(typeof(TestHub)).Runtime.FindClient("c1")!.Mtu);
     }
 
 
@@ -134,7 +137,7 @@ public class BleHubHostTests : IAsyncLifetime
 
         Assert.True(this.testHub.IsRunning);
         Assert.False(this.secondHub.IsRunning);
-        Assert.True(this.host.IsRunning);
+        Assert.True((this.host.RunningTransports != HubTransports.None));
 
         // the shared service holds both characteristics, but only the running hub accepts clients
         await this.Connect<ITestHub>(TestChar, "c1");
@@ -175,7 +178,7 @@ public class BleHubHostTests : IAsyncLifetime
         await this.testHub.Stop();
         await this.secondHub.Stop();
 
-        Assert.False(this.host.IsRunning);
+        Assert.False((this.host.RunningTransports != HubTransports.None));
         Assert.False(this.hosting.HasService(ServiceA));
         Assert.False(this.hosting.IsAdvertising);
     }

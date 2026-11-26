@@ -18,8 +18,7 @@ internal sealed class MultipeerHostTransport(
     IServiceProvider services,
     IMultipeerLink link,
     MultipeerHostOptions options,
-    BleHubHostOptions bleOptions,
-    UniversalHubHostOptions httpOptions,
+    UniversalServerOptions serverOptions,
     ILogger<MultipeerHostTransport>? logger = null
 ) : IUniversalHubTransport, IPeerHostTransport
 {
@@ -34,14 +33,13 @@ internal sealed class MultipeerHostTransport(
     public string ConnectionPrefix => HubConnection.MultipeerPrefix;
 
     public UniversalHubHost Host => services.GetRequiredService<UniversalHubHost>();
-    public BleHubHostOptions BleOptions => bleOptions;
-    public UniversalHubHostOptions HttpOptions => httpOptions;
+    public UniversalServerOptions ServerOptions => serverOptions;
     public ILogger? Logger => logger;
 
     /// <summary>
     /// The Multipeer display name hosts advertise as: the configured one, else the BLE local name
     /// </summary>
-    internal string DisplayName => MultipeerNames.Truncate(options.DisplayName ?? bleOptions.LocalName ?? "Hub host");
+    internal string DisplayName => MultipeerNames.Truncate(options.DisplayName ?? serverOptions.LocalName ?? "Hub host");
 
 
     public bool IsRunning(IHubBinding hub)
@@ -106,10 +104,10 @@ internal sealed class MultipeerHostTransport(
     /// <summary>
     /// The running hub a handshake asks for, by characteristic UUID
     /// </summary>
-    public IHubBinding? FindRunning(string? characteristicUuid)
+    public IHubBinding? FindRunning(string? key)
     {
         lock (this.gate)
-            return this.running.FirstOrDefault(x => x.CharacteristicUuid.Equals(characteristicUuid, StringComparison.OrdinalIgnoreCase));
+            return this.running.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
     }
 
 
@@ -129,12 +127,12 @@ internal sealed class MultipeerHostTransport(
         if (this.running.Count == 0)
             return;
 
-        var hubs = String.Join(",", this.running.Select(x => x.CharacteristicUuid.ToLowerInvariant()));
+        var hubs = String.Join(",", this.running.Select(x => x.Key.ToLowerInvariant()));
         var info = new Dictionary<string, string>
         {
             [MultipeerProtocol.InfoProtocol] = PeerProtocol.Version.ToString(),
-            [MultipeerProtocol.InfoHostId] = httpOptions.HostId,
-            [MultipeerProtocol.InfoName] = bleOptions.LocalName ?? this.DisplayName,
+            [MultipeerProtocol.InfoHostId] = serverOptions.HostId,
+            [MultipeerProtocol.InfoName] = serverOptions.LocalName ?? this.DisplayName,
             [MultipeerProtocol.InfoHubs] = hubs
         };
         this.advertisement = link.Advertise(options.ServiceType, this.DisplayName, info, this.Accepted);

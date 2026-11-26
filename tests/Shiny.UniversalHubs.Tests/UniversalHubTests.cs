@@ -51,10 +51,10 @@ public class UniversalHubTests : IAsyncLifetime
         builder.Services.AddUniversalServer(server =>
         {
             if (endpoint != null)
-                server.Endpoint = endpoint;
+                server.Http(o => o.BasePath = endpoint);
 
             server
-                .Ble(o =>
+                .Configure(o =>
                 {
                     o.LocalName = "TestHost";
                     o.EnableFileTransfers(this.filesDirectory, ft => ft.MaxUploadSize = 1024);
@@ -63,11 +63,14 @@ public class UniversalHubTests : IAsyncLifetime
                 {
                     o.Advertise = false;
                     o.ManageHttpServer = false;
+                })
+                .Configure(o =>
+                {
                     o.HostId = "host-1";
                     o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
                 })
-                .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
-                .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.AllowTunnel = true);
+                .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
+                .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType, allowTunnel: true));
         });
 
         return TestHttpServer.For(builder.Build());
@@ -269,17 +272,15 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void UniversalServerAppliesEachHubsServiceTypeAndTheEndpoint()
     {
-        var options = this.app.Services.GetRequiredService<UniversalHubHostOptions>();
+        var options = this.app.Services.GetRequiredService<HttpTransportOptions>();
         Assert.Equal(UniversalHubProtocol.DefaultBasePath, options.BasePath);
-        Assert.Equal("host-1", options.HostId);
+        Assert.Equal("host-1", this.app.Services.GetRequiredService<UniversalServerOptions>().HostId);
 
-        var bindings = this.app.Services.GetServices<IHubBinding>().ToList();
-        Assert.All(bindings, x => Assert.Equal(MdnsServiceType, x.ServiceType));
-        Assert.False(bindings.Single(x => x.HubType == typeof(TestHub)).AllowTunnel);
-        Assert.True(bindings.Single(x => x.HubType == typeof(OtherHub)).AllowTunnel);
-
-        var registration = this.app.Services.GetServices<BleHubRegistration>().Single(x => x.HubType == typeof(TestHub));
-        Assert.Equal(3, registration.Options.MaxClients);
+        var hubs = this.app.Services.GetRequiredService<UniversalHubHost>().Hubs;
+        Assert.All(hubs, x => Assert.Equal(MdnsServiceType, x.GetSettings<HttpHubSettings>()!.ServiceType));
+        Assert.False(hubs.Single(x => x.HubType == typeof(TestHub)).GetSettings<HttpHubSettings>()!.AllowTunnel);
+        Assert.True(hubs.Single(x => x.HubType == typeof(OtherHub)).GetSettings<HttpHubSettings>()!.AllowTunnel);
+        Assert.Equal(3, hubs.Single(x => x.HubType == typeof(TestHub)).Runtime.Registration.Options.MaxClients);
     }
 
 
@@ -304,7 +305,7 @@ public class UniversalHubTests : IAsyncLifetime
     public void BadServiceTypesAreRejected(string serviceType)
     {
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(
-            s => s.AddHub<TestHub>(CharacteristicUuid, serviceType)
+            s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(serviceType))
         ));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, serviceType));
     }
@@ -329,18 +330,22 @@ public class UniversalHubTests : IAsyncLifetime
 
 
     [Fact]
-    public void UniversalServerHostsEveryHubUnderItsServiceUuid()
+    public void EachHubIsServedOverTheTransportsItPicks()
     {
         const string custom = "11111111-2222-3333-4444-555555555555";
         using var sp = new ServiceCollection()
+            .AddSingleton(NoBluetoothHosting.Create())
             .AddUniversalServer(s => s
-                .ServiceUuid(custom)
                 .Protocol(o => o.RequestTimeout = TimeSpan.FromSeconds(7))
-                .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)
-                .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType))
+                .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(custom, CharacteristicUuid).UseHttp(MdnsServiceType))
+                .AddHub<OtherHub>("other", h => h.UseHttp(MdnsServiceType)))
             .BuildServiceProvider();
 
-        Assert.Equal(custom, sp.GetRequiredService<BleHubHostOptions>().ServiceUuid);
+        var host = sp.GetRequiredService<UniversalHubHost>();
+        Assert.Equal(HubTransports.Ble | HubTransports.Http, host.Get(typeof(TestHub)).Transports);
+        Assert.Equal(custom, host.Get(typeof(TestHub)).GetSettings<BleHubSettings>()!.ServiceUuid);
+        Assert.Equal(HubTransports.Http, host.Get(typeof(OtherHub)).Transports);
+        Assert.Null(host.Get(typeof(OtherHub)).GetSettings<BleHubSettings>());
         Assert.Equal(TimeSpan.FromSeconds(7), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
     }
 
@@ -348,15 +353,15 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void UniversalServerIsRegisteredOnce()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType));
-        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
+        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))));
     }
 
 
     [Fact]
     public void HubsAreAdvertisedOncePerServiceType()
     {
-        var ads = UniversalHubHost.GetAdvertisements(
+        var ads = HttpHubTransport.GetAdvertisements(
             [
                 new FakeBinding("aaaa", "_chess._tcp"),
                 new FakeBinding("BBBB", "_unigame._tcp"),
@@ -373,17 +378,13 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
-    sealed record FakeBinding(string CharacteristicUuid, string? ServiceType, bool AllowTunnel = false) : IHubBinding
+    sealed record FakeBinding(string Key, string? ServiceType, bool AllowTunnel = false) : IHubBinding
     {
         public Type? HubType => typeof(TestHub);
         public string Name => "Fake";
+        public HubTransports Transports => HubTransports.Http;
         public IBleHubTransportEndpoint Endpoint => throw new NotSupportedException();
-        public bool IsHttpRunning { get; set; }
-        public bool IsBleRunning => false;
-        public Task StartBle(CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task StopBle(string? reason) => Task.CompletedTask;
-        public Task HangUpAll(HubDisconnect disconnect) => Task.CompletedTask;
-        public bool OpenMedia(string connectionId, IBleHubMediaChannel channel) => false;
+        public T? GetSettings<T>() where T : class => typeof(T) == typeof(HttpHubSettings) ? (T)(object)new HttpHubSettings(this.ServiceType, this.AllowTunnel) : null;
     }
 
 
@@ -480,7 +481,7 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public void UniversalServerBindsTheNetworkWhenItCreatesTheServer()
     {
-        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, MdnsServiceType));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType)));
         var options = (HttpServerOptions)services.Single(x => x.ServiceType == typeof(HttpServerOptions)).ImplementationInstance!;
 
         Assert.Equal(IPAddress.Any, options.Address);

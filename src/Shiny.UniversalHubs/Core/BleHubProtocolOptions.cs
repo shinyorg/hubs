@@ -1,7 +1,7 @@
 namespace Shiny.BluetoothLE.Hubs;
 
 /// <summary>
-/// Protocol limits, app-wide for hosts and clients alike. Set them with AddBleHubServer's Protocol or
+/// Protocol limits, app-wide for hosts and clients alike. Set them with AddUniversalServer's Protocol or
 /// AddBleHubClient's options.
 /// </summary>
 public class BleHubProtocolOptions

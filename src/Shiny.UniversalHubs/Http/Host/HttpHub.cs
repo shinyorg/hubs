@@ -15,9 +15,9 @@ namespace Shiny.UniversalHubs;
 /// reserved hub.* methods registered in <see cref="HubBoardRegistration"/>, and run by the generated BLE hub dispatcher.
 /// Generic, so the Switchboard source generator leaves it alone.
 /// </summary>
-internal sealed class HubBoard<THub>(HubBinding<THub> binding) : Switchboard where THub : class
+internal sealed class HubBoard<THub>(HttpHub<THub> binding) : Switchboard where THub : class
 {
-    public HubBinding<THub> Binding => binding;
+    public HttpHub<THub> Binding => binding;
 
     public override Task OnDisconnectedAsync(DisconnectContext disconnect)
     {
@@ -53,7 +53,7 @@ internal static class HubBoardRegistration
 
         SwitchboardRegistry.Register(new SwitchboardDescriptor(
             typeof(HubBoard<THub>),
-            sp => new HubBoard<THub>(sp.GetRequiredService<HubBinding<THub>>()),
+            sp => new HubBoard<THub>(sp.GetRequiredService<HttpHub<THub>>()),
             [],
             [
                 new SwitchboardMethod(UniversalHubProtocol.HandshakeMethod, 1, 1, [], (board, call) => ((HubBoard<THub>)board).Binding.Handshake(board, call)),
@@ -65,104 +65,46 @@ internal static class HubBoardRegistration
 }
 
 
-internal interface IHubBinding
-{
-    string CharacteristicUuid { get; }
-
-    /// <summary>
-    /// The hub's class - null for a dynamic hub, which has none
-    /// </summary>
-    Type? HubType { get; }
-
-    /// <summary>
-    /// The hub's name in logs and errors
-    /// </summary>
-    string Name { get; }
-
-    /// <summary>
-    /// The blehubs seam every non-BLE transport serves this hub through
-    /// </summary>
-    IBleHubTransportEndpoint Endpoint { get; }
-
-    /// <summary>
-    /// The mDNS service type this hub is advertised under, null for the host's default
-    /// </summary>
-    string? ServiceType { get; }
-
-    /// <summary>
-    /// Whether clients may reach this hub through a tunnel (the public internet)
-    /// </summary>
-    bool AllowTunnel { get; }
-
-    /// <summary>
-    /// Accepting handshakes over HTTP
-    /// </summary>
-    bool IsHttpRunning { get; set; }
-
-    /// <summary>
-    /// Accepting clients over BLE
-    /// </summary>
-    bool IsBleRunning { get; }
-
-    Task StartBle(CancellationToken cancellationToken);
-    Task StopBle(string? reason);
-
-    /// <summary>
-    /// Hangs up on every client of this hub, telling each one why
-    /// </summary>
-    Task HangUpAll(HubDisconnect disconnect);
-
-    /// <summary>
-    /// A Wi-Fi client opened its media channel. False when the client is no longer connected.
-    /// </summary>
-    bool OpenMedia(string connectionId, IBleHubMediaChannel channel);
-}
-
-
 /// <summary>
 /// One hub served over Wi-Fi: admits lines into the hub, runs calls through it, and carries its pushes back out. The typed
-/// <see cref="HubBinding{THub}"/> and the runtime-added <see cref="DynamicHubBinding"/> differ only in where the hub and its
+/// <see cref="HttpHub{THub}"/> and the runtime-added <see cref="DynamicHttpHub"/> differ only in where the hub and its
 /// lines live.
 /// </summary>
-internal abstract class HubBindingBase : IHubBinding
+internal abstract class HttpHub
 {
     readonly UniversalHubHost host;
+    readonly HttpHubTransport transport;
     readonly FileTokens fileTokens;
     readonly MediaTokens mediaTokens;
     readonly ILogger logger;
 
 
-    protected HubBindingBase(UniversalHubHost host, FileTokens fileTokens, MediaTokens mediaTokens, string? serviceType, bool allowTunnel, ILogger logger)
+    protected HttpHub(UniversalHubHost host, HttpHubTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILogger logger)
     {
         this.host = host;
+        this.transport = transport;
         this.fileTokens = fileTokens;
         this.mediaTokens = mediaTokens;
-        this.ServiceType = serviceType;
-        this.AllowTunnel = allowTunnel;
         this.logger = logger;
     }
 
 
-    public abstract IBleHubTransportEndpoint Endpoint { get; }
-    public abstract Type? HubType { get; }
-    public abstract string Name { get; }
-    public string CharacteristicUuid => this.Endpoint.Registration.CharacteristicUuid;
-    public string? ServiceType { get; }
-    public bool AllowTunnel { get; }
-    public bool IsHttpRunning { get; set; }
+    /// <summary>
+    /// The hub this serves
+    /// </summary>
+    public abstract IHubBinding Binding { get; }
+    IBleHubTransportEndpoint Endpoint => this.Binding.Endpoint;
+    string Name => this.Binding.Name;
 
-    public abstract bool IsBleRunning { get; }
-    public abstract Task StartBle(CancellationToken cancellationToken);
-    public abstract Task StopBle(string? reason);
+    /// <summary>
+    /// Hangs up on every client of this hub, telling each one why
+    /// </summary>
     public abstract Task HangUpAll(HubDisconnect disconnect);
 
     /// <summary>
     /// How the hub reaches the Wi-Fi client on <paramref name="lineId"/>
     /// </summary>
     protected abstract IBleHubPeerChannel CreateChannel(string lineId);
-
-
-    public bool OpenMedia(string connectionId, IBleHubMediaChannel channel) => this.Endpoint.MediaChannelOpened(connectionId, channel);
 
 
     public void LineGone(string lineId, HubDisconnect disconnect) => this.Endpoint.Disconnected(HubConnection.HttpPrefix + lineId, disconnect);
@@ -184,7 +126,7 @@ internal abstract class HubBindingBase : IHubBinding
         }
 
         string? rejection;
-        if (!this.IsHttpRunning)
+        if (!this.transport.IsRunning(this.Binding))
             rejection = "Hub is not running";
         else if (handshake.Protocol != UniversalHubProtocol.Version)
             rejection = $"Unsupported protocol version {handshake.Protocol}";
@@ -206,7 +148,7 @@ internal abstract class HubBindingBase : IHubBinding
         string? mediaToken = null;
         var mediaMax = this.host.MediaMaxPacketSize;
         if (rejection == null && mediaMax != null)
-            mediaToken = this.mediaTokens.Issue(connectionId, this);
+            mediaToken = this.mediaTokens.Issue(connectionId, this.Binding);
 
         await call.ReturnAsync(HubJson.Serialize(new HubHandshakeReply(
             rejection == null,
@@ -333,35 +275,20 @@ internal abstract class HubBindingBase : IHubBinding
 /// <summary>
 /// A compiled hub served over Wi-Fi, on its own Switchboard
 /// </summary>
-internal sealed class HubBinding<THub> : HubBindingBase where THub : class
+internal sealed class HttpHub<THub> : HttpHub where THub : class
 {
-    readonly IServiceProvider services;
-    readonly Lazy<IBleHubTransportEndpoint> endpoint;
     readonly Lazy<IOperator<HubBoard<THub>>> board;
 
 
-    public HubBinding(IServiceProvider services, UniversalHubHost host, FileTokens fileTokens, MediaTokens mediaTokens, string? serviceType, bool allowTunnel, ILoggerFactory? loggerFactory = null)
-        : base(host, fileTokens, mediaTokens, serviceType, allowTunnel, (ILogger?)loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{typeof(THub).Name}") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
+    public HttpHub(IServiceProvider services, UniversalHubHost host, HttpHubTransport transport, FileTokens fileTokens, MediaTokens mediaTokens, ILoggerFactory? loggerFactory = null)
+        : base(host, transport, fileTokens, mediaTokens, (ILogger?)loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{typeof(THub).Name}") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)
     {
-        this.services = services;
-        this.endpoint = new(() =>
-        {
-            var context = services.GetRequiredService<IHubContext<THub>>();
-            context.ClientDisconnected += (_, e) => host.ForgetClient(e.Client.Id);
-            return context.TransportEndpoint;
-        });
+        this.Binding = host.Get(typeof(THub));
         this.board = new(() => services.GetRequiredService<IOperator<HubBoard<THub>>>());
     }
 
 
-    public override IBleHubTransportEndpoint Endpoint => this.endpoint.Value;
-    public override Type HubType => typeof(THub);
-    public override string Name => typeof(THub).Name;
-
-    IHubContext<THub> Context => this.services.GetRequiredService<IHubContext<THub>>();
-    public override bool IsBleRunning => this.Context.IsRunning;
-    public override Task StartBle(CancellationToken cancellationToken) => this.Context.Start(cancellationToken);
-    public override Task StopBle(string? reason) => this.Context.Stop(reason);
+    public override IHubBinding Binding { get; }
 
     public override Task HangUpAll(HubDisconnect disconnect) => this.board.Value.Lines.HangUpAllAsync(HubJson.HangUpMessage(disconnect), allowReconnect: false);
 

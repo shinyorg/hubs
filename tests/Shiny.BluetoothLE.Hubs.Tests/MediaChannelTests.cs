@@ -1,12 +1,14 @@
 using System.Buffers.Binary;
 using System.Reactive.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Shiny.BluetoothLE.Hosting;
+using Shiny.UniversalHubs;
 using Shiny.BluetoothLE.Hubs.Protocol;
 
 namespace Shiny.BluetoothLE.Hubs.Tests;
 
 /// <summary>
-/// Media channels over BLE: the real BleHubHost's media PSM against the fake GATT server and an in-memory L2CAP link
+/// Media channels over BLE: the real BLE transport's media PSM against the fake GATT server and an in-memory L2CAP link
 /// </summary>
 public class MediaChannelTests : IAsyncLifetime
 {
@@ -21,7 +23,7 @@ public class MediaChannelTests : IAsyncLifetime
     readonly Dictionary<string, List<FakeL2CapLink>> links = new();
     readonly List<BleHubMediaChannelEventArgs> opened = new();
     ServiceProvider services = null!;
-    BleHubHost host = null!;
+    UniversalHubHost host = null!;
     IHubContext<TestHub> hub = null!;
 
 
@@ -33,22 +35,22 @@ public class MediaChannelTests : IAsyncLifetime
     {
         this.services = new ServiceCollection()
             .AddSingleton<HubLog>()
-            .AddTransient<TestHub>()
+            .AddSingleton<IBleHostingManager>(this.hosting)
+            .AddUniversalServer(server => server
+                .Configure(o =>
+                {
+                    o.LocalName = "Host";
+                    if (media)
+                        o.EnableMediaChannels(MaxPacket, secure);
+                })
+                .Protocol(o => o.RequestTimeout = this.options.RequestTimeout)
+                .BluetoothLE(o => o.ClientSweepInterval = TimeSpan.FromMinutes(5))
+                .AddHub<TestHub>(TestChar, hub => hub.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, TestChar))
+            )
             .BuildServiceProvider();
 
-        var hostOptions = new BleHubHostOptions { LocalName = "Host", ClientSweepInterval = TimeSpan.FromMinutes(5) };
-        if (media)
-            hostOptions.EnableMediaChannels(MaxPacket, secure);
-
-        this.host = new BleHubHost(
-            this.hosting,
-            [new BleHubRegistration(typeof(TestHub), TestChar, new BleHubOptions())],
-            hostOptions,
-            this.options,
-            this.serializer,
-            this.services
-        );
-        this.hub = new HubContext<TestHub>(() => this.host.GetRuntime(typeof(TestHub)), this.host);
+        this.host = this.services.GetRequiredService<UniversalHubHost>();
+        this.hub = this.services.GetRequiredService<IHubContext<TestHub>>();
         this.hub.MediaChannelOpened += (_, e) =>
         {
             lock (this.opened)
@@ -396,7 +398,7 @@ public class MediaChannelTests : IAsyncLifetime
     {
         this.hosting.FailL2Cap = true;
         await this.Start();
-        Assert.True(this.host.IsRunning);
+        Assert.True((this.host.RunningTransports != HubTransports.None));
 
         var client = await this.Connect("c1");
         Assert.False(client.CanOpenMediaChannel);

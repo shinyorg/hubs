@@ -1,10 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Shiny.BluetoothLE.Hosting;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs.Tests;
 
 /// <summary>
-/// AddBleHubServer / AddBleHubClient - what one call registers, and the mistakes it refuses
+/// AddUniversalServer / AddBleHubClient - what one call registers, and the mistakes it refuses
 /// </summary>
 public class RegistrationTests
 {
@@ -15,30 +16,28 @@ public class RegistrationTests
     static RegistrationTests() => Json.AddContext(TestJsonContext.Default);
 
 
-    static ServiceProvider BuildServer(Action<BleHubServerBuilder> configure, FakeHostingManager hosting) => new ServiceCollection()
+    static ServiceProvider BuildServer(Action<UniversalServerBuilder> configure, FakeHostingManager hosting) => new ServiceCollection()
         .AddSingleton<IBleHostingManager>(hosting)
         .AddSingleton<HubLog>()
-        .AddBleHubServer(configure)
+        .AddUniversalServer(configure)
         .BuildServiceProvider();
 
 
     [Fact]
-    public async Task ServerServesEveryHubUnderItsServiceUuid()
+    public async Task ServerServesEveryBleHubUnderItsServiceUuid()
     {
         var hosting = new FakeHostingManager();
         await using var sp = BuildServer(s => s
-            .ServiceUuid(Custom.ToUpperInvariant())
-            .Host(o => o.LocalName = "Host")
+            .Configure(o => o.LocalName = "Host")
             .Protocol(o => o.RequestTimeout = TimeSpan.FromSeconds(3))
-            .AddHub<TestHub>(TestChar)
-            .AddHub<SecondHub>(SecondChar, o => o.MaxClients = 2), hosting);
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom.ToUpperInvariant(), TestChar))
+            .AddHub<SecondHub>("second", h => h.MaxClients(2).UseBluetoothLE(Custom, SecondChar)), hosting);
 
-        Assert.Equal(Custom, sp.GetRequiredService<BleHubHostOptions>().ServiceUuid);
         Assert.Equal(TimeSpan.FromSeconds(3), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
         Assert.NotNull(sp.GetRequiredService<IHubContext<TestHub>>());
         Assert.NotNull(sp.GetRequiredService<IHubContext<SecondHub>>());
 
-        await sp.GetRequiredService<IBleHubHost>().Start();
+        Assert.Equal(HubTransports.Ble, await sp.GetRequiredService<IUniversalHubHost>().Start());
         Assert.True(hosting.HasService(Custom));
         Assert.Equal([Custom], hosting.AdvertisedServices);
         Assert.Equal("Host", hosting.AdvertisedName);
@@ -47,40 +46,58 @@ public class RegistrationTests
 
 
     [Fact]
-    public void ServerDefaultsToTheLibraryServiceUuid()
-    {
-        using var sp = BuildServer(s => s.AddHub<TestHub>(TestChar), new FakeHostingManager());
-        Assert.Equal(BleHubProtocolOptions.DefaultServiceUuid, sp.GetRequiredService<BleHubHostOptions>().ServiceUuid);
-    }
-
-
-    [Fact]
     public void ServerIsRegisteredOnceWithAtLeastOneHub()
     {
-        var services = new ServiceCollection().AddBleHubServer(s => s.AddHub<TestHub>(TestChar));
-        Assert.Throws<InvalidOperationException>(() => services.AddBleHubServer(s => s.AddHub<SecondHub>(SecondChar)));
-        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddBleHubServer(_ => { }));
+        var services = new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar)));
+        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(s => s.AddHub<SecondHub>("second", h => h.UseBluetoothLE(Custom, SecondChar))));
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(_ => { }));
     }
 
 
     [Fact]
-    public void ServerRefusesDuplicateHubsAndCharacteristics()
+    public void EveryHubNeedsATransport()
     {
-        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddBleHubServer(s => s
-            .AddHub<TestHub>(TestChar)
-            .AddHub<TestHub>(SecondChar)));
-
-        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddBleHubServer(s => s
-            .AddHub<TestHub>(TestChar)
-            .AddHub<SecondHub>(TestChar.ToUpperInvariant())));
+        var ex = Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", _ => { })));
+        Assert.Contains("isn't served over any transport", ex.Message);
     }
 
 
     [Fact]
-    public void ServerRefusesInvalidUuids()
+    public void ATransportSetUpForNoHubIsAMistake()
     {
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddBleHubServer(s => s.ServiceUuid("180D").AddHub<TestHub>(TestChar)));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddBleHubServer(s => s.AddHub<TestHub>("not-a-uuid")));
+        var ex = Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
+            .Http(o => o.Advertise = false)
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar))));
+        Assert.Contains("no hub is served over it", ex.Message);
+    }
+
+
+    [Fact]
+    public void ServerRefusesDuplicateHubsNamesAndCharacteristics()
+    {
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar))
+            .AddHub<TestHub>("other", h => h.UseBluetoothLE(Custom, SecondChar))));
+
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar))
+            .AddHub<SecondHub>("TEST", h => h.UseBluetoothLE(Custom, SecondChar))));
+
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar))
+            .AddHub<SecondHub>("second", h => h.UseBluetoothLE(Custom, TestChar.ToUpperInvariant()))));
+
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
+            .AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, TestChar).UseBluetoothLE(Custom, SecondChar))));
+    }
+
+
+    [Fact]
+    public void ServerRefusesInvalidNamesAndUuids()
+    {
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("has space", h => h.UseBluetoothLE(Custom, TestChar))));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE("180D", TestChar))));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AddHub<TestHub>("test", h => h.UseBluetoothLE(Custom, "not-a-uuid"))));
     }
 
 

@@ -34,16 +34,27 @@ public static class MultipeerExtensions
         var options = new MultipeerHostOptions(serviceType);
         configure?.Invoke(options);
 
-        server.ServiceActions.Add(services =>
-        {
-            if (services.Any(x => x.ServiceType == typeof(MultipeerHostOptions)))
-                throw new InvalidOperationException("Multipeer can only be set up once per universal server");
+        if (server.TransportSetups.ContainsKey(HubTransports.Multipeer))
+            throw new InvalidOperationException("Multipeer can only be set up once per universal server");
 
+        server.SetUpTransport(HubTransports.Multipeer, (services, _) =>
+        {
             services.AddMultipeerLink();
             services.AddSingleton(options);
             services.AddSingleton<IUniversalHubTransport, MultipeerHostTransport>();
         });
         return server;
+    }
+
+
+    /// <summary>
+    /// Serves this hub over Multipeer too - set the transport up once on the server with server.Multipeer(...)
+    /// </summary>
+    public static UniversalHubBuilder UseMultipeer(this UniversalHubBuilder hub)
+    {
+        ArgumentNullException.ThrowIfNull(hub);
+        hub.Use(HubTransports.Multipeer, new MultipeerHubSettings());
+        return hub;
     }
 
 
@@ -147,3 +158,9 @@ internal static class MultipeerNames
         return builder.ToString();
     }
 }
+
+
+/// <summary>
+/// What a hub was told by UseMultipeer - nothing beyond that it is served over Multipeer
+/// </summary>
+internal sealed record MultipeerHubSettings;

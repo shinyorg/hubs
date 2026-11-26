@@ -6,7 +6,7 @@ namespace Shiny.BluetoothLE.Hubs;
 internal static class BleHubServiceCollectionExtensions
 {
     /// <summary>
-    /// Adjusts the app-wide protocol limits - AddBleHubServer's Protocol and AddBleHubClient's options call it
+    /// Adjusts the app-wide protocol limits - AddUniversalServer's Protocol and AddBleHubClient's options call it
     /// </summary>
     public static IServiceCollection ConfigureBleHubProtocol(this IServiceCollection services, Action<BleHubProtocolOptions> configure)
     {
@@ -17,7 +17,7 @@ internal static class BleHubServiceCollectionExtensions
 
 
     /// <summary>
-    /// Registers the shared protocol services. Called by AddBleHubServer / AddBleHubClient.
+    /// Registers the shared protocol services. Called by AddUniversalServer / AddBleHubClient.
     /// </summary>
     public static IServiceCollection AddBleHubCore(this IServiceCollection services)
     {

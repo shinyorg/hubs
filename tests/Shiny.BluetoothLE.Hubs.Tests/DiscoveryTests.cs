@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Shiny.BluetoothLE.Hosting;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs.Tests;
 
@@ -25,7 +26,7 @@ public class DiscoveryTests
             .AddSingleton<HubLog>();
 
         if (withServer)
-            services.AddBleHubServer(s => s.Host(o => o.LocalName = "Me").AddHub<TestHub>(TestChar));
+            services.AddUniversalServer(s => s.Configure(o => o.LocalName = "Me").AddHub<TestHub>("test", h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, TestChar)));
 
         services.AddBleHubClient<ITestHub>(TestChar, o => o.ServiceUuid = serviceUuid);
         return services.BuildServiceProvider();
@@ -46,7 +47,7 @@ public class DiscoveryTests
     public async Task TheHostsOwnAdvertisementIsLeftOut()
     {
         await using var sp = this.Build(withServer: true);
-        await sp.GetRequiredService<IBleHubHost>().Start();
+        await sp.GetRequiredService<IUniversalHubHost>().Start();
         var (names, scan) = this.Watch(sp);
         using (scan)
         {
@@ -64,7 +65,7 @@ public class DiscoveryTests
     public async Task OnceTheHostStopsTheSameNameIsSomeoneElse()
     {
         await using var sp = this.Build(withServer: true);
-        var host = sp.GetRequiredService<IBleHubHost>();
+        var host = sp.GetRequiredService<IUniversalHubHost>();
         await host.Start();
         var (names, scan) = this.Watch(sp);
         using (scan)
@@ -82,7 +83,7 @@ public class DiscoveryTests
     public async Task ARenamedHostIsLeftOutUnderItsNewName()
     {
         await using var sp = this.Build(withServer: true);
-        var host = sp.GetRequiredService<IBleHubHost>();
+        var host = sp.GetRequiredService<IUniversalHubHost>();
         await host.Start();
         var (names, scan) = this.Watch(sp);
         using (scan)
@@ -112,7 +113,7 @@ public class DiscoveryTests
     public async Task AClientScanningAnotherServiceKeepsTheSameName()
     {
         await using var sp = this.Build(withServer: true, serviceUuid: Custom);
-        await sp.GetRequiredService<IBleHubHost>().Start();
+        await sp.GetRequiredService<IUniversalHubHost>().Start();
         var (names, scan) = this.Watch(sp);
         using (scan)
             this.ble.Advertise("other", "Me");

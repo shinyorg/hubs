@@ -1,3 +1,5 @@
+using Shiny.UniversalHubs;
+
 namespace Shiny.BluetoothLE.Hubs;
 
 /// <summary>
@@ -7,19 +9,18 @@ namespace Shiny.BluetoothLE.Hubs;
 public interface IHubContext<THub> where THub : class
 {
     /// <summary>
-    /// Whether this hub is accepting clients
+    /// Whether this hub is accepting clients on any transport
     /// </summary>
     bool IsRunning { get; }
 
     /// <summary>
-    /// Starts only this hub - adds its GATT service (if not already there) and advertises it. Shared pieces (BLE access,
-    /// L2CAP file server) start with the first running hub. IBleHubHost.Start() starts every hub.
+    /// Starts only this hub, on every transport it was set up with - like IUniversalHubHost.StartHub. A transport that
+    /// can't start is skipped as long as another one does.
     /// </summary>
     Task Start(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stops only this hub - its clients are told to disconnect and new handshakes are refused. Its GATT service is removed once
-    /// no running hub shares it, and the advertisement is updated.
+    /// Stops only this hub on every transport - its clients are told to disconnect and new handshakes are refused
     /// </summary>
     Task Stop(string? reason = null);
 
@@ -44,8 +45,8 @@ public interface IHubContext<THub> where THub : class
     Task Disconnect(string connectionId, string? reason = null);
 
     /// <summary>
-    /// A connected client opened its media channel (over BLE when <see cref="BleHubHostOptions.EnableMediaChannels"/> is on,
-    /// or over another transport). The channel closes when the client disconnects or the hub stops.
+    /// A connected client opened its media channel (<see cref="UniversalServerOptions.EnableMediaChannels"/>), over any
+    /// transport. The channel closes when the client disconnects or the hub stops.
     /// </summary>
     event EventHandler<BleHubMediaChannelEventArgs>? MediaChannelOpened;
 
@@ -55,7 +56,7 @@ public interface IHubContext<THub> where THub : class
     IBleHubMediaChannel? GetMediaChannel(string connectionId);
 
     /// <summary>
-    /// Serves this hub over another transport (Wi-Fi, ...) alongside BLE
+    /// The hub as transports reach it
     /// </summary>
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
     IBleHubTransportEndpoint TransportEndpoint { get; }
@@ -68,17 +69,18 @@ public interface IHubContext<THub> where THub : class
 }
 
 
-internal sealed class HubContext<THub>(Func<HubRuntime> getRuntime, BleHubHost? host = null) : IHubContext<THub> where THub : class
+internal sealed class HubContext<THub>(Func<HubRuntime> getRuntime, UniversalHubHost? host = null) : IHubContext<THub> where THub : class
 {
     HubRuntime Runtime => getRuntime();
+    UniversalHubHost Host => host ?? throw new InvalidOperationException("No hub host is available");
 
     public bool IsRunning => this.Runtime.IsRunning;
 
     public Task Start(CancellationToken cancellationToken = default)
-        => (host ?? throw new InvalidOperationException("No BLE host is available")).StartHub(this.Runtime, cancellationToken);
+        => this.Host.StartHubs([this.Host.Get(typeof(THub))], HubTransports.All, cancellationToken);
 
     public Task Stop(string? reason = null)
-        => (host ?? throw new InvalidOperationException("No BLE host is available")).StopHub(this.Runtime, reason);
+        => this.Host.StopHubs([this.Host.Get(typeof(THub))], new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
     public IGroupManager Groups => this.Runtime;
     public IBleHubTransportEndpoint TransportEndpoint => this.Runtime;

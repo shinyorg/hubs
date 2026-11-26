@@ -37,7 +37,7 @@ public class MediaChannelTests : IAsyncLifetime
         builder.Services.AddSingleton(NoBluetoothHosting.Create());
         builder.Services.AddSingleton<HubLog>();
         builder.Services.AddUniversalServer(server => server
-            .Ble(o =>
+            .Configure(o =>
             {
                 o.LocalName = "MediaHost";
                 if (this.mediaChannels)
@@ -48,7 +48,7 @@ public class MediaChannelTests : IAsyncLifetime
                 o.Advertise = false;
                 o.ManageHttpServer = false;
             })
-            .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)
+            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType))
         );
 
         this.app = TestHttpServer.For(builder.Build());

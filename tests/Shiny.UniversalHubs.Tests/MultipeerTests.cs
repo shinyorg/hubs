@@ -56,7 +56,7 @@ public class MultipeerTests : IAsyncLifetime
             builder.Services.AddSingleton(link);
         builder.Services.AddSingleton<HubLog>();
         builder.Services.AddUniversalServer(server => server
-            .Ble(o =>
+            .Configure(o =>
             {
                 o.LocalName = "TestHost";
                 o.EnableFileTransfers(this.filesDirectory, ft => ft.MaxUploadSize = 1024);
@@ -66,13 +66,16 @@ public class MultipeerTests : IAsyncLifetime
             {
                 o.Advertise = false;
                 o.ManageHttpServer = false;
+            })
+            .Configure(o =>
+            {
                 o.HostId = "host-1";
                 o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
             })
             .Multipeer(ServiceType)
             .AllowDynamicHubs(o => o.ServiceTypes.Add(MdnsServiceType))
-            .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
-            .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType)
+            .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
+            .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
         );
 
         return TestHttpServer.For(builder.Build());
@@ -765,7 +768,7 @@ public class MultipeerTests : IAsyncLifetime
     public void BadServiceTypesAreRejected(string serviceType)
     {
         Assert.Throws<ArgumentException>(() => MultipeerProtocol.ValidateServiceType(serviceType));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.Multipeer(serviceType).AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.Multipeer(serviceType).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Multipeer(serviceType)));
     }
 
@@ -780,7 +783,7 @@ public class MultipeerTests : IAsyncLifetime
         => Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s
             .Multipeer("one")
             .Multipeer("two")
-            .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)));
+            .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
 
 
     [Theory]

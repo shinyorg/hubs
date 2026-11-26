@@ -69,12 +69,12 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public string? HostName { get; set; }
 
     /// <summary>
-    /// How long a client whose link dropped is held for it to resume, zero for never (<see cref="BleHubHostOptions.ResumeWindow"/>)
+    /// How long a client whose link dropped is held for it to resume, zero for never (<see cref="UniversalServerOptions.ResumeWindow"/>)
     /// </summary>
     public TimeSpan ResumeWindow { get; set; }
 
     /// <summary>
-    /// Pushes kept for a held client (<see cref="BleHubHostOptions.ResumeBufferSize"/>)
+    /// Pushes kept for a held client (<see cref="UniversalServerOptions.ResumeBufferSize"/>)
     /// </summary>
     public int ResumeBufferSize { get; set; } = 128;
 
@@ -93,6 +93,13 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected;
     public event EventHandler<BleHubClientRenamedEventArgs>? ClientRenamed;
     public event EventHandler<BleHubMediaChannelEventArgs>? MediaChannelOpened;
+
+
+    /// <summary>
+    /// The admitted clients - held ones too - whose last channel <paramref name="channel"/> recognizes: one transport's own
+    /// </summary>
+    public IReadOnlyList<string> ConnectionIds(Func<IBleHubPeerChannel?, bool> channel)
+        => this.connections.Values.Where(x => x.Client != null && channel(x.Channel)).Select(x => x.Id).ToList();
 
 
     public BleHubConnectedClient? FindClient(string connectionId)

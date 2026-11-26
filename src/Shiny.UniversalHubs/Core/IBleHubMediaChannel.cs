@@ -16,7 +16,7 @@ public interface IBleHubMediaChannel : IAsyncDisposable
     string? ConnectionId { get; }
 
     /// <summary>
-    /// The largest packet either side may send. The host sets it (BleHubHostOptions.EnableMediaChannels).
+    /// The largest packet either side may send. The host sets it (UniversalServerOptions.EnableMediaChannels).
     /// </summary>
     int MaxPacketSize { get; }
 

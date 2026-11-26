@@ -8,7 +8,7 @@ using Shiny.Net.HttpServer;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// Files over Wi-Fi: plain HTTP, under the same BleHubHostOptions.EnableFileTransfers settings L2CAP uses
+/// Files over Wi-Fi: plain HTTP, under the same UniversalServerOptions.EnableFileTransfers settings L2CAP uses
 /// <code>
 /// PUT {BasePath}/files/{name}   body = the file, Content-Length required
 /// GET {BasePath}/files/{name}
@@ -17,7 +17,7 @@ namespace Shiny.UniversalHubs;
 /// </summary>
 internal static class FileRoutes
 {
-    public static void Map(HttpServer server, UniversalHubHostOptions options)
+    public static void Map(HttpServer server, HttpTransportOptions options)
     {
         var pattern = UniversalHubProtocol.FilesPath(options.BasePath) + "/{name}";
         server.MapRoute(HttpMethods.Put, pattern, ctx => Upload(ctx, options), new DisableRequestTimeoutAttribute());
@@ -25,7 +25,7 @@ internal static class FileRoutes
     }
 
 
-    static async ValueTask Upload(HttpContext ctx, UniversalHubHostOptions options)
+    static async ValueTask Upload(HttpContext ctx, HttpTransportOptions options)
     {
         if (Prepare(ctx, out var ft, out var client, out var name, out var path) is { } refused)
         {
@@ -54,7 +54,7 @@ internal static class FileRoutes
             await Refuse(ctx, (StatusCodes.Status409Conflict, "The file already exists"));
             return;
         }
-        if (options.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Upload, name!, length, client!)) == false)
+        if (ctx.RequestServices.GetRequiredService<UniversalServerOptions>().AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Upload, name!, length, client!)) == false)
         {
             await Refuse(ctx, (StatusCodes.Status403Forbidden, "The host refused the transfer"));
             return;
@@ -90,7 +90,7 @@ internal static class FileRoutes
     }
 
 
-    static async ValueTask Download(HttpContext ctx, UniversalHubHostOptions options)
+    static async ValueTask Download(HttpContext ctx, HttpTransportOptions options)
     {
         if (Prepare(ctx, out var ft, out var client, out var name, out var path) is { } refused)
         {
@@ -107,7 +107,7 @@ internal static class FileRoutes
             await Refuse(ctx, (StatusCodes.Status404NotFound, "No such file"));
             return;
         }
-        if (options.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Download, name!, null, client!)) == false)
+        if (ctx.RequestServices.GetRequiredService<UniversalServerOptions>().AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Download, name!, null, client!)) == false)
         {
             await Refuse(ctx, (StatusCodes.Status403Forbidden, "The host refused the transfer"));
             return;
@@ -139,8 +139,8 @@ internal static class FileRoutes
         name = ctx.Request.RouteValues["name"];
 
         var host = ctx.RequestServices.GetRequiredService<UniversalHubHost>();
-        ft = ctx.RequestServices.GetRequiredService<BleHubHostOptions>().FileTransfers;
-        if (!host.IsHttpRunning || ft == null)
+        ft = host.Options.FileTransfers;
+        if (!ctx.RequestServices.GetRequiredService<HttpHubTransport>().AnyRunning || ft == null)
             return (StatusCodes.Status404NotFound, "This host does not serve files");
 
         client = ctx.RequestServices.GetRequiredService<FileTokens>().Find(ctx.Request.Headers[UniversalHubProtocol.FileTokenHeader].ToString());

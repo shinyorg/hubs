@@ -19,7 +19,7 @@ namespace Shiny.UniversalHubs;
 /// </summary>
 internal static class MediaRoutes
 {
-    public static void Map(HttpServer server, UniversalHubHostOptions options)
+    public static void Map(HttpServer server, HttpTransportOptions options)
         => server.MapRoute(HttpMethods.Get, UniversalHubProtocol.MediaPath(options.BasePath), Accept, new DisableRequestTimeoutAttribute());
 
 
@@ -27,7 +27,7 @@ internal static class MediaRoutes
     {
         var host = ctx.RequestServices.GetRequiredService<UniversalHubHost>();
         var maxPacketSize = host.MediaMaxPacketSize;
-        if (!host.IsHttpRunning || maxPacketSize == null)
+        if (!ctx.RequestServices.GetRequiredService<HttpHubTransport>().AnyRunning || maxPacketSize == null)
         {
             await Refuse(ctx, StatusCodes.Status404NotFound, "This host has no media channels");
             return;
@@ -39,7 +39,7 @@ internal static class MediaRoutes
             await Refuse(ctx, StatusCodes.Status401Unauthorized, "A media token from a connected hub client is required");
             return;
         }
-        if (ctx.Connection.IsTunneled && !entry.Binding.AllowTunnel)
+        if (ctx.Connection.IsTunneled && !TunnelGate.AllowsTunnel(entry.Binding))
         {
             await Refuse(ctx, StatusCodes.Status404NotFound, "Not found");
             return;
@@ -58,7 +58,7 @@ internal static class MediaRoutes
         await using var socket = await ctx.AcceptWebSocketAsync(accept);
         var channel = new ServerMediaChannel(socket, entry.ConnectionId, maxPacketSize.Value);
 
-        if (!entry.Binding.OpenMedia(entry.ConnectionId, channel))
+        if (!entry.Binding.Endpoint.MediaChannelOpened(entry.ConnectionId, channel))
         {
             await channel.DisposeAsync();
             return;

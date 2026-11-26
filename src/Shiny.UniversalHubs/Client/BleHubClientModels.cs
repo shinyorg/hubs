@@ -94,14 +94,14 @@ public interface IBleHubConnection
     event EventHandler<HubDisconnect>? Disconnected;
 
     /// <summary>
-    /// The host changed its name (IBleHubHost.Rename) - <see cref="HostName"/> already has it. Raised in order with the
+    /// The host changed its name (IUniversalHubHost.Rename) - <see cref="HostName"/> already has it. Raised in order with the
     /// hub's events.
     /// </summary>
     event EventHandler<string?>? HostRenamed;
 
     /// <summary>
     /// Scans for hosts serving this hub. Dispose the subscription to stop scanning. While this app hosts hubs too
-    /// (AddBleHubServer), its own advertisement is left out - matched by service UUID and advertised local name.
+    /// (AddUniversalServer), its own advertisement is left out - matched by service UUID and advertised local name.
     /// </summary>
     IObservable<BleHubHostInfo> Discover();
 

@@ -1,30 +1,29 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs;
-using Shiny.Net.HttpServer;
+using Shiny.BluetoothLE.Hubs.Protocol;
 
 namespace Shiny.UniversalHubs;
 
-public static class UniversalServerExtensions
+public static partial class UniversalServerExtensions
 {
     /// <summary>
-    /// Registers a universal server: its hubs are served over BLE (GATT) and HTTP (Switchboard, advertised over mDNS) at
-    /// once, and each hub shares its clients, groups, MaxClients and ValidateClient across both. Start and stop it with
-    /// <see cref="IUniversalHubHost"/>. The BLE side is blehubs' AddBleHubServer, which adds the BLE hosting stack on
-    /// Android, iOS and Mac Catalyst; on plain .NET, register an IBleHostingManager yourself.
+    /// Registers a hub server: every hub it serves and the transports each one is served over, in one call. A hub is the
+    /// same hub on every transport - its clients share Clients, Groups, MaxClients and ValidateClient. Start and stop it
+    /// with <see cref="IUniversalHubHost"/> (or one hub with IHubContext&lt;THub&gt;).
     /// <code>
     /// services.AddUniversalServer(server => server
-    ///     .Ble(o => o.EnableFileTransfers(filesDir))
-    ///     .Http(o => o.AuthorizeFile = req => req.FileName.StartsWith("avatar-"))
-    ///     .AddHub&lt;GameHub&gt;(CharacteristicUuid, "_unigame._tcp", o => o.MaxClients = 6));
+    ///     .Configure(o => o.LocalName = "Allan's iPad")
+    ///     .AddHub&lt;GameHub&gt;("game", hub => hub
+    ///         .MaxClients(6)
+    ///         .UseBluetoothLE(ServiceUuid, GameCharacteristicUuid)
+    ///         .UseHttp("_game._tcp")));
     /// </code>
     /// </summary>
-    /// <param name="configure">BLE and HTTP setup, and the hubs to serve</param>
-    public static IServiceCollection AddUniversalServer(
-        this IServiceCollection services,
-        Action<UniversalServerBuilder> configure
-    )
+    public static IServiceCollection AddUniversalServer(this IServiceCollection services, Action<UniversalServerBuilder> configure)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configure);
@@ -35,157 +34,142 @@ public static class UniversalServerExtensions
 
         var server = new UniversalServerBuilder();
         configure(server);
-        if (server.Hubs.Count == 0 && server.DynamicHubs == null)
-            throw new InvalidOperationException("A universal server needs at least one hub - call AddHub (or AllowDynamicHubs to add them while the app runs)");
-        if (String.IsNullOrWhiteSpace(server.Endpoint))
-            throw new InvalidOperationException("A universal server needs an endpoint");
+        server.Validate();
 
-        services.AddBleHubServer(ble =>
+        services.AddBleHubCore();
+        foreach (var c in server.ProtocolActions)
+            services.ConfigureBleHubProtocol(c);
+
+        var options = new UniversalServerOptions();
+        foreach (var c in server.ServerActions)
+            c(options);
+        services.AddSingleton(options);
+
+        foreach (var hub in server.Hubs)
+            hub.Register(services);
+
+        services.TryAddSingleton<UniversalHubHost>();
+        services.TryAddSingleton<IUniversalHubHost>(sp => sp.GetRequiredService<UniversalHubHost>());
+
+        if (server.DynamicHubs != null)
         {
-            if (server.BleServiceUuid != null)
-                ble.ServiceUuid(server.BleServiceUuid);
-            foreach (var c in server.BleActions)
-                ble.Host(c);
-            foreach (var c in server.ProtocolActions)
-                ble.Protocol(c);
-            foreach (var hub in server.Hubs)
-                hub.AddBle(ble);
-            if (server.DynamicHubs != null)
-                ble.AllowHandlerHubs();
-        });
+            services.AddSingleton(server.DynamicHubs);
+            services.TryAddSingleton<DynamicHubRegistry>();
+            services.TryAddSingleton<IDynamicHubs>(sp => sp.GetRequiredService<DynamicHubRegistry>());
+        }
 
-        var serverExisted = services.Any(x => x.ServiceType == typeof(HttpServerOptions));
-        services.AddShinyHttpServer(http =>
-        {
-            if (!serverExisted)
-            {
-                // reachable from other devices, on whatever port is free - mDNS tells clients which
-                http.Options.Address = IPAddress.Any;
-                http.Options.Port = 0;
-            }
-            foreach (var c in server.HttpServerActions)
-                c(http);
+        foreach (var setup in server.TransportSetups.Values)
+            setup(services, server);
 
-            var switchboard = http.AddUniversalHubs(o =>
-            {
-                o.BasePath = server.Endpoint;
-                foreach (var c in server.HttpActions)
-                    c(o);
-            });
-            foreach (var hub in server.Hubs)
-                hub.AddHttp(switchboard);
-            if (server.DynamicHubs != null)
-                switchboard.AddDynamicHubs(server.DynamicHubs);
-        }, autoStart: false); // IUniversalHubHost starts and stops it
-
-        // transports from add-on packages (Shiny.UniversalHubs.Multipeer's server.Multipeer(...))
+        // registrations add-on transports make once the server is set up
         foreach (var c in server.ServiceActions)
             c(services);
 
         return services;
     }
+
+
+    /// <summary>
+    /// A hub's name: how clients ask for it on every transport, so it travels in URLs and advertisements
+    /// </summary>
+    internal static void ValidateHubName(string name)
+    {
+        if (String.IsNullOrWhiteSpace(name) || !HubName().IsMatch(name))
+            throw new ArgumentException($"'{name}' is not a valid hub name - use 1 to 64 letters, digits, '.', '_' or '-', starting with a letter or digit", nameof(name));
+    }
+
+
+    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
+    private static partial Regex HubName();
 }
 
 
 /// <summary>
-/// Sets up a universal server: BLE hosting, HTTP hosting, the HttpServer, and the hubs it serves
+/// Sets up a hub server: its own settings, the hubs it serves, and the transports they use
 /// </summary>
 public sealed class UniversalServerBuilder
 {
+    readonly Dictionary<HubTransports, List<object>> configurations = new();
+
     internal UniversalServerBuilder() { }
 
-    internal string? BleServiceUuid { get; private set; }
-    internal List<Action<BleHubHostOptions>> BleActions { get; } = new();
+    internal List<Action<UniversalServerOptions>> ServerActions { get; } = new();
     internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
-    internal List<Action<UniversalHubHostOptions>> HttpActions { get; } = new();
-    internal List<Action<ShinyHttpServerBuilder>> HttpServerActions { get; } = new();
-    internal List<UniversalHubRegistration> Hubs { get; } = new();
+    internal List<UniversalHubBuilder> Hubs { get; } = new();
     internal DynamicHubOptions? DynamicHubs { get; private set; }
+
+    /// <summary>
+    /// Each transport the hubs use, and how it registers itself
+    /// </summary>
+    internal Dictionary<HubTransports, Action<IServiceCollection, UniversalServerBuilder>> TransportSetups { get; } = new();
 
     /// <summary>
     /// Registrations an add-on transport makes once the server is set up
     /// </summary>
     internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
 
-    /// <summary>
-    /// The HTTP base path. Each hub is served at <c>{Endpoint}/{characteristicUuid}</c> and files at <c>{Endpoint}/files</c>.
-    /// It is advertised over mDNS, so clients need no setting for it.
-    /// </summary>
-    public string Endpoint { get; set; } = UniversalHubProtocol.DefaultBasePath;
 
     /// <summary>
-    /// The one BLE service every hub is a characteristic in - blehubs' default unless set. Clients must use the same one
-    /// (UniversalHubClientOptions.ServiceUuid in AddUniversalHubClient).
+    /// The server's own settings, shared by every hub and transport: LocalName, HostId, resume, file transfers, media channels
     /// </summary>
-    public UniversalServerBuilder ServiceUuid(string serviceUuid)
+    public UniversalServerBuilder Configure(Action<UniversalServerOptions> configure)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(serviceUuid);
-        this.BleServiceUuid = serviceUuid;
+        ArgumentNullException.ThrowIfNull(configure);
+        this.ServerActions.Add(configure);
         return this;
     }
 
-    /// <summary>
-    /// BLE hosting: LocalName (also the mDNS instance name), file transfers (used by HTTP too), the client sweep
-    /// </summary>
-    public UniversalServerBuilder Ble(Action<BleHubHostOptions> configure) => Add(this, this.BleActions, configure);
 
     /// <summary>
-    /// blehubs protocol limits (payload size, timeouts) - app-wide
+    /// Protocol limits (payload size, timeouts) - app-wide, so a client in the same app gets them too
     /// </summary>
-    public UniversalServerBuilder Protocol(Action<BleHubProtocolOptions> configure) => Add(this, this.ProtocolActions, configure);
+    public UniversalServerBuilder Protocol(Action<BleHubProtocolOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        this.ProtocolActions.Add(configure);
+        return this;
+    }
+
 
     /// <summary>
-    /// HTTP hosting: HostId, Advertise, ManageHttpServer, AuthorizeFile. Each hub's mDNS service type comes from AddHub
-    /// and the base path from <see cref="Endpoint"/>.
+    /// Serves <typeparamref name="THub"/> - a <see cref="UniversalHub{TContract}"/> or <see cref="BleHub{TContract}"/> - over
+    /// the transports <paramref name="configure"/> picks (UseBluetoothLE, UseHttp, UseMultipeer, UseNearby; at least one)
     /// </summary>
-    public UniversalServerBuilder Http(Action<UniversalHubHostOptions> configure) => Add(this, this.HttpActions, configure);
-
-    /// <summary>
-    /// The HttpServer itself: address, port, TLS, middleware, your own routes. It binds every interface on a free port
-    /// unless the server was already registered with AddShinyHttpServer.
-    /// </summary>
-    public UniversalServerBuilder HttpServer(Action<ShinyHttpServerBuilder> configure) => Add(this, this.HttpServerActions, configure);
-
-    /// <summary>
-    /// Serves <typeparamref name="THub"/> - a <see cref="UniversalHub{TContract}"/> - over BLE and HTTP
-    /// </summary>
-    /// <param name="characteristicUuid">The BLE characteristic UUID - one per hub. Also names the hub over HTTP.</param>
-    /// <param name="mdnsServiceType">
-    /// The mDNS service type this hub is advertised under, eg. <c>_unigame._tcp</c>. Its clients browse for the same one
-    /// (AddUniversalHubClient), and iOS hosts list it in NSBonjourServices. Hubs that share a type share one advertisement.
+    /// <param name="name">
+    /// The hub's name - how clients ask for it on every transport, so they register the same one. 1 to 64 letters, digits,
+    /// '.', '_' or '-'.
     /// </param>
-    /// <param name="configure">
-    /// This hub's rules: MaxClients (counted across every transport), ValidateClient, and AllowTunnel
-    /// </param>
+    /// <param name="configure">This hub's rules and transports</param>
     public UniversalServerBuilder AddHub<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THub>(
-        string characteristicUuid,
-        string mdnsServiceType,
-        Action<UniversalHubOptions>? configure = null
+        string name,
+        Action<UniversalHubBuilder> configure
     ) where THub : class
     {
-        UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
+        UniversalServerExtensions.ValidateHubName(name);
+        ArgumentNullException.ThrowIfNull(configure);
         if (this.Hubs.Any(x => x.HubType == typeof(THub)))
             throw new InvalidOperationException($"{typeof(THub).Name} is already added");
+        if (this.Hubs.Any(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException($"A hub named {name} is already added - each hub needs its own name");
 
-        var options = new UniversalHubOptions();
-        configure?.Invoke(options);
-
-        this.Hubs.Add(new UniversalHubRegistration(
-            typeof(THub),
-            ble => ble.AddHub<THub>(characteristicUuid, o =>
+        var hub = new UniversalHubBuilder(this, name, typeof(THub), v => v.Visit<THub>(name), services =>
+        {
+            services.AddTransient<THub>();
+            services.AddSingleton<IHubContext<THub>>(sp =>
             {
-                o.MaxClients = options.MaxClients;
-                o.ValidateClient = options.ValidateClient;
-            }),
-            switchboard => switchboard.AddHub<THub>(mdnsServiceType, options.AllowTunnel)
-        ));
+                var host = sp.GetRequiredService<UniversalHubHost>();
+                return new HubContext<THub>(() => host.Get(typeof(THub)).Runtime, host);
+            });
+        });
+        configure(hub);
+        this.Hubs.Add(hub);
         return this;
     }
 
 
     /// <summary>
     /// Lets hubs be defined while the app runs - by a downloaded web app, say - through <see cref="IDynamicHubs"/>. They
-    /// are served over every transport beside the compiled hubs, and the server may start with no compiled hubs at all.
+    /// are served over every transport this server has set up, and the server may start with no compiled hubs at all.
     /// What they may use is fixed here, because the platforms fix it when the app is built: the mDNS service types (iOS
     /// lists them in NSBonjourServices) and how many there may be.
     /// </summary>
@@ -203,33 +187,152 @@ public sealed class UniversalServerBuilder
     }
 
 
-    static UniversalServerBuilder Add<T>(UniversalServerBuilder builder, List<Action<T>> list, Action<T> configure)
+    /// <summary>
+    /// Sets up a transport - once, however many hubs use it
+    /// </summary>
+    internal void SetUpTransport(HubTransports transport, Action<IServiceCollection, UniversalServerBuilder> setup)
+        => this.TransportSetups.TryAdd(transport, setup);
+
+
+    /// <summary>
+    /// Keeps a transport's settings for when it registers itself
+    /// </summary>
+    internal void Configure<T>(HubTransports transport, Action<T> configure)
     {
-        ArgumentNullException.ThrowIfNull(configure);
+        if (!this.configurations.TryGetValue(transport, out var list))
+            this.configurations[transport] = list = new();
+
         list.Add(configure);
-        return builder;
+    }
+
+
+    internal IEnumerable<Action<T>> GetConfigurations<T>(HubTransports transport)
+        => this.configurations.TryGetValue(transport, out var list) ? list.OfType<Action<T>>() : [];
+
+
+    /// <summary>
+    /// Registration mistakes throw here, at registration
+    /// </summary>
+    internal void Validate()
+    {
+        if (this.Hubs.Count == 0 && this.DynamicHubs == null)
+            throw new InvalidOperationException("A universal server needs at least one hub - call AddHub (or AllowDynamicHubs to add them while the app runs)");
+
+        foreach (var hub in this.Hubs)
+        {
+            if (hub.Transports == HubTransports.None)
+                throw new InvalidOperationException($"{hub.Name} isn't served over any transport - call UseBluetoothLE, UseHttp, UseMultipeer or UseNearby on it");
+
+            foreach (var transport in Enum.GetValues<HubTransports>().Where(x => x is not (HubTransports.None or HubTransports.All) && hub.Transports.HasFlag(x)))
+            {
+                if (!this.TransportSetups.ContainsKey(transport))
+                    throw new InvalidOperationException($"{hub.Name} is served over {transport}, which isn't set up on the server - call server.{transport}(...)");
+            }
+        }
+
+        if (this.DynamicHubs == null)
+        {
+            var unused = this.TransportSetups.Keys.FirstOrDefault(t => !this.Hubs.Any(x => x.Transports.HasFlag(t)));
+            if (unused != HubTransports.None)
+                throw new InvalidOperationException($"{unused} is set up but no hub is served over it - call Use{unused} on a hub");
+        }
+        else if (this.TransportSetups.Count == 0)
+        {
+            throw new InvalidOperationException("Dynamic hubs need at least one transport set up on the server");
+        }
     }
 }
 
 
 /// <summary>
-/// One universal hub's rules
+/// Sets up one hub: its rules and the transports it is served over
 /// </summary>
-public sealed class UniversalHubOptions : BleHubOptions
+public sealed class UniversalHubBuilder
 {
+    readonly Action<IHubTypeVisitor> accept;
+    readonly Action<IServiceCollection> register;
+    readonly Dictionary<Type, object> settings = new();
+
+
+    internal UniversalHubBuilder(UniversalServerBuilder server, string name, Type hubType, Action<IHubTypeVisitor> accept, Action<IServiceCollection> register)
+    {
+        this.Server = server;
+        this.Name = name;
+        this.HubType = hubType;
+        this.accept = accept;
+        this.register = register;
+    }
+
+
     /// <summary>
-    /// Let clients reach this hub through a tunnel - the public internet. Off by default: through a tunnel, a hub that
-    /// doesn't allow it answers 404. Set up the tunnel itself on the HttpServer (eg. AddQuickTunnel from
-    /// Shiny.Net.HttpServer.Ssh), and put authentication in front of anything you share this way.
+    /// The hub's name - how clients ask for it on every transport
     /// </summary>
-    public bool AllowTunnel { get; set; }
+    public string Name { get; }
+
+    internal UniversalServerBuilder Server { get; }
+    internal Type HubType { get; }
+    internal HubTransports Transports { get; private set; }
+    internal BleHubOptions Options { get; } = new();
+
+
+    /// <summary>
+    /// The most clients connected at once, counted across every transport - 8 unless set, null for no limit
+    /// </summary>
+    public UniversalHubBuilder MaxClients(int? maxClients)
+    {
+        if (maxClients < 1)
+            throw new ArgumentOutOfRangeException(nameof(maxClients), "MaxClients must be at least 1, or null for no limit");
+
+        this.Options.MaxClients = maxClients;
+        return this;
+    }
+
+
+    /// <summary>
+    /// A gate for incoming clients, on every transport - return a rejection reason to refuse, or null to accept. It also
+    /// sees a connected client's new name when it renames itself.
+    /// </summary>
+    public UniversalHubBuilder ValidateClient(Func<HandshakeInfo, string?> validate)
+    {
+        ArgumentNullException.ThrowIfNull(validate);
+        this.Options.ValidateClient = validate;
+        return this;
+    }
+
+
+    /// <summary>
+    /// Serves the hub over <paramref name="transport"/>, with what that transport needs to know about it
+    /// </summary>
+    internal void Use(HubTransports transport, object transportSettings)
+    {
+        if (this.Transports.HasFlag(transport))
+            throw new InvalidOperationException($"{this.Name} is already served over {transport}");
+
+        this.Transports |= transport;
+        this.settings[transportSettings.GetType()] = transportSettings;
+    }
+
+
+    internal T? GetSettings<T>() where T : class => this.settings.TryGetValue(typeof(T), out var value) ? (T)value : null;
+
+    internal void Accept(IHubTypeVisitor visitor) => this.accept(visitor);
+
+
+    internal void Register(IServiceCollection services)
+    {
+        this.register(services);
+        services.AddSingleton(new HubRegistration(this.HubType, this.Name, this.Options, this.Transports, new Dictionary<Type, object>(this.settings)));
+    }
 }
 
 
-internal sealed record UniversalHubRegistration(
-    Type HubType,
-    Action<BleHubServerBuilder> AddBle,
-    Action<UniversalHubHostBuilder> AddHttp
-);
+/// <summary>
+/// Lets a transport register what it needs per compiled hub type, without reflection
+/// </summary>
+internal interface IHubTypeVisitor
+{
+    void Visit<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THub>(string key) where THub : class;
+}
+
 
 internal sealed class UniversalServerMarker;

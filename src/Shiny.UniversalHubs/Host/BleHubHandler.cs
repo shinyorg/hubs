@@ -6,7 +6,7 @@ namespace Shiny.BluetoothLE.Hubs;
 /// <summary>
 /// A hub whose methods aren't compiled into this app - served by a web page, a script, another process. Its methods are
 /// dispatched by name, and values stay exactly as the caller's <see cref="IBleHubSerializer"/> wrote them, so nothing here
-/// needs their types. Add one while the app runs with <see cref="IBleHubHandlerHost.Add"/>.
+/// needs their types. UniversalHubs adds them while the app runs (IDynamicHubs).
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public interface IBleHubHandler
@@ -72,75 +72,6 @@ public sealed class BleHubHandlerCall
 
 
 /// <summary>
-/// Adds and removes <see cref="IBleHubHandler"/> hubs while the app runs. Registered by AddBleHubServer.
-/// </summary>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public interface IBleHubHandlerHost
-{
-    /// <summary>
-    /// Every handler hub added so far
-    /// </summary>
-    IReadOnlyList<IBleHubHandle> Handlers { get; }
-
-    /// <summary>
-    /// Adds a hub on its own characteristic in the server's one service. It doesn't start until <see cref="IBleHubHandle.Start"/>.
-    /// If the GATT service is up already, it is rebuilt when this hub first starts - BLE clients of the other hubs are
-    /// asked to reconnect then.
-    /// </summary>
-    /// <param name="characteristicUuid">Must not be used by another hub</param>
-    /// <param name="name">Names the hub in logs and errors</param>
-    IBleHubHandle Add(string characteristicUuid, string name, BleHubOptions options, IBleHubHandler handler);
-
-    /// <summary>
-    /// Stops a handler hub (its clients are told why) and forgets it. Its characteristic stays in a running GATT service,
-    /// refusing handshakes, until that service is next rebuilt.
-    /// </summary>
-    Task Remove(string characteristicUuid, string? reason = null);
-}
-
-
-/// <summary>
-/// A handler hub - the counterpart of <see cref="IHubContext{THub}"/> for a hub added at runtime
-/// </summary>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public interface IBleHubHandle
-{
-    string CharacteristicUuid { get; }
-    string Name { get; }
-    IBleHubHandler Handler { get; }
-
-    /// <summary>
-    /// Whether this hub is accepting BLE clients
-    /// </summary>
-    bool IsRunning { get; }
-
-    Task Start(CancellationToken cancellationToken = default);
-    Task Stop(string? reason = null);
-
-    IGroupManager Groups { get; }
-    IReadOnlyList<BleHubConnectedClient> ConnectedClients { get; }
-
-    /// <summary>
-    /// Push targets. Send already serialized values: <c>var push = Clients.All; push.Send(name, push.CreateArguments().WriteSerialized(value))</c>.
-    /// </summary>
-    IHubClients<BleHubPush<IBleHubHandler>> Clients { get; }
-
-    /// <summary>
-    /// Ends a client's session (cooperative - the client library disconnects itself)
-    /// </summary>
-    Task Disconnect(string connectionId, string? reason = null);
-
-    /// <summary>
-    /// Serves this hub over another transport (Wi-Fi, ...) alongside BLE
-    /// </summary>
-    IBleHubTransportEndpoint TransportEndpoint { get; }
-
-    event EventHandler<BleHubConnectedClient>? ClientConnected;
-    event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected;
-}
-
-
-/// <summary>
 /// Stands in for a hub class: the runtime creates one per call, as it does a compiled hub, and it hands everything to the handler
 /// </summary>
 internal sealed class HandlerHub(IBleHubHandler handler) : IBleHubInternal
@@ -180,39 +111,5 @@ internal sealed class HandlerDispatcher(IBleHubHandler handler) : IBleHubDispatc
             values[i] = args.ReadSerialized();
 
         return new BleHubHandlerCall(((HandlerHub)hub).Context, method, values);
-    }
-}
-
-
-internal sealed class HandlerHandle(HubRuntime runtime, BleHubHost host, IBleHubHandler handler) : IBleHubHandle
-{
-    internal HubRuntime Runtime => runtime;
-
-    public string CharacteristicUuid => runtime.Registration.CharacteristicUuid;
-    public string Name => runtime.Name;
-    public IBleHubHandler Handler => handler;
-    public bool IsRunning => runtime.IsRunning;
-    public Task Start(CancellationToken cancellationToken = default) => host.StartHub(runtime, cancellationToken);
-    public Task Stop(string? reason = null) => host.StopHub(runtime, reason);
-    public IGroupManager Groups => runtime;
-    public IReadOnlyList<BleHubConnectedClient> ConnectedClients => runtime.Clients;
-    public IBleHubTransportEndpoint TransportEndpoint => runtime;
-
-    public IHubClients<BleHubPush<IBleHubHandler>> Clients
-        => new HubClients<BleHubPush<IBleHubHandler>>(runtime, target => new BleHubPush<IBleHubHandler>(target, runtime.Serializer));
-
-    public Task Disconnect(string connectionId, string? reason = null)
-        => runtime.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, reason));
-
-    public event EventHandler<BleHubConnectedClient>? ClientConnected
-    {
-        add => runtime.ClientConnected += value;
-        remove => runtime.ClientConnected -= value;
-    }
-
-    public event EventHandler<BleHubClientDisconnectedEventArgs>? ClientDisconnected
-    {
-        add => runtime.ClientDisconnected += value;
-        remove => runtime.ClientDisconnected -= value;
     }
 }

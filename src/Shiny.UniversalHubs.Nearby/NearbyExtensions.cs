@@ -33,16 +33,27 @@ public static class NearbyExtensions
         var options = new NearbyHostOptions(serviceId);
         configure?.Invoke(options);
 
-        server.ServiceActions.Add(services =>
-        {
-            if (services.Any(x => x.ServiceType == typeof(NearbyHostOptions)))
-                throw new InvalidOperationException("Nearby can only be set up once per universal server");
+        if (server.TransportSetups.ContainsKey(HubTransports.Nearby))
+            throw new InvalidOperationException("Nearby can only be set up once per universal server");
 
+        server.SetUpTransport(HubTransports.Nearby, (services, _) =>
+        {
             services.AddNearbyLink();
             services.AddSingleton(options);
             services.AddSingleton<IUniversalHubTransport, NearbyHostTransport>();
         });
         return server;
+    }
+
+
+    /// <summary>
+    /// Serves this hub over Nearby too - set the transport up once on the server with server.Nearby(...)
+    /// </summary>
+    public static UniversalHubBuilder UseNearby(this UniversalHubBuilder hub)
+    {
+        ArgumentNullException.ThrowIfNull(hub);
+        hub.Use(HubTransports.Nearby, new NearbyHubSettings());
+        return hub;
     }
 
 
@@ -132,3 +143,9 @@ public sealed class NearbyClientOptions
     /// </summary>
     public NearbyStrategy Strategy { get; set; } = NearbyStrategy.Cluster;
 }
+
+
+/// <summary>
+/// What a hub was told by UseNearby - nothing beyond that it is served over Nearby
+/// </summary>
+internal sealed record NearbyHubSettings;

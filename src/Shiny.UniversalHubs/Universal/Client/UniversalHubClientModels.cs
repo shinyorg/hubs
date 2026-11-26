@@ -134,7 +134,7 @@ public class UniversalHubClientOptions
     /// <summary>
     /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
     /// missed pushes. Over Wi-Fi the line resumes on its own; over BLE, Multipeer and Nearby the client reconnects
-    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (BleHubHostOptions.ResumeWindow).
+    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (UniversalServerOptions.ResumeWindow).
     /// </summary>
     public bool AutomaticReconnect { get; set; } = true;
 

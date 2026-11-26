@@ -37,6 +37,13 @@ internal sealed class FrameHostSession
     /// </summary>
     public Func<FrameHostLink, byte[], CancellationToken, Task>? Notify { get; set; }
 
+    /// <summary>
+    /// Whether the hub takes handshakes over these frames - the hub's own state unless the transport says otherwise
+    /// </summary>
+    public Func<bool>? IsRunning { get; set; }
+
+    bool Running => this.IsRunning?.Invoke() ?? this.endpoint.IsRunning;
+
     public ushort FileTransferPsm { get; set; }
     public bool FileTransferSecure { get; set; }
 
@@ -210,7 +217,7 @@ internal sealed class FrameHostSession
         var info = ProtocolSerializer.ReadHandshake(message.Payload);
         string? rejection = null;
 
-        if (!this.endpoint.IsRunning)
+        if (!this.Running)
             rejection = "Hub is not running";
         else if (info.ProtocolVersion != FrameCodec.ProtocolVersion)
             rejection = $"Unsupported protocol version {info.ProtocolVersion}";
@@ -287,7 +294,7 @@ internal sealed class FrameHostSession
         string? rejection;
         if (info == null)
             rejection = "Malformed resume";
-        else if (!this.endpoint.IsRunning)
+        else if (!this.Running)
             rejection = "Hub is not running";
         else if (info.ProtocolVersion != FrameCodec.ProtocolVersion)
             rejection = $"Unsupported protocol version {info.ProtocolVersion}";

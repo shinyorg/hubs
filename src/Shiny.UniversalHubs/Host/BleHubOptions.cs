@@ -21,26 +21,21 @@ public class BleHubOptions
 
 
 /// <summary>
-/// Settings shared by every hub on this device
+/// Settings shared by every hub and every transport on this host
 /// </summary>
-public class BleHubHostOptions
+public class UniversalServerOptions
 {
     /// <summary>
-    /// The one GATT service every hub lives in - each hub is a characteristic inside it. It is the only UUID the host
-    /// advertises, and the one its clients scan for (their own ServiceUuid must match).
-    /// </summary>
-    public string ServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
-
-    /// <summary>
-    /// Advertised local name, also sent to clients in the handshake. Keep it short - the 128-bit service UUID leaves little
-    /// room in a 31 byte advertisement. Null to advertise without a name.
+    /// The host's name: sent to clients in every handshake, advertised over BLE (keep it short - a 31 byte advertisement
+    /// has little room beside a 128-bit service UUID), and the mDNS, Multipeer and Nearby name. Null for none.
     /// </summary>
     public string? LocalName { get; set; }
 
     /// <summary>
-    /// How often to sweep for clients that dropped without unsubscribing
+    /// Identifies this host across transports, so a client that sees it over several shows it once. Defaults to a new id
+    /// each time the app starts - persist one for a stable id.
     /// </summary>
-    public TimeSpan ClientSweepInterval { get; set; } = TimeSpan.FromSeconds(10);
+    public string HostId { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// How long a client whose link dropped (out of range, its app went to the background) is held for it to come back
@@ -57,14 +52,22 @@ public class BleHubHostOptions
     public int ResumeBufferSize { get; set; } = 128;
 
     /// <summary>
+    /// Gate for file transfers over HTTP and the peer links (Multipeer, Nearby) - return false to refuse. They otherwise
+    /// follow the <see cref="EnableFileTransfers"/> settings L2CAP does: directory, uploads/downloads allowed, overwrite and
+    /// MaxUploadSize. (L2CAP has its own Authorize hook on the file transfer options - it takes an L2CAP request.)
+    /// </summary>
+    public Func<Shiny.UniversalHubs.UniversalHubFileRequest, bool>? AuthorizeFile { get; set; }
+
+    /// <summary>
     /// L2CAP file transfer settings, null when disabled
     /// </summary>
     public BleHubFileTransferOptions? FileTransfers { get; private set; }
 
     /// <summary>
-    /// Serves file uploads and downloads over L2CAP. Uses a directory server unless an <see cref="IBleHubFileHandler"/> is registered.
+    /// Serves file uploads and downloads on every transport that can carry them (L2CAP over BLE, HTTP routes, peer links).
+    /// Over BLE it uses a directory server unless an <see cref="IBleHubFileHandler"/> is registered.
     /// </summary>
-    public BleHubHostOptions EnableFileTransfers(string rootDirectory, Action<BleHubFileTransferOptions>? configure = null)
+    public UniversalServerOptions EnableFileTransfers(string rootDirectory, Action<BleHubFileTransferOptions>? configure = null)
     {
         var options = new BleHubFileTransferOptions(rootDirectory);
         configure?.Invoke(options);
@@ -78,13 +81,14 @@ public class BleHubHostOptions
     public BleHubMediaChannelOptions? MediaChannels { get; private set; }
 
     /// <summary>
-    /// Serves media channels (<see cref="IBleHubMediaChannel"/>) on a second L2CAP PSM, opened when hosting starts. Each
-    /// connected client may open one, beside its hub connection, for live audio and video. Hubs see them through
+    /// Serves media channels (<see cref="IBleHubMediaChannel"/>) on every transport that can carry them - a second L2CAP
+    /// PSM over BLE, a WebSocket over HTTP, the peer link itself over Multipeer and Nearby. Each connected client may open
+    /// one, beside its hub connection, for live audio and video. Hubs see them through
     /// <see cref="IHubContext{THub}.MediaChannelOpened"/>.
     /// </summary>
     /// <param name="maxPacketSize">The largest packet either side may send</param>
-    /// <param name="secure">Listen for secure (encrypted) L2CAP channels. Android listens on secure and insecure channels separately; Apple ignores it.</param>
-    public BleHubHostOptions EnableMediaChannels(int maxPacketSize = 128 * 1024, bool secure = false)
+    /// <param name="secure">Over BLE, listen for secure (encrypted) L2CAP channels. Android listens on secure and insecure channels separately; Apple ignores it.</param>
+    public UniversalServerOptions EnableMediaChannels(int maxPacketSize = 128 * 1024, bool secure = false)
     {
         if (maxPacketSize < 1)
             throw new ArgumentOutOfRangeException(nameof(maxPacketSize), "Max packet size must be at least 1");
@@ -96,7 +100,7 @@ public class BleHubHostOptions
 
 
 /// <summary>
-/// Media channel settings - see <see cref="BleHubHostOptions.EnableMediaChannels"/>
+/// Media channel settings - see <see cref="UniversalServerOptions.EnableMediaChannels"/>
 /// </summary>
 /// <param name="MaxPacketSize">The largest packet either side may send</param>
 /// <param name="Secure">Whether the L2CAP listener is secure</param>
@@ -170,4 +174,10 @@ public sealed record BleHubFileProgressEventArgs(
 );
 
 
-public sealed record BleHubRegistration(Type HubType, string CharacteristicUuid, BleHubOptions Options);
+/// <summary>
+/// A hub as its runtime knows it
+/// </summary>
+/// <param name="HubType">The hub's class - a stand-in for a hub added while the app runs</param>
+/// <param name="Name">The hub's name - how clients ask for it on every transport</param>
+/// <param name="Options">Its rules</param>
+public sealed record BleHubRegistration(Type HubType, string Name, BleHubOptions Options);

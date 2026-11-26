@@ -46,7 +46,7 @@ public class DynamicHubTests : IAsyncLifetime
     {
         this.app = Build(server => server
             .AllowDynamicHubs(o => o.ServiceTypes.Add(ServiceType))
-            .AddHub<TestHub>(CompiledUuid, ServiceType));
+            .AddHub<TestHub>(CompiledUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CompiledUuid).UseHttp(ServiceType)));
 
         this.dynamicHubs = this.app.Services.GetRequiredService<IDynamicHubs>();
         this.hub = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType) { MaxClients = 2 }, this.handler);
@@ -65,11 +65,14 @@ public class DynamicHubTests : IAsyncLifetime
         builder.Services.AddUniversalServer(server =>
         {
             server
-                .Ble(o => o.LocalName = "DynHost")
+                .Configure(o => o.LocalName = "DynHost")
                 .Http(o =>
                 {
                     o.Advertise = false;
                     o.ManageHttpServer = false;
+                })
+                .Configure(o =>
+                {
                     o.HostId = "dyn-host";
                 });
             configure(server);

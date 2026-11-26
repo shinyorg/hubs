@@ -1,15 +1,14 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs;
-using Shiny.Net.Discovery;
-using Shiny.Net.HttpServer;
-using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// Starts and stops hosting. Every hub at once (<see cref="Start"/> / <see cref="Stop"/>), or one hub at a time
 /// (<see cref="StartHub{THub}"/> / <see cref="StopHub{THub}"/>) - an always-on hub beside one that only runs on demand.
-/// Either way a hub is the same hub on every transport: BLE, HTTP and Multipeer clients share Clients, Groups, MaxClients and
+/// Either way a hub is the same hub on every transport it is served over: its clients share Clients, Groups, MaxClients and
 /// IHubContext.
 /// </summary>
 public interface IUniversalHubHost
@@ -25,8 +24,9 @@ public interface IUniversalHubHost
     IReadOnlyList<string> ListenUrls { get; }
 
     /// <summary>
-    /// Starts every hub on the requested transports. A transport that can't start (Bluetooth off, no network) is skipped
-    /// as long as another one starts - the result says which did. Throws when none could.
+    /// Starts every hub on the requested transports (each hub only on those it was set up with). A transport that can't
+    /// start (Bluetooth off, no network, not this platform) is skipped as long as another one starts - the result says
+    /// which did. Throws when none could.
     /// </summary>
     Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default);
 
@@ -36,14 +36,12 @@ public interface IUniversalHubHost
     Task Stop(string? reason = null);
 
     /// <summary>
-    /// Starts only <typeparamref name="THub"/>, like <see cref="Start"/>. The HTTP server starts with the first hub hosted
-    /// over HTTP, and mDNS advertises the hubs that are running.
+    /// Starts only <typeparamref name="THub"/>, like <see cref="Start"/>
     /// </summary>
     Task<HubTransports> StartHub<THub>(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default) where THub : class;
 
     /// <summary>
-    /// Stops only <typeparamref name="THub"/> on every transport; its clients are told why. The HTTP server stops with the
-    /// last hub hosted over HTTP.
+    /// Stops only <typeparamref name="THub"/> on every transport; its clients are told why
     /// </summary>
     Task StopHub<THub>(string? reason = null) where THub : class;
 
@@ -53,89 +51,141 @@ public interface IUniversalHubHost
     HubTransports GetRunningTransports<THub>() where THub : class;
 
     /// <summary>
-    /// A file finished moving over HTTP. (L2CAP transfers raise IBleHubHost.FileTransferred.)
+    /// Changes the host's name without stopping anything: sets <see cref="UniversalServerOptions.LocalName"/>, re-advertises
+    /// under it on the transports that advertise, and tells every connected client (<see cref="IBleHubConnection.HostRenamed"/>).
+    /// </summary>
+    Task Rename(string? localName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A file finished moving, over any transport
     /// </summary>
     event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
+
+    /// <summary>
+    /// Progress of a file moving over L2CAP
+    /// </summary>
+    event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
 }
 
 
-internal sealed class UniversalHubHost(
-    IServiceProvider services,
-    IBleHubHost bleHost,
-    BleHubHostOptions bleOptions,
-    UniversalHubHostOptions options,
-    FileTokens fileTokens,
-    MediaTokens mediaTokens,
-    ILogger<UniversalHubHost>? logger = null
-) : IUniversalHubHost
+/// <summary>
+/// A transport that listens on addresses - HTTP
+/// </summary>
+internal interface IListeningTransport
 {
+    IReadOnlyList<string> ListenUrls { get; }
+}
+
+
+internal sealed class UniversalHubHost : IUniversalHubHost
+{
+    readonly IServiceProvider services;
+    readonly UniversalServerOptions options;
+    readonly BleHubProtocolOptions protocolOptions;
+    readonly IBleHubSerializer serializer;
+    readonly ILoggerFactory? loggerFactory;
+    readonly ILogger? logger;
     readonly SemaphoreSlim gate = new(1, 1);
-    readonly List<IHttpServerAdvertiser> advertisers = new();
-    bool startedServer;
+    readonly List<HubEntry> compiled = new();
+    readonly ConcurrentDictionary<string, HubEntry> dynamic = new(StringComparer.OrdinalIgnoreCase);
+    readonly object dynamicGate = new();
 
 
-    public bool IsHttpRunning => this.Hubs.Any(x => x.IsHttpRunning);
-    public bool FilesEnabled => bleOptions.FileTransfers != null;
-
-    /// <summary>
-    /// The media channels' packet limit, null when they're off (BleHubHostOptions.EnableMediaChannels)
-    /// </summary>
-    public int? MediaMaxPacketSize => bleOptions.MediaChannels?.MaxPacketSize;
-    public string? HostName => bleOptions.LocalName;
-    public string HostId => options.HostId;
-
-    public HubTransports RunningTransports => this.Extras.Aggregate(
-        (bleHost.IsRunning ? HubTransports.Ble : HubTransports.None) | (this.IsHttpRunning ? HubTransports.Http : HubTransports.None),
-        (all, transport) => this.Hubs.Any(transport.IsRunning) ? all | transport.Transport : all
-    );
-
-    public IReadOnlyList<string> ListenUrls => this.IsHttpRunning ? this.Server.ListenUrls : [];
-
-    public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
-
-    HttpServer Server => (HttpServer)(services.GetService(typeof(HttpServer)) ?? throw new InvalidOperationException("No HttpServer is registered - call AddShinyHttpServer"));
-    /// <summary>
-    /// Every hub: the compiled ones, then any dynamic hubs added while the app runs
-    /// </summary>
-    internal IReadOnlyList<IHubBinding> Hubs
+    public UniversalHubHost(
+        IServiceProvider services,
+        UniversalServerOptions options,
+        BleHubProtocolOptions protocolOptions,
+        IBleHubSerializer serializer,
+        IEnumerable<HubRegistration> registrations,
+        ILoggerFactory? loggerFactory = null
+    )
     {
-        get
+        this.services = services;
+        this.options = options;
+        this.protocolOptions = protocolOptions;
+        this.serializer = serializer;
+        this.loggerFactory = loggerFactory;
+        this.logger = loggerFactory?.CreateLogger<UniversalHubHost>();
+
+        foreach (var reg in registrations)
         {
-            var compiled = (IEnumerable<IHubBinding>)services.GetService(typeof(IEnumerable<IHubBinding>))!;
-            var dynamic = (services.GetService(typeof(DynamicHubRegistry)) as DynamicHubRegistry)?.Bindings ?? [];
-            return compiled.Concat(dynamic).ToList();
+            var runtime = this.CreateRuntime(new BleHubRegistration(reg.HubType, reg.Key, reg.Options), BleHubDispatchers.Get(reg.HubType), reg.HubType.Name, null);
+            this.compiled.Add(new HubEntry(reg.Key, reg.HubType.Name, reg.HubType, reg.Transports, reg.Settings, runtime));
         }
     }
 
-    // transports beyond BLE and HTTP, from add-on packages (Shiny.UniversalHubs.Multipeer)
-    IReadOnlyList<IUniversalHubTransport> Extras => ((IEnumerable<IUniversalHubTransport>)services.GetService(typeof(IEnumerable<IUniversalHubTransport>))!).ToList();
+
+    public UniversalServerOptions Options => this.options;
+    public bool FilesEnabled => this.options.FileTransfers != null;
+
+    /// <summary>
+    /// The media channels' packet limit, null when they're off (<see cref="UniversalServerOptions.EnableMediaChannels"/>)
+    /// </summary>
+    public int? MediaMaxPacketSize => this.options.MediaChannels?.MaxPacketSize;
+    public string? HostName => this.options.LocalName;
+    public string HostId => this.options.HostId;
+
+    /// <summary>
+    /// Every hub: the compiled ones, then any dynamic hubs added while the app runs
+    /// </summary>
+    public IReadOnlyList<HubEntry> Hubs => this.compiled.Concat(this.dynamic.Values).ToList();
+
+    /// <summary>
+    /// Every transport set up on this server
+    /// </summary>
+    public IReadOnlyList<IUniversalHubTransport> Transports => this.services.GetServices<IUniversalHubTransport>().ToList();
+
+    public HubTransports RunningTransports => this.Transports.Aggregate(
+        HubTransports.None,
+        (all, transport) => this.Hubs.Any(transport.IsRunning) ? all | transport.Transport : all
+    );
+
+    public IReadOnlyList<string> ListenUrls => this.Transports.OfType<IListeningTransport>().FirstOrDefault()?.ListenUrls ?? [];
+
+    public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
+    public event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+
+    /// <summary>
+    /// A client left its hub, on any transport - transports drop what they issued it (file and media tokens)
+    /// </summary>
+    public event Action<string>? ClientGone;
+
+
+    public HubEntry Get(Type hubType)
+        => this.compiled.FirstOrDefault(x => x.HubType == hubType)
+           ?? throw new InvalidOperationException($"{hubType.Name} is not registered - add it with AddUniversalServer(server => server.AddHub<{hubType.Name}>(...))");
+
+    public HubEntry? FindByKey(string? key)
+        => key == null ? null : this.Hubs.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
 
 
     public Task<HubTransports> Start(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default)
-        => this.StartHubs(this.Hubs, transports, cancellationToken);
+    {
+        var hubs = this.Hubs;
+        if (hubs.Count == 0)
+            throw new InvalidOperationException("No hubs to start - add them with AddUniversalServer, or add dynamic hubs first");
 
-    public Task Stop(string? reason = null) => this.StopHubs(this.Hubs, reason, all: true);
+        return this.StartHubs(hubs, transports, cancellationToken);
+    }
+
+    public Task Stop(string? reason = null) => this.StopHubs(this.Hubs, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason));
 
     public Task<HubTransports> StartHub<THub>(HubTransports transports = HubTransports.All, CancellationToken cancellationToken = default) where THub : class
-        => this.StartHubs([this.Find<THub>()], transports, cancellationToken);
+        => this.StartHubs([this.Get(typeof(THub))], transports, cancellationToken);
 
-    public Task StopHub<THub>(string? reason = null) where THub : class => this.StopHubs([this.Find<THub>()], reason, all: false);
+    public Task StopHub<THub>(string? reason = null) where THub : class
+        => this.StopHubs([this.Get(typeof(THub))], new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub stopped"));
 
-    public HubTransports GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Find<THub>());
+    public HubTransports GetRunningTransports<THub>() where THub : class => this.RunningOn(this.Get(typeof(THub)));
 
 
-    internal HubTransports RunningOn(IHubBinding hub) => this.Extras.Aggregate(
-        (hub.IsBleRunning ? HubTransports.Ble : HubTransports.None) | (hub.IsHttpRunning ? HubTransports.Http : HubTransports.None),
+    public HubTransports RunningOn(IHubBinding hub) => this.Transports.Aggregate(
+        HubTransports.None,
         (all, transport) => transport.IsRunning(hub) ? all | transport.Transport : all
     );
 
 
-    IHubBinding Find<THub>() where THub : class
-        => this.Hubs.FirstOrDefault(x => x.HubType == typeof(THub))
-           ?? throw new InvalidOperationException($"{typeof(THub).Name} is not served by UniversalHubs - add it with AddHub");
-
-
-    internal async Task<HubTransports> StartHubs(IReadOnlyList<IHubBinding> hubs, HubTransports transports, CancellationToken cancellationToken)
+    public async Task<HubTransports> StartHubs(IReadOnlyList<HubEntry> hubs, HubTransports transports, CancellationToken cancellationToken)
     {
         if (transports == HubTransports.None)
             throw new ArgumentException("Pick at least one transport", nameof(transports));
@@ -144,40 +194,11 @@ internal sealed class UniversalHubHost(
         try
         {
             var errors = new List<Exception>();
+            var wanted = hubs.Aggregate(HubTransports.None, (all, hub) => all | hub.Transports) & transports;
 
-            if (transports.HasFlag(HubTransports.Ble))
-            {
-                foreach (var hub in hubs.Where(x => !x.IsBleRunning))
-                {
-                    try
-                    {
-                        await hub.StartBle(cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        logger?.LogWarning(ex, "Bluetooth hosting of {Hub} did not start", hub.Name);
-                        errors.Add(ex);
-                        break;  // the radio is shared - one failure is every failure
-                    }
-                }
-            }
-
-            if (transports.HasFlag(HubTransports.Http) && hubs.Any(x => !x.IsHttpRunning))
-            {
-                try
-                {
-                    await this.StartHttp(hubs, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    logger?.LogWarning(ex, "HTTP hosting did not start");
-                    errors.Add(ex);
-                }
-            }
-
-            var toStart = this.Extras
-                .Where(x => transports.HasFlag(x.Transport))
-                .Select(x => (Transport: x, Hubs: hubs.Where(h => !x.IsRunning(h)).ToList()))
+            var toStart = this.Transports
+                .Where(x => wanted.HasFlag(x.Transport))
+                .Select(x => (Transport: x, Hubs: hubs.Where(h => h.Transports.HasFlag(x.Transport) && !x.IsRunning(h)).ToList<IHubBinding>()))
                 .Where(x => x.Hubs.Count > 0);
 
             foreach (var (transport, stopped) in toStart)
@@ -188,27 +209,28 @@ internal sealed class UniversalHubHost(
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // an add-on transport this platform doesn't have (Multipeer on Android) is expected, not a problem
+                    // a transport this platform doesn't have (Multipeer on Android) is expected, not a problem
                     if (ex is PlatformNotSupportedException)
-                        logger?.LogDebug("{Transport} hosting is not available here: {Message}", transport.Transport, ex.Message);
+                        this.logger?.LogDebug("{Transport} hosting is not available here: {Message}", transport.Transport, ex.Message);
                     else
-                        logger?.LogWarning(ex, "{Transport} hosting did not start", transport.Transport);
+                        this.logger?.LogWarning(ex, "{Transport} hosting did not start", transport.Transport);
                     errors.Add(ex);
                 }
             }
+            this.UpdateRunning(hubs);
 
-            var running = hubs.Aggregate(HubTransports.All, (all, hub) => all & this.RunningOn(hub));
-            if ((running & transports) == HubTransports.None)
+            var running = hubs.Aggregate(HubTransports.None, (all, hub) => all | this.RunningOn(hub)) & transports;
+            if (running == HubTransports.None)
             {
                 throw errors.Count switch
                 {
-                    // eg. Multipeer alone, without Shiny.UniversalHubs.Multipeer set up
-                    0 => new InvalidOperationException($"None of {transports} is set up on this host"),
+                    // eg. Multipeer alone, when no hub was set up with it
+                    0 => new InvalidOperationException($"None of {transports} is set up for these hubs"),
                     1 => errors[0],
                     _ => new AggregateException("No transport could start", errors)
                 };
             }
-            return running & transports;
+            return running;
         }
         finally
         {
@@ -217,42 +239,31 @@ internal sealed class UniversalHubHost(
     }
 
 
-    internal async Task StopHubs(IReadOnlyList<IHubBinding> hubs, string? reason, bool all)
+    public async Task StopHubs(IReadOnlyList<HubEntry> hubs, HubDisconnect disconnect)
     {
         await this.gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var httpHubs = hubs.Where(x => x.IsHttpRunning).ToList();
-            if (httpHubs.Count > 0)
-                await this.StopHttp(httpHubs, reason).ConfigureAwait(false);
-
-            var toStop = this.Extras
-                .Select(x => (Transport: x, Hubs: hubs.Where(x.IsRunning).ToList()))
+            var toStop = this.Transports
+                .Select(x => (Transport: x, Hubs: hubs.Where(x.IsRunning).ToList<IHubBinding>()))
                 .Where(x => x.Hubs.Count > 0);
 
             foreach (var (transport, running) in toStop)
             {
                 try
                 {
-                    await transport.Stop(running, new HubDisconnect(HubDisconnectReason.ServerShutdown, reason)).ConfigureAwait(false);
+                    await transport.Stop(running, disconnect).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    logger?.LogWarning(ex, "{Transport} hosting did not stop cleanly", transport.Transport);
+                    this.logger?.LogWarning(ex, "{Transport} hosting did not stop cleanly", transport.Transport);
                 }
             }
+            this.UpdateRunning(hubs);
 
-            // stopping a hub over BLE also disconnects anyone left on another transport
-            if (all)
-            {
-                if (bleHost.IsRunning)
-                    await bleHost.Stop(reason).ConfigureAwait(false);
-            }
-            else
-            {
-                foreach (var hub in hubs.Where(x => x.IsBleRunning))
-                    await hub.StopBle(reason).ConfigureAwait(false);
-            }
+            // a hub running nowhere keeps nobody - anyone a transport didn't account for goes too
+            foreach (var hub in hubs.Where(x => !x.Runtime.IsRunning))
+                await hub.Runtime.DisconnectAll(disconnect).ConfigureAwait(false);
         }
         finally
         {
@@ -261,144 +272,113 @@ internal sealed class UniversalHubHost(
     }
 
 
-    internal void OnFileTransferred(BleHubFileTransferredEventArgs args) => this.FileTransferred?.Invoke(this, args);
-
-
-    /// <summary>
-    /// A client left its hub - its file and media tokens go with it
-    /// </summary>
-    internal void ForgetClient(string connectionId)
+    // IHubContext.IsRunning and the runtime's own check: running on any transport
+    void UpdateRunning(IEnumerable<HubEntry> hubs)
     {
-        fileTokens.Remove(connectionId);
-        mediaTokens.Remove(connectionId);
-        PeerLinkPeers.Remove(connectionId);   // after OnDisconnectedAsync, which still sees the peer
+        foreach (var hub in hubs)
+            hub.Runtime.IsRunning = this.RunningOn(hub) != HubTransports.None;
     }
 
 
-    async Task StartHttp(IReadOnlyList<IHubBinding> hubs, CancellationToken cancellationToken)
+    public async Task Rename(string? localName, CancellationToken cancellationToken = default)
     {
-        var server = this.Server;
-        if (options.ManageHttpServer && !server.IsRunning)
-        {
-            await server.StartAsync(cancellationToken).ConfigureAwait(false);
-            this.startedServer = true;
-        }
-        foreach (var hub in hubs)
-            hub.IsHttpRunning = true;
-
-        await this.Readvertise(cancellationToken).ConfigureAwait(false);
-        logger?.LogInformation("HTTP hosting {Hubs} on {Urls}", String.Join(", ", hubs.Select(x => x.Name)), String.Join(", ", server.ListenUrls));
-    }
-
-
-    async Task StopHttp(IReadOnlyList<IHubBinding> hubs, string? reason)
-    {
-        // refuse new handshakes first, then hang up on everyone - the hubs see each line leave
-        foreach (var hub in hubs)
-            hub.IsHttpRunning = false;
-
-        await this.Readvertise(CancellationToken.None).ConfigureAwait(false);
-
-        foreach (var hub in hubs)
-        {
-            try
-            {
-                await hub.HangUpAll(new HubDisconnect(HubDisconnectReason.ServerShutdown, reason)).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                logger?.LogWarning(ex, "Could not hang up {Hub} clients", hub.Name);
-            }
-        }
-
-        if (!this.IsHttpRunning)
-        {
-            fileTokens.Clear();
-            mediaTokens.Clear();
-            if (this.startedServer)
-            {
-                this.startedServer = false;
-                await this.Server.StopAsync().ConfigureAwait(false);
-            }
-        }
-    }
-
-
-    /// <summary>
-    /// Replaces the mDNS advertisements with ones for the hubs running over HTTP now
-    /// </summary>
-    async Task Readvertise(CancellationToken cancellationToken)
-    {
-        foreach (var advertiser in this.advertisers)
-        {
-            try
-            {
-                await advertiser.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                logger?.LogDebug(ex, "mDNS goodbye failed");
-            }
-        }
-        this.advertisers.Clear();
-
-        var running = this.Hubs.Where(x => x.IsHttpRunning).ToList();
-        if (!options.Advertise || running.Count == 0)
-            return;
-
+        await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await this.Advertise(this.Server, running, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // hosting still works for anyone who has the address - only discovery is lost
-            logger?.LogWarning(ex, "mDNS advertising failed");
-        }
-    }
+            if (String.Equals(this.options.LocalName, localName, StringComparison.Ordinal))
+                return;
 
-
-    /// <summary>
-    /// One advertisement per mDNS service type, listing the hubs advertised under it
-    /// </summary>
-    async Task Advertise(HttpServer server, IReadOnlyList<IHubBinding> hubs, CancellationToken cancellationToken)
-    {
-        var mdns = (IMdnsManager?)services.GetService(typeof(IMdnsManager)) ?? throw new InvalidOperationException("No IMdnsManager is registered");
-        var name = String.IsNullOrWhiteSpace(bleOptions.LocalName) ? "Hub host" : bleOptions.LocalName;
-
-        foreach (var (serviceType, uuids) in GetAdvertisements(hubs, options.ServiceType))
-        {
-            var advertiser = await server.AdvertiseAsync(mdns, o =>
+            this.options.LocalName = localName;
+            foreach (var transport in this.Transports)
             {
-                o.ServiceType = serviceType;
-                o.InstanceName = name;
-                o.Path = options.BasePath;
-                o.TxtRecords[UniversalHubProtocol.TxtProtocol] = UniversalHubProtocol.Version.ToString();
-                o.TxtRecords[UniversalHubProtocol.TxtHostId] = options.HostId;
-                o.TxtRecords[UniversalHubProtocol.TxtName] = name;
-                o.TxtRecords[UniversalHubProtocol.TxtHubs] = uuids;
-            }, cancellationToken).ConfigureAwait(false);
-            this.advertisers.Add(advertiser);
+                try
+                {
+                    await transport.HostRenamed(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    this.logger?.LogWarning(ex, "{Transport} could not re-advertise under the new name", transport.Transport);
+                }
+            }
+
+            // every hub, running or not - clients are told on whichever transport they're on
+            await Task.WhenAll(this.Hubs.Select(x => x.Runtime.SetHostName(localName, cancellationToken))).ConfigureAwait(false);
+            this.logger?.LogInformation("Host renamed to '{Name}'", localName);
+        }
+        finally
+        {
+            this.gate.Release();
+        }
+    }
+
+
+    // ---- dynamic hubs ----
+
+    /// <summary>
+    /// Adds a hub while the app runs. It doesn't start until asked.
+    /// </summary>
+    public HubEntry AddDynamic(string key, string name, BleHubOptions options, IBleHubHandler handler, HubTransports transports, IReadOnlyDictionary<Type, object> settings)
+    {
+        lock (this.dynamicGate)
+        {
+            if (this.FindByKey(key) != null)
+                throw new InvalidOperationException($"A hub named {key} already exists");
+
+            var runtime = this.CreateRuntime(
+                new BleHubRegistration(typeof(HandlerHub), key, options),
+                new HandlerDispatcher(handler),
+                name,
+                () => new HandlerHub(handler)
+            );
+            var entry = new HubEntry(key, name, null, transports, settings, runtime);
+            this.dynamic[key] = entry;
+            this.logger?.LogInformation("Added hub {Hub}", name);
+            return entry;
         }
     }
 
 
     /// <summary>
-    /// Groups hubs by the mDNS service type they are advertised under: (service type, comma separated characteristic UUIDs)
+    /// Stops a dynamic hub on every transport, disconnects anyone left, and forgets it
     /// </summary>
-    internal static IReadOnlyList<(string ServiceType, string Hubs)> GetAdvertisements(IEnumerable<IHubBinding> hubs, string defaultServiceType)
+    public async Task RemoveDynamic(HubEntry entry, string? reason)
     {
-        var list = new List<(string, string)>();
-        foreach (var group in hubs.GroupBy(x => x.ServiceType ?? defaultServiceType, StringComparer.OrdinalIgnoreCase))
+        var disconnect = new HubDisconnect(HubDisconnectReason.ServerShutdown, reason ?? "Hub removed");
+        await this.StopHubs([entry], disconnect).ConfigureAwait(false);
+        await entry.Runtime.DisconnectAll(disconnect).ConfigureAwait(false);
+        this.dynamic.TryRemove(new KeyValuePair<string, HubEntry>(entry.Key, entry));
+        this.logger?.LogInformation("Removed hub {Hub}", entry.Name);
+    }
+
+
+    // ---- what the transports report ----
+
+    internal void OnFileTransferred(BleHubFileTransferredEventArgs args) => this.FileTransferred?.Invoke(this, args);
+    internal void OnFileProgress(BleHubFileProgressEventArgs args) => this.FileTransferProgress?.Invoke(this, args);
+
+
+    HubRuntime CreateRuntime(BleHubRegistration registration, IBleHubDispatcher dispatcher, string name, Func<object>? createHub)
+    {
+        var runtime = new HubRuntime(
+            registration,
+            dispatcher,
+            this.services,
+            this.protocolOptions,
+            this.serializer,
+            this.loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{name}"),
+            name,
+            createHub
+        )
         {
-            var uuids = String.Join(",", group.Select(x => x.CharacteristicUuid.ToLowerInvariant()));
-
-            // a TXT string holds 255 bytes including "hubs=" - about six characteristic UUIDs
-            if (uuids.Length + UniversalHubProtocol.TxtHubs.Length + 1 > 255)
-                throw new InvalidOperationException($"Too many hubs to advertise as {group.Key} over mDNS - at most 6 hubs fit in one TXT record");
-
-            list.Add((group.Key, uuids));
-        }
-        return list;
+            HostName = this.options.LocalName,
+            ResumeWindow = this.options.ResumeWindow,
+            ResumeBufferSize = this.options.ResumeBufferSize
+        };
+        runtime.ClientDisconnected += (_, e) =>
+        {
+            this.ClientGone?.Invoke(e.Client.Id);
+            PeerLinkPeers.Remove(e.Client.Id);   // after OnDisconnectedAsync, which still sees the peer
+        };
+        return runtime;
     }
 }

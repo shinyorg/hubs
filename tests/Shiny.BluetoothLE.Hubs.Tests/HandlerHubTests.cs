@@ -2,11 +2,14 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Shiny.BluetoothLE.Hosting;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs.Tests;
 
 /// <summary>
-/// Handler hubs (<see cref="IBleHubHandler"/>) added to the real BleHubHost while it runs, over the in-memory GATT server
+/// Handler hubs (<see cref="IBleHubHandler"/>) added to the real host while it runs, served by the BLE transport over the
+/// in-memory GATT server
 /// </summary>
 public class HandlerHubTests : IAsyncLifetime
 {
@@ -20,30 +23,61 @@ public class HandlerHubTests : IAsyncLifetime
     readonly BleHubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(5) };
     readonly IBleHubSerializer serializer = new ShinyJsonBleHubSerializer();
     readonly EchoHandler handler = new();
-    ServiceProvider services = null!;
-    BleHubHost host = null!;
+    ServiceProvider? services;
+    UniversalHubHost host = null!;
 
 
-    public ValueTask InitializeAsync()
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (this.services != null)
+            await this.services.DisposeAsync();
+    }
+
+
+    void Build(bool withTestHub = false)
     {
         this.services = new ServiceCollection()
             .AddSingleton<HubLog>()
-            .AddTransient<TestHub>()
+            .AddSingleton<IBleHostingManager>(this.hosting)
+            .AddUniversalServer(server =>
+            {
+                server
+                    .Configure(o => o.LocalName = "Host")
+                    .Protocol(o => o.RequestTimeout = this.options.RequestTimeout)
+                    .BluetoothLE(o => o.ClientSweepInterval = TimeSpan.FromMinutes(5))
+                    .AllowDynamicHubs();
+
+                if (withTestHub)
+                    server.AddHub<TestHub>(TestChar, hub => hub.UseBluetoothLE(ServiceUuid, TestChar));
+            })
             .BuildServiceProvider();
-        return ValueTask.CompletedTask;
+        this.host = this.services.GetRequiredService<UniversalHubHost>();
     }
 
-    public async ValueTask DisposeAsync() => await this.services.DisposeAsync();
+
+    Handle Add(string characteristicUuid, string name) => new(this.host, this.host.AddDynamic(
+        characteristicUuid,
+        name,
+        new BleHubOptions(),
+        this.handler,
+        HubTransports.Ble,
+        new Dictionary<Type, object> { [typeof(BleHubSettings)] = new BleHubSettings(ServiceUuid, characteristicUuid) }
+    ));
 
 
-    void Build(params BleHubRegistration[] registrations) => this.host = new BleHubHost(
-        this.hosting,
-        registrations,
-        new BleHubHostOptions { ServiceUuid = ServiceUuid, LocalName = "Host", ClientSweepInterval = TimeSpan.FromMinutes(5) },
-        this.options,
-        this.serializer,
-        this.services
-    );
+    IReadOnlyList<HubEntry> Handlers => this.host.Hubs.Where(x => x.HubType == null).ToList();
+
+
+    sealed record Handle(UniversalHubHost Host, HubEntry Entry)
+    {
+        public bool IsRunning => this.Entry.Runtime.IsRunning;
+        public Task Start() => this.Host.StartHubs([this.Entry], HubTransports.All, CancellationToken.None);
+
+        public IHubClients<BleHubPush<IBleHubHandler>> Clients
+            => new HubClients<BleHubPush<IBleHubHandler>>(this.Entry.Runtime, target => new BleHubPush<IBleHubHandler>(target, this.Entry.Runtime.Serializer));
+    }
 
 
     async Task<TContract> Connect<TContract>(string characteristicUuid, string centralId) where TContract : class
@@ -78,7 +112,7 @@ public class HandlerHubTests : IAsyncLifetime
     public async Task AHandlerHubAnswersOverBleWithTheCallersValues()
     {
         this.Build();
-        var handle = this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        var handle = this.Add(HandlerChar, "game");
         await handle.Start();
 
         var client = await this.Connect<ITestHub>(HandlerChar, "c1");
@@ -108,7 +142,7 @@ public class HandlerHubTests : IAsyncLifetime
     public async Task HandlerPushesUseAlreadySerializedValues()
     {
         this.Build();
-        var handle = this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        var handle = this.Add(HandlerChar, "game");
         await handle.Start();
         var client = await this.Connect<ITestHub>(HandlerChar, "c1");
         var messages = new List<string>();
@@ -126,10 +160,10 @@ public class HandlerHubTests : IAsyncLifetime
     public async Task AServerMayStartWithOnlyHandlerHubs()
     {
         this.Build();
-        Assert.Empty(this.host.Handlers);
+        Assert.Empty(this.Handlers);
         await Assert.ThrowsAsync<InvalidOperationException>(() => this.host.Start());
 
-        this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        this.Add(HandlerChar, "game");
         await this.host.Start();
         Assert.Contains($"add-service:{ServiceUuid}:1", this.hosting.Log);
     }
@@ -138,14 +172,14 @@ public class HandlerHubTests : IAsyncLifetime
     [Fact]
     public async Task AddingAHubWhileTheServiceIsUpRebuildsItWhenTheHubStarts()
     {
-        this.Build(new BleHubRegistration(typeof(TestHub), TestChar, new BleHubOptions()));
+        this.Build(withTestHub: true);
         await this.host.Start();
         var compiled = await this.Connect<ITestHub>(TestChar, "c1");
         HubDisconnect? asked = null;
         ((IBleHubConnection)compiled).Disconnected += (_, d) => asked = d;
 
         // adding alone changes nothing on air
-        var handle = this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        var handle = this.Add(HandlerChar, "game");
         Assert.Single(this.hosting.Log, x => x.StartsWith("add-service", StringComparison.Ordinal));
 
         // starting it rebuilds the one service with both characteristics, and the compiled hub's BLE client is asked to reconnect
@@ -163,48 +197,48 @@ public class HandlerHubTests : IAsyncLifetime
     [Fact]
     public async Task RemovingAHandlerHubDisconnectsItsClientsAndLeavesTheServiceAlone()
     {
-        this.Build(new BleHubRegistration(typeof(TestHub), TestChar, new BleHubOptions()));
-        var handle = this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        this.Build(withTestHub: true);
+        var handle = this.Add(HandlerChar, "game");
         await this.host.Start();
         var client = await this.Connect<ITestHub>(HandlerChar, "c1");
         HubDisconnect? left = null;
         ((IBleHubConnection)client).Disconnected += (_, d) => left = d;
 
-        await this.host.Remove(HandlerChar, "Game over");
+        await this.host.RemoveDynamic(this.Handlers.Single(), "Game over");
 
         await WaitFor(() => left != null);
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "Game over"), left);
         await WaitFor(() => this.handler.Log.Contains("disconnected:c1:ServerShutdown"));
-        Assert.Empty(this.host.Handlers);
+        Assert.Empty(this.Handlers);
         Assert.False(handle.IsRunning);
         Assert.DoesNotContain($"remove-service:{ServiceUuid}", this.hosting.Log);   // the compiled hub is still running
 
         // the characteristic can be used again
-        this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
+        this.Add(HandlerChar, "game");
     }
 
 
     [Fact]
     public void ACharacteristicBelongsToOneHub()
     {
-        this.Build(new BleHubRegistration(typeof(TestHub), TestChar, new BleHubOptions()));
-        Assert.Throws<InvalidOperationException>(() => this.host.Add(TestChar, "game", new BleHubOptions(), this.handler));
+        this.Build(withTestHub: true);
+        Assert.Throws<InvalidOperationException>(() => this.Add(TestChar, "game"));
 
-        this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
-        Assert.Throws<InvalidOperationException>(() => this.host.Add(HandlerChar, "other", new BleHubOptions(), this.handler));
+        this.Add(HandlerChar, "game");
+        Assert.Throws<InvalidOperationException>(() => this.Add(HandlerChar, "other"));
     }
 
 
     [Fact]
-    public void RegistrationNeedsAHubUnlessHandlerHubsAreAllowed()
+    public void RegistrationNeedsAHubUnlessDynamicHubsAreAllowed()
     {
-        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddBleHubServer(_ => { }));
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(server => server.BluetoothLE(_ => { })));
 
-        var services = new ServiceCollection()
-            .AddSingleton<Shiny.BluetoothLE.Hosting.IBleHostingManager>(this.hosting)
-            .AddBleHubServer(server => server.AllowHandlerHubs())
+        using var services = new ServiceCollection()
+            .AddSingleton<IBleHostingManager>(this.hosting)
+            .AddUniversalServer(server => server.BluetoothLE(_ => { }).AllowDynamicHubs())
             .BuildServiceProvider();
-        Assert.Same(services.GetRequiredService<IBleHubHost>(), services.GetRequiredService<IBleHubHandlerHost>());
+        Assert.NotNull(services.GetRequiredService<IUniversalHubHost>());
     }
 
 
@@ -212,8 +246,8 @@ public class HandlerHubTests : IAsyncLifetime
     public void DisposingAHostThatNeverStartedLeavesTheRadioAlone()
     {
         this.Build();
-        this.host.Add(HandlerChar, "game", new BleHubOptions(), this.handler);
-        this.host.Dispose();
+        this.Add(HandlerChar, "game");
+        this.services!.GetRequiredService<BleHubTransport>().Dispose();
 
         Assert.Empty(this.hosting.Log);
     }

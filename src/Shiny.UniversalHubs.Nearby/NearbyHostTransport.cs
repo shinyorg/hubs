@@ -14,8 +14,7 @@ internal sealed class NearbyHostTransport(
     IServiceProvider services,
     NearbyLink link,
     NearbyHostOptions options,
-    BleHubHostOptions bleOptions,
-    UniversalHubHostOptions httpOptions,
+    UniversalServerOptions serverOptions,
     ILogger<NearbyHostTransport>? logger = null
 ) : IUniversalHubTransport, IPeerHostTransport
 {
@@ -30,14 +29,13 @@ internal sealed class NearbyHostTransport(
     public string ConnectionPrefix => HubConnection.NearbyPrefix;
 
     public UniversalHubHost Host => services.GetRequiredService<UniversalHubHost>();
-    public BleHubHostOptions BleOptions => bleOptions;
-    public UniversalHubHostOptions HttpOptions => httpOptions;
+    public UniversalServerOptions ServerOptions => serverOptions;
     public ILogger? Logger => logger;
 
     /// <summary>
     /// The name hosts advertise as: the configured one, else the BLE local name
     /// </summary>
-    internal string EndpointName => options.EndpointName ?? bleOptions.LocalName ?? "Hub host";
+    internal string EndpointName => options.EndpointName ?? serverOptions.LocalName ?? "Hub host";
 
 
     public bool IsRunning(IHubBinding hub)
@@ -121,10 +119,10 @@ internal sealed class NearbyHostTransport(
     }
 
 
-    public IHubBinding? FindRunning(string? characteristicUuid)
+    public IHubBinding? FindRunning(string? key)
     {
         lock (this.running)
-            return this.running.FirstOrDefault(x => x.CharacteristicUuid.Equals(characteristicUuid, StringComparison.OrdinalIgnoreCase));
+            return this.running.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
     }
 
 
@@ -143,7 +141,7 @@ internal sealed class NearbyHostTransport(
 
         List<uint> hubs;
         lock (this.running)
-            hubs = this.running.Select(x => NearbyProtocol.HubTag(x.CharacteristicUuid)).ToList();
+            hubs = this.running.Select(x => NearbyProtocol.HubTag(x.Key)).ToList();
 
         if (hubs.Count == 0)
             return;
@@ -151,7 +149,7 @@ internal sealed class NearbyHostTransport(
         this.advertisement = await link.Advertise(
             options.ServiceId,
             options.Strategy,
-            new NearbyEndpointInfo(httpOptions.HostId, this.EndpointName, hubs),
+            new NearbyEndpointInfo(serverOptions.HostId, this.EndpointName, hubs),
             this.Accepted
         ).ConfigureAwait(false);
     }

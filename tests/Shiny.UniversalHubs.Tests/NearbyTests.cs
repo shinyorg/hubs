@@ -57,7 +57,7 @@ public class NearbyTests : IAsyncLifetime
             builder.Services.AddSingleton(radio);
         builder.Services.AddSingleton<HubLog>();
         builder.Services.AddUniversalServer(server => server
-            .Ble(o =>
+            .Configure(o =>
             {
                 o.LocalName = "TestHost";
                 o.EnableFileTransfers(this.filesDirectory, ft => ft.MaxUploadSize = 1024 * 1024);
@@ -67,12 +67,15 @@ public class NearbyTests : IAsyncLifetime
             {
                 o.Advertise = false;
                 o.ManageHttpServer = false;
+            })
+            .Configure(o =>
+            {
                 o.HostId = "host-1";
                 o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
             })
             .Nearby(serviceId)
-            .AddHub<TestHub>(CharacteristicUuid, MdnsServiceType, o => o.MaxClients = 3)
-            .AddHub<OtherHub>(OtherCharacteristicUuid, MdnsServiceType)
+            .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby())
+            .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseNearby())
         );
         alsoOnThisDevice?.Invoke(builder.Services);
 
@@ -730,7 +733,7 @@ public class NearbyTests : IAsyncLifetime
     public void NearbyIsSetUpOncePerServerAndOncePerClient()
     {
         var services = new ServiceCollection();
-        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(server => server.Nearby(ServiceId).Nearby(ServiceId).AddHub<TestHub>(CharacteristicUuid, MdnsServiceType)));
+        Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(server => server.Nearby(ServiceId).Nearby(ServiceId).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby())));
 
         // Multipeer and Nearby side by side is fine - the same one twice is not
         Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Multipeer("x-mc").Nearby(ServiceId).Nearby(ServiceId)));

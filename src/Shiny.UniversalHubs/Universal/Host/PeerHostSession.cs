@@ -21,14 +21,13 @@ internal interface IPeerHostTransport
     string ConnectionPrefix { get; }
 
     UniversalHubHost Host { get; }
-    BleHubHostOptions BleOptions { get; }
-    UniversalHubHostOptions HttpOptions { get; }
+    UniversalServerOptions ServerOptions { get; }
     ILogger? Logger { get; }
 
     /// <summary>
     /// The running hub a handshake asks for, by characteristic UUID
     /// </summary>
-    IHubBinding? FindRunning(string? characteristicUuid);
+    IHubBinding? FindRunning(string? key);
 
     /// <summary>
     /// The peer record HubConnection carries for a connected session (MultipeerPeer, NearbyPeer)
@@ -510,7 +509,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return;
         }
 
-        var ft = transport.BleOptions.FileTransfers;
+        var ft = transport.ServerOptions.FileTransfers;
         var client = this.Binding is { } hub ? hub.Endpoint.FindClient(this.ConnectionId) : null;
         if (client == null)
         {
@@ -564,7 +563,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (413, $"Uploads are limited to {max} bytes");
         if (!ft.OverwriteExistingUploads && File.Exists(path))
             return (409, "The file already exists");
-        if (transport.HttpOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Upload, request.Name, request.Size, client)) == false)
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Upload, request.Name, request.Size, client)) == false)
             return (403, "The host refused the transfer");
 
         return null;
@@ -577,7 +576,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (403, "Downloads are not allowed");
         if (!File.Exists(path))
             return (404, "No such file");
-        if (transport.HttpOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Download, request.Name, null, client)) == false)
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Download, request.Name, null, client)) == false)
             return (403, "The host refused the transfer");
 
         return null;
