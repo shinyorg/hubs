@@ -21,6 +21,7 @@ public class ExternalTransportTests : IAsyncLifetime
     readonly Dictionary<string, BleHubClient> bleClients = new();
     ServiceProvider services = null!;
     HubRuntime runtime = null!;
+    FrameHostSession session = null!;
     HubLog log = null!;
 
 
@@ -42,7 +43,10 @@ public class ExternalTransportTests : IAsyncLifetime
         )
         {
             HostName = "TestHost",
-            IsRunning = true,
+            IsRunning = true
+        };
+        this.session = new FrameHostSession(this.runtime, this.options, null)
+        {
             Notify = (peer, frame, _) =>
             {
                 this.bleClients[peer.Id].ReceiveFrame(frame);
@@ -75,7 +79,7 @@ public class ExternalTransportTests : IAsyncLifetime
         await client.ConnectTransport(
             (frame, _) =>
             {
-                this.runtime.OnFrame(peerId, 185, null, frame);
+                this.session.OnFrame(peerId, 185, null, frame);
                 return Task.CompletedTask;
             },
             185,

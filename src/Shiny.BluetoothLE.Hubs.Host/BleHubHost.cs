@@ -58,6 +58,8 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
     readonly Dictionary<Type, HubRuntime> typed = new();
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, HandlerHandle> handlers = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<HubRuntime, IGattCharacteristic> characteristics = new();
+    // the frame protocol each hub is served over BLE with
+    readonly System.Collections.Concurrent.ConcurrentDictionary<HubRuntime, FrameHostSession> sessions = new();
     readonly SemaphoreSlim startLock = new(1, 1);
     L2CapInstance? fileServer;
     L2CapInstance? mediaServer;
@@ -98,7 +100,7 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
                 ResumeWindow = hostOptions.ResumeWindow,
                 ResumeBufferSize = hostOptions.ResumeBufferSize
             };
-            runtime.Notify = (peer, frame, ct) => this.Notify(runtime, peer, frame, ct);
+            this.AddSession(runtime);
             this.runtimes[reg.CharacteristicUuid] = runtime;
             this.typed.Add(reg.HubType, runtime);
         }
@@ -116,6 +118,25 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
     public ushort FileTransferPsm { get; private set; }
     public event EventHandler<BleHubFileTransferredEventArgs>? FileTransferred;
     public event EventHandler<BleHubFileProgressEventArgs>? FileTransferProgress;
+
+
+    FrameHostSession AddSession(HubRuntime runtime)
+    {
+        var session = new FrameHostSession(runtime, this.protocolOptions, this.loggerFactory?.CreateLogger($"{typeof(FrameHostSession).FullName}.{runtime.Name}"))
+        {
+            FileTransferPsm = this.FileTransferPsm,
+            FileTransferSecure = this.fileTransferSecure,
+            MediaChannelPsm = this.mediaPsm,
+            MediaChannelSecure = this.mediaSecure,
+            MediaMaxPacketSize = this.mediaMaxPacketSize
+        };
+        session.Notify = (link, frame, ct) => this.Notify(runtime, link, frame, ct);
+        this.sessions[runtime] = session;
+        return session;
+    }
+
+
+    internal FrameHostSession GetSession(HubRuntime runtime) => this.sessions[runtime];
 
 
     internal HubRuntime GetRuntime(Type hubType) => this.typed.TryGetValue(hubType, out var runtime)
@@ -184,18 +205,13 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         {
             HostName = this.hostOptions.LocalName,
             ResumeWindow = this.hostOptions.ResumeWindow,
-            ResumeBufferSize = this.hostOptions.ResumeBufferSize,
-            FileTransferPsm = this.FileTransferPsm,
-            FileTransferSecure = this.fileTransferSecure,
-            MediaChannelPsm = this.mediaPsm,
-            MediaChannelSecure = this.mediaSecure,
-            MediaMaxPacketSize = this.mediaMaxPacketSize
+            ResumeBufferSize = this.hostOptions.ResumeBufferSize
         };
-        runtime.Notify = (peer, frame, ct) => this.Notify(runtime, peer, frame, ct);
 
         if (!this.runtimes.TryAdd(uuid, runtime))
             throw new InvalidOperationException($"Characteristic {uuid} is already used by another hub - each hub needs its own");
 
+        this.AddSession(runtime);
         var handle = new HandlerHandle(runtime, this, handler);
         this.handlers[uuid] = handle;
         this.logger?.LogInformation("Added hub {Hub} on characteristic {Characteristic}", name, uuid);
@@ -216,6 +232,7 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         await handle.Runtime.DisconnectAll(disconnect).ConfigureAwait(false);
         this.handlers.TryRemove(uuid, out _);
         this.runtimes.TryRemove(uuid, out _);
+        this.sessions.TryRemove(handle.Runtime, out _);
         this.logger?.LogInformation("Removed hub {Hub}", handle.Name);
     }
 
@@ -294,6 +311,7 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
                 runtime.IsRunning = false;
 
             await Task.WhenAll(stopping.Select(x => x.DisconnectAll(disconnect))).ConfigureAwait(false);
+            await Task.WhenAll(stopping.Select(x => this.sessions[x].DisconnectPending(disconnect))).ConfigureAwait(false);
 
             // the other hubs share the service and the advertisement - both stay until the last hub stops
             this.RemoveServiceWhenUnused();
@@ -334,9 +352,9 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
             // a hub added since the service went up has no characteristic in it, and a GATT service can't gain one - rebuild
             // it. BLE clients of the other hubs lose their subscriptions with it, so they're asked to reconnect first.
             var rebuild = new HubDisconnect(HubDisconnectReason.ServerShutdown, "The host's hubs changed - reconnect");
-            await Task.WhenAll(this.runtimes.Values.SelectMany(rt => rt.Peers
-                .Where(x => x.Channel == null)
-                .Select(x => rt.Disconnect(x.Id, rebuild))
+            await Task.WhenAll(this.sessions.SelectMany(pair => pair.Value.Links
+                .Where(x => x.ConnectionId != null)
+                .Select(x => pair.Key.Disconnect(x.ConnectionId!, rebuild))
                 .ToList()
             )).ConfigureAwait(false);
 
@@ -428,7 +446,7 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         }
 
         // Shiny reports the payload size (ATT MTU minus the header) - the runtime works in ATT MTU
-        var ok = runtime.OnFrame(request.Peripheral.Uuid, request.Peripheral.Mtu + BleConstants.AttHeaderSize, request.Peripheral, request.Data);
+        var ok = this.sessions[runtime].OnFrame(request.Peripheral.Uuid, request.Peripheral.Mtu + BleConstants.AttHeaderSize, request.Peripheral, request.Data);
         Respond(request, ok ? GattState.Success : GattState.Failure);
         return Task.CompletedTask;
     }
@@ -439,18 +457,18 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         if (!sub.IsSubscribing)
             // a client leaving on purpose says so first (a Disconnect frame), so an unsubscribe on its own is a dropped link -
             // both iOS and Android report a central that vanished as an unsubscribe
-            runtime.OnPeerGone(sub.Peripheral.Uuid, new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+            this.sessions[runtime].OnPeerGone(sub.Peripheral.Uuid, new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
 
         return Task.CompletedTask;
     }
 
 
-    Task Notify(HubRuntime runtime, HostPeer peer, byte[] frame, CancellationToken cancellationToken)
+    Task Notify(HubRuntime runtime, FrameHostLink link, byte[] frame, CancellationToken cancellationToken)
     {
         if (!this.characteristics.TryGetValue(runtime, out var ch))
             throw new BleHubException("Hub host is not running");
 
-        return ch.Notify(frame, cancellationToken, (HostedPeripheral)peer.Native!);
+        return ch.Notify(frame, cancellationToken, (HostedPeripheral)link.Native!);
     }
 
 
@@ -462,13 +480,10 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
             try
             {
                 var subscribed = ch.SubscribedCentrals.Select(x => x.Uuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                // clients on another transport aren't GATT subscribers - that transport reports when they leave
                 // links, not connection ids: a client that resumed is on a different central than it first connected through
-                foreach (var peer in runtime.Peers.Where(x => x.Channel == null).ToList())
-                {
-                    if (!subscribed.Contains(peer.LinkId))
-                        runtime.OnPeerGone(peer.LinkId, new HubDisconnect(HubDisconnectReason.ClientTimeout));
-                }
+                var session = this.sessions[runtime];
+                foreach (var link in session.Links.Where(x => !subscribed.Contains(x.LinkId)).ToList())
+                    session.OnPeerGone(link.LinkId, new HubDisconnect(HubDisconnectReason.ClientTimeout));
             }
             catch (Exception ex)
             {
@@ -479,7 +494,7 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
 
 
     // an L2CAP channel names the central it came from - the link, which a resumed client's connection id isn't
-    BleHubConnectedClient? FindClient(string peerId) => this.runtimes.Values
+    BleHubConnectedClient? FindClient(string peerId) => this.sessions.Values
         .Select(x => x.FindClientOnLink(peerId))
         .FirstOrDefault(x => x != null);
 
@@ -494,10 +509,10 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
     {
         this.FileTransferPsm = psm;
         this.fileTransferSecure = secure;
-        foreach (var runtime in this.runtimes.Values)
+        foreach (var session in this.sessions.Values)
         {
-            runtime.FileTransferPsm = psm;
-            runtime.FileTransferSecure = secure;
+            session.FileTransferPsm = psm;
+            session.FileTransferSecure = secure;
         }
     }
 
@@ -567,11 +582,11 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         this.mediaPsm = psm;
         this.mediaSecure = secure;
         this.mediaMaxPacketSize = maxPacketSize;
-        foreach (var runtime in this.runtimes.Values)
+        foreach (var session in this.sessions.Values)
         {
-            runtime.MediaChannelPsm = psm;
-            runtime.MediaChannelSecure = secure;
-            runtime.MediaMaxPacketSize = maxPacketSize;
+            session.MediaChannelPsm = psm;
+            session.MediaChannelSecure = secure;
+            session.MediaMaxPacketSize = maxPacketSize;
         }
     }
 
@@ -620,15 +635,16 @@ internal sealed class BleHubHost : IBleHubHost, IBleHubHandlerHost, IDisposable
         try
         {
             var token = await channel.ReadControl(MediaHandshakeTimeout, CancellationToken.None).ConfigureAwait(false);
-            foreach (var runtime in this.runtimes.Values)
-            {
-                if (runtime.FindMediaToken(token) is not { } connectionId)
-                    continue;
+            var match = this.sessions.Values
+                .Select(x => (Session: x, ConnectionId: x.FindMediaToken(token)))
+                .FirstOrDefault(x => x.ConnectionId != null);
 
+            if (match.ConnectionId is { } connectionId)
+            {
                 // answered before the hub hears of it, so nothing the hub sends can get ahead of the answer
                 using var cts = new CancellationTokenSource(MediaHandshakeTimeout);
                 await channel.SendControl(new[] { MediaFrameCodec.Accepted }, cts.Token).ConfigureAwait(false);
-                if (!runtime.AttachMediaChannel(connectionId, channel))
+                if (!match.Session.AttachMediaChannel(connectionId, channel))
                     await channel.DisposeAsync().ConfigureAwait(false);
 
                 return;

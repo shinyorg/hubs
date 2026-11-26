@@ -31,7 +31,7 @@ public sealed class BleHubConnectedClient
     /// The ATT MTU of the client's BLE link when it connected (frames are this minus 3 bytes), 0 for a client on another
     /// transport
     /// </summary>
-    public int Mtu { get; }
+    public int Mtu { get; internal set; }
 
     /// <summary>
     /// The BLE central this client is connected through - null when it is connected over another transport. A client that

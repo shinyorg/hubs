@@ -20,6 +20,7 @@ public class HubTests : IAsyncLifetime
     readonly IBleHubSerializer serializer = new ShinyJsonBleHubSerializer();
     ServiceProvider services = null!;
     HubRuntime runtime = null!;
+    FrameHostSession session = null!;
     HubLog log = null!;
     int mtu = 23;
 
@@ -42,7 +43,10 @@ public class HubTests : IAsyncLifetime
         )
         {
             HostName = "TestHost",
-            IsRunning = true,
+            IsRunning = true
+        };
+        this.session = new FrameHostSession(this.runtime, this.options, null)
+        {
             Notify = (peer, frame, _) =>
             {
                 Assert.True(frame.Length <= FrameCodec.GetFrameSize(this.mtu));
@@ -77,7 +81,7 @@ public class HubTests : IAsyncLifetime
         (frame, _) =>
         {
             Assert.True(frame.Length <= FrameCodec.GetFrameSize(this.mtu));
-            if (!this.runtime.OnFrame(peerId, this.mtu, null, frame))
+            if (!this.session.OnFrame(peerId, this.mtu, null, frame))
                 throw new InvalidOperationException("GATT write failed");
             return Task.CompletedTask;
         },
@@ -547,7 +551,7 @@ public class HubTests : IAsyncLifetime
         await client.ConnectTransport(
             (frame, _) =>
             {
-                if (!this.runtime.OnFrame(link.Id, this.mtu, null, frame))
+                if (!this.session.OnFrame(link.Id, this.mtu, null, frame))
                     throw new InvalidOperationException("GATT write failed");
                 return Task.CompletedTask;
             },
@@ -580,7 +584,7 @@ public class HubTests : IAsyncLifetime
         IHubContext<TestHub> context = new HubContext<TestHub>(() => this.runtime);
 
         // the host sees the central go first, and keeps the client
-        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        this.session.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
         Assert.Single(context.ConnectedClients);
         Assert.Equal(["central-1"], this.runtime.GetMembers("everyone"));
         await context.Clients.All.Message("while you were away");
@@ -596,7 +600,7 @@ public class HubTests : IAsyncLifetime
 
         // same connection - id, groups - on the new central
         Assert.Equal("central-1", Assert.Single(context.ConnectedClients).Id);
-        Assert.Same(this.runtime.FindClient("central-1"), this.runtime.FindClientOnLink("central-1-relink-1"));
+        Assert.Same(this.runtime.FindClient("central-1"), this.session.FindClientOnLink("central-1-relink-1"));
         Assert.Equal(["central-1"], this.runtime.GetMembers("everyone"));
         Assert.Equal("Alice", await hub.WhoAmI());
         Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
@@ -614,10 +618,10 @@ public class HubTests : IAsyncLifetime
         var (hub, client, _) = await this.ConnectResumable();
 
         client.DropLink("radio silence");
-        await WaitFor(() => client.Status == BleHubClientStatus.Connected && this.runtime.FindClientOnLink("central-1-relink-1") != null);
+        await WaitFor(() => client.Status == BleHubClientStatus.Connected && this.session.FindClientOnLink("central-1-relink-1") != null);
 
         // the old central's unsubscribe arrives late - it no longer speaks for the client
-        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        this.session.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
         await Task.Delay(100);
 
         Assert.Equal("Alice", await hub.WhoAmI());
@@ -632,7 +636,7 @@ public class HubTests : IAsyncLifetime
         this.runtime.ResumeWindow = TimeSpan.FromMilliseconds(300);
         await this.ConnectResumable();
 
-        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
+        this.session.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "Unsubscribed"));
         Assert.Single(this.runtime.Clients);
         Assert.DoesNotContain(this.log.Entries, x => x.StartsWith("disconnected:", StringComparison.Ordinal));
 
@@ -651,7 +655,7 @@ public class HubTests : IAsyncLifetime
         client.Disconnected += (_, d) => disconnected.TrySetResult(d);
 
         // the host let it go already (its window ran out while the client was away)
-        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
+        this.session.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
         await this.runtime.Disconnect("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout, "gone"));
 
         client.DropLink("out of range");
@@ -684,7 +688,7 @@ public class HubTests : IAsyncLifetime
         await this.ConnectResumable();
         IHubContext<TestHub> context = new HubContext<TestHub>(() => this.runtime);
 
-        this.runtime.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
+        this.session.OnPeerGone("central-1", new HubDisconnect(HubDisconnectReason.ClientTimeout));
         for (var i = 0; i < 3; i++)
             await context.Clients.All.Message($"m{i}");
 

@@ -4,18 +4,18 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE.Hosting;
 using Shiny.BluetoothLE.Hubs.Protocol;
 
 namespace Shiny.BluetoothLE.Hubs;
 
 /// <summary>
-/// Transport independent runtime for one hub - reassembles client frames, runs hub methods, frames replies and pushes,
-/// and tracks groups. The BLE host feeds it frames; tests feed it from an in-memory radio.
+/// Transport independent runtime for one hub - admits clients, runs hub methods, delivers pushes, holds dropped clients
+/// for resume and tracks groups. Every transport reaches it as an <see cref="IBleHubTransportEndpoint"/> - BLE through
+/// <see cref="FrameHostSession"/>.
 /// </summary>
 internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 {
-    // by link: the BLE central a frame came from, or the connection id of a client on another transport
+    // by connection id: clients with a live link - the ones a transport can reach right now
     readonly ConcurrentDictionary<string, HostPeer> peers = new(StringComparer.OrdinalIgnoreCase);
     // by connection id: every admitted client, including one held for resume (it has no link until it comes back)
     readonly ConcurrentDictionary<string, HostPeer> connections = new(StringComparer.OrdinalIgnoreCase);
@@ -62,24 +62,10 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public IGroupManager Groups => this;
 
     /// <summary>
-    /// Sends one frame to a peer - set by whoever owns the transport
-    /// </summary>
-    public Func<HostPeer, byte[], CancellationToken, Task>? Notify { get; set; }
-
-    /// <summary>
     /// A stopped hub refuses handshakes - its characteristic may still exist when it shares a service with a running hub
     /// </summary>
     public bool IsRunning { get; set; }
 
-    public ushort FileTransferPsm { get; set; }
-    public bool FileTransferSecure { get; set; }
-
-    /// <summary>
-    /// The BLE media channel listener - 0 when media channels are off or unavailable
-    /// </summary>
-    public ushort MediaChannelPsm { get; set; }
-    public bool MediaChannelSecure { get; set; }
-    public int MediaMaxPacketSize { get; set; }
     public string? HostName { get; set; }
 
     /// <summary>
@@ -114,67 +100,19 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
 
 
     /// <summary>
-    /// The client on a BLE link (central) right now - its connection id differs once it has resumed on a new link
-    /// </summary>
-    public BleHubConnectedClient? FindClientOnLink(string linkId)
-        => this.peers.TryGetValue(linkId, out var peer) ? peer.Client : null;
-
-
-    /// <summary>
-    /// A peer by connection id, or a BLE peer still hand-shaking by its link
+    /// A peer by connection id - admitted, or still being admitted
     /// </summary>
     HostPeer? Find(string connectionId)
         => this.connections.TryGetValue(connectionId, out var peer) ? peer : this.peers.TryGetValue(connectionId, out peer) ? peer : null;
 
 
     /// <summary>
-    /// Feeds a frame written by a peer. Returns false when the frame is malformed (the GATT write should be failed).
-    /// Complete messages are dispatched in the background.
-    /// </summary>
-    public bool OnFrame(string peerId, int mtu, object? native, ReadOnlySpan<byte> frame)
-    {
-        var peer = this.peers.GetOrAdd(peerId, id => new HostPeer(id, native, this.CreateReassembler()));
-        peer.Mtu = mtu;
-        if (native != null)
-            peer.Native = native;
-
-        BleHubMessage? message;
-        try
-        {
-            lock (peer.Reassembler)
-                message = peer.Reassembler.Add(frame);
-        }
-        catch (BleHubProtocolException ex)
-        {
-            this.logger?.LogWarning(ex, "Bad frame from {Peer}", peerId);
-            if (ex.MessageId is { } id && peer.Client != null)
-                _ = this.SendError(peer, id, nameof(BleHubProtocolException), ex.Message);
-
-            return false;
-        }
-
-        if (message?.Kind == FrameKind.Disconnect)
-        {
-            // handled inline, in the GATT write - the client unsubscribes right after, and that must find it already gone
-            // rather than be taken for a dropped link
-            this.OnPeerGone(peer.LinkId, ProtocolSerializer.ReadDisconnect(message.Payload).ToDisconnect(HubDisconnectReason.ClientDisconnect));
-        }
-        else if (message != null)
-        {
-            _ = Task.Run(() => this.Dispatch(peer, message));
-        }
-
-        return true;
-    }
-
-
-    /// <summary>
     /// A link is gone - the peer unsubscribed, disconnected or was removed. A client whose link dropped (rather than one
     /// that left or was disconnected) is held for <see cref="ResumeWindow"/> when it can resume.
     /// </summary>
-    public void OnPeerGone(string linkId, HubDisconnect disconnect)
+    public void OnPeerGone(string connectionId, HubDisconnect disconnect)
     {
-        if (!this.peers.TryRemove(linkId, out var peer))
+        if (!this.peers.TryRemove(connectionId, out var peer))
             return;
 
         if (this.CanHold(peer, disconnect))
@@ -200,10 +138,9 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         if (peer.BeginHold(disconnect) is not { } generation)
             return;
 
-        // what was under way on the old link can't be answered on it - the client has failed those calls itself
-        peer.CancelCalls();
+        // what was under way on the old link can't be answered on it - the transport cancels it, and the client has
+        // failed those calls itself
         peer.CloseMedia();
-        peer.Reassembler = this.CreateReassembler();
         this.logger?.LogInformation("Holding {Client} on {Hub} for {Window} to resume: {Reason}", peer.Client, this.Name, this.ResumeWindow, disconnect);
         this.ExpireLater(peer, generation);
     }
@@ -233,7 +170,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     void End(HostPeer peer, HubDisconnect disconnect)
     {
         peer.MarkGone();
-        this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.LinkId, peer));
+        this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
         peer.Abort();
         peer.CloseMedia();
         if (peer.Client == null || !this.connections.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer)))
@@ -317,7 +254,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     Task DeliverLocked(HostPeer peer, QueuedSend item, CancellationToken cancellationToken)
     {
         if (peer.Channel == null)
-            return this.SendLocked(peer, item.Kind, peer.NextHostMessageId(), item.Name, item.Payload, cancellationToken);
+            throw new BleHubException("The client has no link");
 
         return item.Kind == FrameKind.HostRenamed
             ? peer.Channel.HostRenamed(ProtocolSerializer.ReadRename(item.Payload).Name, cancellationToken)
@@ -341,14 +278,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             if (peer.Channel != null)
-            {
                 await peer.Channel.Disconnect(disconnect, cts.Token).ConfigureAwait(false);
-            }
-            else
-            {
-                var payload = ProtocolSerializer.Serialize(DisconnectInfo.From(disconnect));
-                await this.Send(peer, FrameKind.Disconnect, peer.NextHostMessageId(), null, payload, cts.Token).ConfigureAwait(false);
-            }
         }
         catch (Exception ex)
         {
@@ -362,7 +292,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public async Task DisconnectAll(HubDisconnect disconnect)
     {
         var ids = this.connections.Keys
-            .Concat(this.peers.Values.Where(x => x.Client == null).Select(x => x.LinkId))
+            .Concat(this.peers.Values.Where(x => x.Client == null).Select(x => x.Id))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         await Task.WhenAll(ids.Select(x => this.Disconnect(x, disconnect))).ConfigureAwait(false);
@@ -403,157 +333,6 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         => this.groups.TryGetValue(groupName, out var members) ? members.Keys.ToList() : [];
 
 
-    async Task Dispatch(HostPeer peer, BleHubMessage message)
-    {
-        try
-        {
-            switch (message.Kind)
-            {
-                case FrameKind.Handshake:
-                    await this.OnHandshake(peer, message).ConfigureAwait(false);
-                    break;
-
-                case FrameKind.Resume:
-                    await this.OnResume(peer, message).ConfigureAwait(false);
-                    break;
-
-                case FrameKind.Cancel:
-                    peer.Cancel(message.MessageId);
-                    break;
-
-                case FrameKind.Invoke:
-                case FrameKind.StreamInvoke:
-                    await this.OnInvoke(peer, message).ConfigureAwait(false);
-                    break;
-
-                case FrameKind.Rename:
-                    await this.OnRename(peer, message).ConfigureAwait(false);
-                    break;
-
-                default:
-                    await this.SendError(peer, message.MessageId, nameof(BleHubProtocolException), $"Unexpected message kind {message.Kind}").ConfigureAwait(false);
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            this.logger?.LogError(ex, "Unhandled error dispatching {Kind} {Id} from {Peer}", message.Kind, message.MessageId, peer.Id);
-        }
-    }
-
-
-    async Task OnHandshake(HostPeer peer, BleHubMessage message)
-    {
-        var info = ProtocolSerializer.ReadHandshake(message.Payload);
-        string? rejection;
-
-        if (!this.IsRunning)
-            rejection = "Hub is not running";
-        else if (info.ProtocolVersion != FrameCodec.ProtocolVersion)
-            rejection = $"Unsupported protocol version {info.ProtocolVersion}";
-        else
-            rejection = await this.Admit(peer, info).ConfigureAwait(false);
-
-        // only a client that can come back is held
-        if (rejection == null && info.Resumable && this.ResumeWindow > TimeSpan.Zero)
-            peer.ResumeToken ??= NewToken();
-
-        var ack = this.CreateAck(peer, rejection);
-        await this.Send(peer, FrameKind.HandshakeAck, message.MessageId, null, ProtocolSerializer.Serialize(ack), this.lifetime.Token).ConfigureAwait(false);
-
-        if (rejection != null)
-        {
-            this.logger?.LogInformation("Rejected client {Peer}: {Reason}", peer.Id, rejection);
-            this.peers.TryRemove(peer.LinkId, out _);
-        }
-    }
-
-
-    HandshakeAck CreateAck(HostPeer peer, string? rejection)
-    {
-        var media = rejection == null && this.MediaChannelPsm > 0;
-        if (media)
-            peer.MediaToken ??= NewToken();
-
-        var resume = rejection == null && peer.ResumeToken != null && this.ResumeWindow > TimeSpan.Zero;
-        return new HandshakeAck(
-            rejection == null,
-            rejection,
-            this.HostName,
-            this.FileTransferPsm,
-            this.FileTransferSecure,
-            media ? this.MediaChannelPsm : (ushort)0,
-            media && this.MediaChannelSecure,
-            media ? peer.MediaToken : null,
-            media ? this.MediaMaxPacketSize : 0,
-            resume ? peer.ResumeToken : null,
-            resume ? (int)Math.Ceiling(this.ResumeWindow.TotalSeconds) : 0
-        );
-    }
-
-
-    /// <summary>
-    /// A BLE client back on a new link with its resume token. Accepted, the held connection moves onto this link - same
-    /// connection id, groups and Items - the ack goes out, then the pushes it missed.
-    /// </summary>
-    async Task OnResume(HostPeer link, BleHubMessage message)
-    {
-        ResumeInfo? info = null;
-        try
-        {
-            info = ProtocolSerializer.ReadResume(message.Payload);
-        }
-        catch (Exception ex)
-        {
-            this.logger?.LogDebug(ex, "Malformed resume from {Peer}", link.LinkId);
-        }
-
-        HostPeer? target = null;
-        string? rejection;
-        if (info == null)
-            rejection = "Malformed resume";
-        else if (!this.IsRunning)
-            rejection = "Hub is not running";
-        else if (info.ProtocolVersion != FrameCodec.ProtocolVersion)
-            rejection = $"Unsupported protocol version {info.ProtocolVersion}";
-        else if (link.Client != null)
-            rejection = "Already connected";
-        else
-        {
-            // only a BLE connection resumes over BLE
-            target = this.FindResumable(info.Token, x => x.Channel == null);
-            rejection = target == null ? NotResumable : null;
-        }
-
-        if (target != null)
-        {
-            var resumed = await this.Reattach(
-                target,
-                () =>
-                {
-                    // the new link takes over: frames from this central now belong to the held connection
-                    this.peers.TryRemove(new KeyValuePair<string, HostPeer>(link.LinkId, link));
-                    target.LinkId = link.LinkId;
-                    target.Native = link.Native;
-                    target.Mtu = link.Mtu;
-                    target.Client!.Peripheral = link.Native as IPeripheral;
-                    this.peers[target.LinkId] = target;
-                },
-                () => this.SendLocked(target, FrameKind.HandshakeAck, message.MessageId, null, ProtocolSerializer.Serialize(this.CreateAck(target, null)), this.lifetime.Token)
-            ).ConfigureAwait(false);
-
-            if (resumed)
-                return;
-
-            rejection = NotResumable;
-        }
-
-        this.logger?.LogInformation("Could not resume {Peer}: {Reason}", link.LinkId, rejection);
-        await this.Send(link, FrameKind.HandshakeAck, message.MessageId, null, ProtocolSerializer.Serialize(new HandshakeAck(false, rejection, this.HostName, 0, false)), this.lifetime.Token).ConfigureAwait(false);
-        this.peers.TryRemove(new KeyValuePair<string, HostPeer>(link.LinkId, link));
-    }
-
-
     const string NotResumable = "The connection can't be resumed - connect again";
 
 
@@ -586,10 +365,8 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         if (claim == ResumeClaim.WasAttached)
         {
             // the client saw the drop first - its old link is dead even though nothing reported it yet
-            this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.LinkId, peer));
-            peer.CancelCalls();
+            this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
             peer.CloseMedia();
-            peer.Reassembler = this.CreateReassembler();
         }
 
         List<QueuedSend> replay = [];
@@ -624,7 +401,7 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             this.logger?.LogInformation(ex, "Resume of {Client} on {Hub} failed", peer.Client, this.Name);
 
             // off the link that just failed, with what it didn't get kept for the next try
-            this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.LinkId, peer));
+            this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
             peer.FailResume(replay.Skip(delivered));
 
             // a hold that started with this resume has no timer yet
@@ -639,15 +416,13 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    MessageReassembler CreateReassembler() => new(this.options.MaxPayloadSize, this.options.ReassemblyTimeout, this.options.MaxPartialMessages);
-
     static string NewToken() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
 
 
     /// <summary>
     /// The handshake rules every transport shares. Returns null when the client is in.
     /// </summary>
-    async Task<string?> Admit(HostPeer peer, HandshakeInfo info)
+    async Task<string?> Admit(HostPeer peer, HandshakeInfo info, Action<BleHubConnectedClient>? configure)
     {
         var hubOptions = this.registration.Options;
         string? rejection;
@@ -661,10 +436,8 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
         {
             // registered and OnConnectedAsync completed before the ack goes out, so the client is never told it is in
             // before the hub knows about it (and has had a chance to put it in groups)
-            var client = new BleHubConnectedClient(peer.Id, info.Name, info.AppVersion, info.Properties ?? new(), peer.Mtu)
-            {
-                Peripheral = peer.Native as IPeripheral
-            };
+            var client = new BleHubConnectedClient(peer.Id, info.Name, info.AppVersion, info.Properties ?? new(), 0);
+            configure?.Invoke(client);
             peer.Client = client;
             this.connections[peer.Id] = peer;
             try
@@ -685,22 +458,6 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             }
         }
         return rejection;
-    }
-
-
-    async Task OnRename(HostPeer peer, BleHubMessage message)
-    {
-        if (peer.Client is not { } client)
-        {
-            await this.SendError(peer, message.MessageId, nameof(BleHubProtocolException), "Handshake required").ConfigureAwait(false);
-            return;
-        }
-
-        var rejection = await this.Rename(peer, client, ProtocolSerializer.ReadRename(message.Payload).Name).ConfigureAwait(false);
-        if (rejection == null)
-            await this.Send(peer, FrameKind.Completion, message.MessageId, null, ReadOnlyMemory<byte>.Empty, this.lifetime.Token).ConfigureAwait(false);
-        else
-            await this.SendError(peer, message.MessageId, BleHubRemoteException.RenameRefused, rejection).ConfigureAwait(false);
     }
 
 
@@ -757,96 +514,10 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    async Task OnInvoke(HostPeer peer, BleHubMessage message)
-    {
-        var client = peer.Client;
-        if (client == null)
-        {
-            await this.SendError(peer, message.MessageId, nameof(BleHubProtocolException), "Handshake required").ConfigureAwait(false);
-            return;
-        }
-
-        var method = message.Name ?? "";
-        var kind = this.dispatcher.GetMethodKind(method);
-        var expected = message.Kind == FrameKind.StreamInvoke ? BleHubMethodKind.Stream : BleHubMethodKind.Invoke;
-        if (kind != expected)
-        {
-            var error = kind == BleHubMethodKind.NotFound
-                ? $"{this.Name} has no method '{method}'"
-                : $"'{method}' is {(kind == BleHubMethodKind.Stream ? "a stream" : "not a stream")}";
-            await this.SendError(peer, message.MessageId, "HubMethodNotFound", error).ConfigureAwait(false);
-            return;
-        }
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token, peer.Aborted);
-        peer.Track(message.MessageId, cts);
-        string? abortReason = null;
-        var abortRequested = false;
-        try
-        {
-            await using var scope = this.services.CreateAsyncScope();
-            var hub = this.CreateHub(scope.ServiceProvider, peer, client, reason =>
-            {
-                // deferred so the caller still gets this method's reply
-                abortRequested = true;
-                abortReason = reason;
-            });
-            var args = new BleHubArgumentReader(this.Serializer, message.Payload);
-
-            if (kind == BleHubMethodKind.Invoke)
-            {
-                var result = await this.dispatcher.Invoke(hub, method, args, this.Serializer, cts.Token).ConfigureAwait(false);
-                await this.Send(peer, FrameKind.Completion, message.MessageId, null, result ?? ReadOnlyMemory<byte>.Empty, cts.Token).ConfigureAwait(false);
-            }
-            else
-            {
-                await foreach (var item in this.dispatcher.Stream(hub, method, args, this.Serializer, cts.Token).WithCancellation(cts.Token).ConfigureAwait(false))
-                    await this.Send(peer, FrameKind.StreamItem, message.MessageId, null, item, cts.Token).ConfigureAwait(false);
-
-                await this.Send(peer, FrameKind.StreamEnd, message.MessageId, null, ReadOnlyMemory<byte>.Empty, cts.Token).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            // the client cancelled, left, or the host is stopping - nobody is waiting for a reply
-        }
-        catch (Exception ex)
-        {
-            this.logger?.LogWarning(ex, "{Hub}.{Method} failed", this.Name, method);
-            await this.SendError(peer, message.MessageId, BleHubRemoteException.TypeOf(ex), ex.Message).ConfigureAwait(false);
-        }
-        finally
-        {
-            peer.Untrack(message.MessageId);
-        }
-
-        if (abortRequested)
-            await this.Disconnect(peer.Id, new HubDisconnect(HubDisconnectReason.ServerDisconnect, abortReason)).ConfigureAwait(false);
-    }
-
-
     // ---- media channels ----
 
     public IBleHubMediaChannel? GetMediaChannel(string connectionId)
         => this.connections.TryGetValue(connectionId, out var peer) && peer.Media is { IsOpen: true } media ? media : null;
-
-
-    /// <summary>
-    /// Finds the BLE client a media token was issued to
-    /// </summary>
-    public string? FindMediaToken(ReadOnlySpan<byte> token)
-    {
-        foreach (var peer in this.connections.Values)
-        {
-            if (peer.Client != null && peer.Channel == null && !peer.IsHeld && peer.MediaToken is { } issued)
-            {
-                var bytes = Encoding.UTF8.GetBytes(issued);
-                if (CryptographicOperations.FixedTimeEquals(bytes, token))
-                    return peer.Id;
-            }
-        }
-        return null;
-    }
 
 
     /// <summary>
@@ -895,19 +566,25 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     public BleHubMethodKind GetMethodKind(string method) => this.dispatcher.GetMethodKind(method);
 
 
-    public async Task<string?> Connect(string connectionId, HandshakeInfo info, IBleHubPeerChannel channel, CancellationToken cancellationToken)
+    public Task<string?> Connect(string connectionId, HandshakeInfo info, IBleHubPeerChannel channel, CancellationToken cancellationToken)
+        => this.Connect(connectionId, info, channel, null);
+
+
+    /// <summary>
+    /// <paramref name="configure"/> fills in what the transport knows about the client (its link) before the hub hears of it
+    /// </summary>
+    public async Task<string?> Connect(string connectionId, HandshakeInfo info, IBleHubPeerChannel channel, Action<BleHubConnectedClient>? configure)
     {
         if (this.connections.ContainsKey(connectionId))
             return "Connection id is already in use";
 
-        var peer = this.peers.GetOrAdd(connectionId, id => new HostPeer(id, null, this.CreateReassembler()));
+        var peer = this.peers.GetOrAdd(connectionId, id => new HostPeer(id));
         if (peer.Channel != null && !ReferenceEquals(peer.Channel, channel))
             return "Connection id is already in use";
 
         peer.Channel = channel;
-        peer.Mtu = 0;
 
-        var rejection = await this.Admit(peer, info).ConfigureAwait(false);
+        var rejection = await this.Admit(peer, info, configure).ConfigureAwait(false);
         if (rejection != null)
         {
             this.logger?.LogInformation("Rejected client {Peer}: {Reason}", peer.Id, rejection);
@@ -983,10 +660,21 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
     }
 
 
-    public async Task<string?> Resume(string resumeToken, string connectionIdPrefix, IBleHubPeerChannel channel, Func<string, Task> accepted, CancellationToken cancellationToken)
-    {
+    public Task<string?> Resume(string resumeToken, string connectionIdPrefix, IBleHubPeerChannel channel, Func<string, Task> accepted, CancellationToken cancellationToken)
         // like Connect, the transport checks whether it is running - IsRunning is BLE's
-        var peer = this.FindResumable(resumeToken, x => x.Channel != null && x.Id.StartsWith(connectionIdPrefix, StringComparison.Ordinal));
+        => this.Resume(resumeToken, connectionIdPrefix, null, channel, accepted);
+
+
+    /// <summary>
+    /// Resumes a connection made through the calling transport: its id starts with <paramref name="connectionIdPrefix"/>
+    /// and, when given, <paramref name="ownChannel"/> recognizes its last channel
+    /// </summary>
+    public async Task<string?> Resume(string resumeToken, string connectionIdPrefix, Func<IBleHubPeerChannel, bool>? ownChannel, IBleHubPeerChannel channel, Func<string, Task> accepted)
+    {
+        var peer = this.FindResumable(resumeToken, x =>
+            x.Channel != null
+            && x.Id.StartsWith(connectionIdPrefix, StringComparison.Ordinal)
+            && (ownChannel == null || ownChannel(x.Channel)));
         if (peer == null)
             return NotResumable;
 
@@ -1044,45 +732,6 @@ internal sealed class HubRuntime : IGroupManager, IBleHubTransportEndpoint
             throw;
         }
     }
-
-
-    async Task SendError(HostPeer peer, ushort messageId, string type, string error)
-    {
-        try
-        {
-            var payload = ProtocolSerializer.Serialize(new RemoteError(type, error));
-            await this.Send(peer, FrameKind.Error, messageId, null, payload, this.lifetime.Token).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            this.logger?.LogWarning(ex, "Failed to send error to {Peer}", peer.Id);
-        }
-    }
-
-
-    async Task Send(HostPeer peer, FrameKind kind, ushort messageId, string? name, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
-    {
-        // whole messages go out under the lock so frames for one peer never interleave
-        await peer.SendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await this.SendLocked(peer, kind, messageId, name, payload, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            peer.SendLock.Release();
-        }
-    }
-
-
-    // under the peer's send lock
-    async Task SendLocked(HostPeer peer, FrameKind kind, ushort messageId, string? name, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
-    {
-        var notify = this.Notify ?? throw new BleHubException("Hub host is not running");
-        var frames = FrameCodec.Encode(kind, messageId, name, payload.Span, FrameCodec.GetFrameSize(peer.Mtu));
-        foreach (var frame in frames)
-            await notify(peer, frame, cancellationToken).ConfigureAwait(false);
-    }
 }
 
 
@@ -1108,31 +757,19 @@ internal enum ResumeClaim
 }
 
 
-internal sealed class HostPeer(string id, object? native, MessageReassembler reassembler)
+internal sealed class HostPeer(string id)
 {
-    readonly ConcurrentDictionary<ushort, CancellationTokenSource> inFlight = new();
     readonly CancellationTokenSource aborted = new();
     readonly object holdGate = new();
     List<QueuedSend>? held;
     HubDisconnect? holdReason;
     HoldState state = HoldState.Attached;
     int generation;
-    int nextHostId;
 
     /// <summary>
     /// The connection id - stays the same when the client resumes on a new link
     /// </summary>
     public string Id { get; } = id;
-
-    /// <summary>
-    /// The link frames arrive on - the BLE central, or the connection id on another transport. A BLE client that
-    /// resumes is on a new central.
-    /// </summary>
-    public string LinkId { get; set; } = id;
-
-    public object? Native { get; set; } = native;
-    public int Mtu { get; set; } = 23;
-    public MessageReassembler Reassembler { get; set; } = reassembler;
 
     /// <summary>
     /// Issued when the host holds dropped clients - the client proves who it is with it when it comes back
@@ -1289,13 +926,6 @@ internal sealed class HostPeer(string id, object? native, MessageReassembler rea
     }
 
 
-    public void CancelCalls()
-    {
-        foreach (var id in this.inFlight.Keys.ToList())
-            this.Cancel(id);
-    }
-
-
     enum HoldState
     {
         Attached,
@@ -1306,11 +936,6 @@ internal sealed class HostPeer(string id, object? native, MessageReassembler rea
     public SemaphoreSlim SendLock { get; } = new(1, 1);
     public SemaphoreSlim RenameLock { get; } = new(1, 1);
     public BleHubConnectedClient? Client { get; set; }
-
-    /// <summary>
-    /// Issued in the handshake ack when the host serves BLE media channels - the client's first frame on that channel
-    /// </summary>
-    public string? MediaToken { get; set; }
 
     IBleHubMediaChannel? media;
     public IBleHubMediaChannel? Media => Volatile.Read(ref this.media);
@@ -1324,25 +949,11 @@ internal sealed class HostPeer(string id, object? native, MessageReassembler rea
     }
 
     /// <summary>
-    /// Set when the client is connected through another transport rather than BLE
+    /// How the hub reaches the client - set by the transport it is connected through
     /// </summary>
     public IBleHubPeerChannel? Channel { get; set; }
     public CancellationToken Aborted => this.aborted.Token;
 
-
-    /// <summary>
-    /// Host allocated ids have the high bit set so they never collide with client ids
-    /// </summary>
-    public ushort NextHostMessageId() => (ushort)(0x8000 | (Interlocked.Increment(ref this.nextHostId) & 0x7FFF));
-
-    public void Track(ushort id, CancellationTokenSource cts) => this.inFlight[id] = cts;
-    public void Untrack(ushort id) => this.inFlight.TryRemove(id, out _);
-
-    public void Cancel(ushort id)
-    {
-        if (this.inFlight.TryRemove(id, out var cts))
-            TryCancel(cts);
-    }
 
     public void Abort() => TryCancel(this.aborted);
 
