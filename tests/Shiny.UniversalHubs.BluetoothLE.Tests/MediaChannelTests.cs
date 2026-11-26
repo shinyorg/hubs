@@ -20,7 +20,7 @@ public class MediaChannelTests : IAsyncLifetime
 
     readonly FakeHostingManager hosting = new();
     readonly HubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(5) };
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
     readonly Dictionary<string, List<FakeL2CapLink>> links = new();
     readonly List<HubMediaChannelEventArgs> opened = new();
     ServiceProvider services = null!;

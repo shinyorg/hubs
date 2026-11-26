@@ -67,7 +67,8 @@ public sealed record HubHandshake(
     string? Name,
     string? AppVersion,
     Dictionary<string, string>? Properties,
-    bool Resumable = false
+    bool Resumable = false,
+    string? Serializer = null
 );
 
 

@@ -434,7 +434,11 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
         var hubOptions = this.registration.Options;
         string? rejection;
 
-        if (peer.Client == null && hubOptions.MaxClients is { } max && this.Clients.Count >= max)
+        // a client without one is from before serializers were named - JSON was all there was
+        var serializer = info.Serializer ?? JsonHubSerializer.FormatName;
+        if (!serializer.Equals(this.Serializer.Name, StringComparison.OrdinalIgnoreCase))
+            rejection = $"Serializer mismatch - this hub uses {this.Serializer.Name}, the client {serializer}";
+        else if (peer.Client == null && hubOptions.MaxClients is { } max && this.Clients.Count >= max)
             rejection = "Host is full";
         else
             rejection = hubOptions.ValidateClient?.Invoke(info);

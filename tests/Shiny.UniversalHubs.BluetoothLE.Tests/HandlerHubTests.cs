@@ -22,7 +22,7 @@ public class HandlerHubTests : IAsyncLifetime
 
     readonly FakeHostingManager hosting = new();
     readonly HubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(5) };
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
     readonly EchoHandler handler = new();
     ServiceProvider? services;
     UniversalHubHost host = null!;

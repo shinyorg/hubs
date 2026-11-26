@@ -369,7 +369,8 @@ public abstract class HubProxy : IHubConnection, IDisposable
         options?.Name,
         options?.AppVersion,
         options?.Properties,
-        resumable
+        resumable,
+        this.services.Serializer.Name
     );
 
 

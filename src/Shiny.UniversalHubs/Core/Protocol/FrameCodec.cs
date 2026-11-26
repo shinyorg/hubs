@@ -20,7 +20,7 @@ namespace Shiny.UniversalHubs.Protocol;
 /// </summary>
 public static class FrameCodec
 {
-    public const byte ProtocolVersion = 1;
+    public const byte ProtocolVersion = 2;
     public const int HeaderSize = 7;
     public const int FirstHeaderSize = HeaderSize + 4;
 

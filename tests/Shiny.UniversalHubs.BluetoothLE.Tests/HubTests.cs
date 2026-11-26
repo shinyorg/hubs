@@ -17,7 +17,7 @@ public class HubTests : IAsyncLifetime
     readonly Dictionary<string, HubProxy> clients = new();
     // a client that resumed is reached on its new link, like a real central
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, HubProxy> links = new();
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
     ServiceProvider services = null!;
     HubRuntime runtime = null!;
     FrameHostSession session = null!;

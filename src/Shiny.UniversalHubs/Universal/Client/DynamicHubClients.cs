@@ -87,7 +87,10 @@ internal sealed class DynamicHubClients(IServiceProvider services, Action<Univer
         if (options.TransportCount == 0)
             throw new InvalidOperationException($"The {hubName} client isn't set up with any transport");
 
-        var proxy = new DynamicHubProxy(services.GetRequiredService<HubClientServices>(), hubName);
+        // dynamic hubs are JSON - the values travel exactly as each side wrote them
+        var shared = services.GetRequiredService<HubClientServices>();
+        var json = shared.Serializer as JsonHubSerializer ?? new JsonHubSerializer(services.GetService<ISerializer>());
+        var proxy = new DynamicHubProxy(new HubClientServices(shared.Options, json, shared.LoggerFactory), hubName);
         return new UniversalHubClient<IDynamicHubCalls>(
             proxy,
             options,

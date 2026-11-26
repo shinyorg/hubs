@@ -284,6 +284,19 @@ public sealed class UniversalHubBuilder
     internal Type HubType { get; }
     internal HashSet<Type> Transports { get; } = new();
     internal HubOptions Options { get; } = new();
+    internal IHubSerializer? HubSerializer { get; private set; }
+
+
+    /// <summary>
+    /// The serializer this hub's calls, results and pushes use, instead of the app's IHubSerializer. Its clients must use
+    /// one with the same name - the handshake refuses any other.
+    /// </summary>
+    public UniversalHubBuilder Serializer(IHubSerializer serializer)
+    {
+        ArgumentNullException.ThrowIfNull(serializer);
+        this.HubSerializer = serializer;
+        return this;
+    }
 
 
     /// <summary>
@@ -349,7 +362,7 @@ public sealed class UniversalHubBuilder
     internal void Register(IServiceCollection services)
     {
         this.register(services);
-        services.AddSingleton(new HubRegistration(this.HubType, this.Name, this.Options, this.Transports.ToHashSet(), new Dictionary<Type, object>(this.settings)));
+        services.AddSingleton(new HubRegistration(this.HubType, this.Name, this.Options, this.Transports.ToHashSet(), new Dictionary<Type, object>(this.settings), this.HubSerializer));
     }
 }
 

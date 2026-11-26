@@ -26,7 +26,7 @@ public static class PeerProtocol
     /// Bumped on a breaking change to anything here. The host refuses a handshake from another version, and each radio
     /// advertises it so clients skip hosts they can't talk to.
     /// </summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>
     /// File transfers are named with the file request's message id

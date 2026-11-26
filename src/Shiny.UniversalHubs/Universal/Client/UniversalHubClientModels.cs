@@ -229,6 +229,20 @@ public class UniversalHubClientOptions
         => this.Priority(typeof(T1), typeof(T2), typeof(T3), typeof(T4));
 
 
+    internal IHubSerializer? HubSerializer { get; private set; }
+
+    /// <summary>
+    /// The serializer this client's calls, results and pushes use, instead of the app's IHubSerializer - the hub's own
+    /// (its Serializer(...)), by name
+    /// </summary>
+    public UniversalHubClientOptions Serializer(IHubSerializer serializer)
+    {
+        ArgumentNullException.ThrowIfNull(serializer);
+        this.HubSerializer = serializer;
+        return this;
+    }
+
+
     /// <summary>
     /// Protocol limits (payload size, timeouts) - app-wide, shared with every other hub client and host in the app
     /// </summary>

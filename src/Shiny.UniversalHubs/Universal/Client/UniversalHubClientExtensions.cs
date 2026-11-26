@@ -41,10 +41,12 @@ public static class UniversalHubClientExtensions
         foreach (var c in options.ServiceActions)
             c(services);
 
-        services.AddSingleton<IHubProxy<TContract>>(sp => (IHubProxy<TContract>)HubProxyFactories.Create<TContract>(
-            sp.GetRequiredService<HubClientServices>(),
-            hubName
-        ));
+        services.AddSingleton<IHubProxy<TContract>>(sp =>
+        {
+            var shared = sp.GetRequiredService<HubClientServices>();
+            var proxyServices = options.HubSerializer is { } own ? new HubClientServices(shared.Options, own, shared.LoggerFactory) : shared;
+            return (IHubProxy<TContract>)HubProxyFactories.Create<TContract>(proxyServices, hubName);
+        });
         services.AddSingleton(sp => (TContract)sp.GetRequiredService<IHubProxy<TContract>>());
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
             sp.GetRequiredService<IHubProxy<TContract>>(),

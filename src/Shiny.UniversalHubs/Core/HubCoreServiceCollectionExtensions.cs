@@ -28,7 +28,7 @@ internal static class HubCoreServiceCollectionExtensions
                 c.Configure(options);
             return options;
         });
-        services.TryAddSingleton<IHubSerializer>(sp => new ShinyJsonBleHubSerializer(sp.GetService<ISerializer>()));
+        services.TryAddSingleton<IHubSerializer>(sp => new JsonHubSerializer(sp.GetService<ISerializer>()));
         // a host and the clients in the same app share it - clients leave the host's own advertisement out of discovery
         return services;
     }

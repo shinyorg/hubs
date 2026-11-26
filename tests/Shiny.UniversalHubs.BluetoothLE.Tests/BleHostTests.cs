@@ -18,7 +18,7 @@ public class BleHostTests : IAsyncLifetime
 
     readonly FakeHostingManager hosting = new();
     readonly HubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(5) };
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
     string serviceUuid = ServiceA;
     ServiceProvider services = null!;
     UniversalHubHost host = null!;

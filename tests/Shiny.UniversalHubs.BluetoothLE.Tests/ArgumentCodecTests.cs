@@ -4,7 +4,7 @@ public class ArgumentCodecTests
 {
     static ArgumentCodecTests() => Json.AddContext(TestJsonContext.Default);
 
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
 
 
     [Fact]

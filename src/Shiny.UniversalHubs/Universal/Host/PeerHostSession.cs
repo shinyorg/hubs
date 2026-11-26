@@ -268,7 +268,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             {
                 rejection = await hub.Endpoint.Connect(
                     this.ConnectionId,
-                    new HandshakeInfo(FrameCodec.ProtocolVersion, handshake.Name, handshake.AppVersion, handshake.Properties),
+                    new HandshakeInfo(FrameCodec.ProtocolVersion, handshake.Name, handshake.AppVersion, handshake.Properties, Serializer: handshake.Serializer),
                     this,
                     this.lifetime.Token
                 ).ConfigureAwait(false);

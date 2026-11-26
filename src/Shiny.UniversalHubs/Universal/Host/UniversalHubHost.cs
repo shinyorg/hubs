@@ -185,7 +185,7 @@ internal sealed class UniversalHubHost : IUniversalHubHost
 
         foreach (var reg in registrations)
         {
-            var runtime = this.CreateRuntime(new HubDefinition(reg.HubType, reg.Key, reg.Options), HubDispatchers.Get(reg.HubType), reg.HubType.Name, null);
+            var runtime = this.CreateRuntime(new HubDefinition(reg.HubType, reg.Key, reg.Options), HubDispatchers.Get(reg.HubType), reg.HubType.Name, null, reg.Serializer ?? this.serializer);
             this.compiled.Add(new HubEntry(reg.Key, reg.HubType.Name, reg.HubType, reg.Transports, reg.Settings, runtime));
         }
     }
@@ -448,7 +448,9 @@ internal sealed class UniversalHubHost : IUniversalHubHost
                 new HubDefinition(typeof(HandlerHub), key, options),
                 new HandlerDispatcher(handler),
                 name,
-                () => new HandlerHub(handler)
+                () => new HandlerHub(handler),
+                // dynamic hubs are JSON: their handlers see each value exactly as the caller wrote it
+                this.serializer as JsonHubSerializer ?? new JsonHubSerializer(this.services.GetService<ISerializer>())
             );
             var entry = new HubEntry(key, name, null, transports, settings, runtime);
             this.dynamic[key] = entry;
@@ -477,14 +479,14 @@ internal sealed class UniversalHubHost : IUniversalHubHost
     internal void OnFileProgress(HubFileProgressEventArgs args) => this.FileTransferProgress?.Invoke(this, args);
 
 
-    HubRuntime CreateRuntime(HubDefinition registration, IHubDispatcher dispatcher, string name, Func<object>? createHub)
+    HubRuntime CreateRuntime(HubDefinition registration, IHubDispatcher dispatcher, string name, Func<object>? createHub, IHubSerializer serializer)
     {
         var runtime = new HubRuntime(
             registration,
             dispatcher,
             this.services,
             this.protocolOptions,
-            this.serializer,
+            serializer,
             this.loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{name}"),
             name,
             createHub

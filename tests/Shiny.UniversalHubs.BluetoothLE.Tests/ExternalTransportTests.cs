@@ -18,7 +18,7 @@ public class ExternalTransportTests : IAsyncLifetime
 
     readonly HubProtocolOptions options = new() { RequestTimeout = TimeSpan.FromSeconds(10) };
     readonly HubOptions hubOptions = new() { MaxClients = 3 };
-    readonly IHubSerializer serializer = new ShinyJsonBleHubSerializer();
+    readonly IHubSerializer serializer = new JsonHubSerializer();
     readonly Dictionary<string, HubProxy> bleClients = new();
     ServiceProvider services = null!;
     HubRuntime runtime = null!;

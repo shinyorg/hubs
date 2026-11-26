@@ -12,7 +12,8 @@ public sealed record HandshakeInfo(
     string? Name,
     string? AppVersion,
     Dictionary<string, string>? Properties,
-    bool Resumable = false
+    bool Resumable = false,
+    string? Serializer = null
 );
 
 /// <summary>

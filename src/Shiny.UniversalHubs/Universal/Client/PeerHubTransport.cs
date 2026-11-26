@@ -90,7 +90,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
             this.characteristicUuid,
             id => PeerProtocol.Encode(
                 PeerMessageKind.Handshake, id, this.characteristicUuid,
-                new HubHandshake(PeerProtocol.Version, info.Name, info.AppVersion, info.Properties, info.Resumable && this.reopen != null),
+                new HubHandshake(PeerProtocol.Version, info.Name, info.AppVersion, info.Properties, info.Resumable && this.reopen != null, info.Serializer),
                 PeerJsonContext.Default.HubHandshake
             ),
             cancellationToken

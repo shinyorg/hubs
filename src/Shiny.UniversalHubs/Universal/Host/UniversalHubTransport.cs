@@ -131,5 +131,6 @@ internal sealed record HubRegistration(
     string Key,
     HubOptions Options,
     IReadOnlySet<Type> Transports,
-    IReadOnlyDictionary<Type, object> Settings
+    IReadOnlyDictionary<Type, object> Settings,
+    IHubSerializer? Serializer
 );
