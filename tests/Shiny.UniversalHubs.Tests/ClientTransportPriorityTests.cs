@@ -137,6 +137,69 @@ public class ClientTransportPriorityTests : IDisposable
 
 
     [Fact]
+    public async Task ADisabledTransportIsNotTriedUntilItIsEnabledAgain()
+    {
+        var client = this.Client(o => o
+            .UseTransport(_ => new Alpha(this.attempts))
+            .UseTransport(_ => new Beta(this.attempts))
+            .UseTransport(_ => new Gamma(this.attempts)));
+        var host = SeenOn(typeof(Alpha), typeof(Beta), typeof(Gamma));
+        var changes = 0;
+        client.EnabledChanged += (_, _) => changes++;
+
+        await client.Disable<Beta>();
+        Assert.False(client.IsEnabled<Beta>());
+        Assert.Equal(["Alpha", "Gamma"], await this.Attempt(client, host));
+
+        await client.Solo<Gamma>();
+        Assert.Equal(["Gamma"], await this.Attempt(client, host));
+        Assert.Equal(["Gamma"], client.Transports.Where(x => client.IsEnabled(x.GetType())).Select(x => x.DisplayName));
+
+        await client.Enable<Beta>();
+        await client.Enable<Beta>();   // already on - no change
+        Assert.Equal(["Beta", "Gamma"], await this.Attempt(client, host));
+        Assert.Equal(3, changes);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.SetEnabled(typeof(Unsupported), false));
+    }
+
+
+    [Fact]
+    public async Task DisablingATransportTakesItOutOfRunningDiscoveries()
+    {
+        var alpha = new Alpha(this.attempts);
+        var beta = new Beta(this.attempts);
+        var client = this.Client(o => o
+            .UseTransport(_ => alpha)
+            .UseTransport(_ => beta));
+
+        var seen = new List<HubHostInfo>();
+        using var watch = client.DiscoverAll().Subscribe(seen.Add);
+        alpha.Sightings.OnNext(new HubHostSighting("Host", null, new FakeEndpoint("alpha")));
+        beta.Sightings.OnNext(new HubHostSighting("Host", null, new FakeEndpoint("beta")));
+        Assert.Equal([typeof(Alpha), typeof(Beta)], seen.Last().Transports);
+
+        await client.Disable<Alpha>();
+        Assert.False(alpha.Discovering);
+        Assert.Equal([typeof(Beta)], seen.Last().Transports);
+
+        // not listening any more
+        var count = seen.Count;
+        alpha.Sightings.OnNext(new HubHostSighting("Host", null, new FakeEndpoint("alpha")));
+        Assert.Equal(count, seen.Count);
+
+        await client.Enable<Alpha>();
+        Assert.True(alpha.Discovering);
+        alpha.Sightings.OnNext(new HubHostSighting("Host", null, new FakeEndpoint("alpha")));
+        Assert.Equal([typeof(Alpha), typeof(Beta)], seen.Last().Transports);
+
+        watch.Dispose();
+        Assert.False(alpha.Discovering);
+        Assert.False(beta.Discovering);
+    }
+
+
+    [Fact]
     public async Task DiscoveryMergesTransportsInPriorityOrder()
     {
         var alpha = new Alpha(this.attempts);
@@ -195,10 +258,15 @@ public abstract class RecordingClientTransport(List<string> attempts) : IHubClie
     public virtual string DisplayName => this.GetType().Name;
     public virtual bool IsSupported => true;
 
-    public IObservable<HubHostSighting> Discover(HubClientContext client) => Observable.Defer(() =>
+    public IObservable<HubHostSighting> Discover(HubClientContext client) => Observable.Create<HubHostSighting>(observer =>
     {
         this.Discovering = true;
-        return this.Sightings;
+        var sub = this.Sightings.Subscribe(observer);
+        return () =>
+        {
+            this.Discovering = false;
+            sub.Dispose();
+        };
     });
 
     public Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)

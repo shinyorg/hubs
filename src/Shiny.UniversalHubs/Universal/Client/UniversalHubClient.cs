@@ -1,3 +1,4 @@
+using System.Reactive.Disposables;
 using System.Reactive.Linq;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
@@ -23,6 +24,24 @@ public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> w
     IHubClientTransport? Transport { get; }
 
     /// <summary>
+    /// Whether <paramref name="transport"/> (a client transport type this client has) may be used - every transport is,
+    /// until <see cref="SetEnabled"/> turns it off
+    /// </summary>
+    bool IsEnabled(Type transport);
+
+    /// <summary>
+    /// Turns a transport on or off while the app runs - to test each one on its own, or to let the user pick. A disabled
+    /// transport leaves running discoveries (the hosts it saw lose it) and is never connected over. Disabling the
+    /// transport the connection is on disconnects it.
+    /// </summary>
+    Task SetEnabled(Type transport, bool enabled);
+
+    /// <summary>
+    /// A transport was enabled or disabled
+    /// </summary>
+    event EventHandler? EnabledChanged;
+
+    /// <summary>
     /// Watches for hosts over every transport at once. A host seen several ways is one <see cref="HubHostInfo"/>, raised
     /// again whenever any side changes. Dispose the subscription to stop. A transport that can't scan (Bluetooth off, no
     /// Wi-Fi) is skipped; the others keep going.
@@ -42,6 +61,38 @@ public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> w
 }
 
 
+public static class UniversalHubClientTransportExtensions
+{
+    /// <summary>
+    /// Whether <typeparamref name="TTransport"/> may be used
+    /// </summary>
+    public static bool IsEnabled<TTransport>(this IUniversalHubClient<object> client) where TTransport : IHubClientTransport
+        => client.IsEnabled(typeof(TTransport));
+
+    /// <summary>
+    /// Turns <typeparamref name="TTransport"/> back on
+    /// </summary>
+    public static Task Enable<TTransport>(this IUniversalHubClient<object> client) where TTransport : IHubClientTransport
+        => client.SetEnabled(typeof(TTransport), true);
+
+    /// <summary>
+    /// Turns <typeparamref name="TTransport"/> off - see <see cref="IUniversalHubClient{TContract}.SetEnabled"/>
+    /// </summary>
+    public static Task Disable<TTransport>(this IUniversalHubClient<object> client) where TTransport : IHubClientTransport
+        => client.SetEnabled(typeof(TTransport), false);
+
+    /// <summary>
+    /// Uses <typeparamref name="TTransport"/> and turns every other transport off
+    /// </summary>
+    public static async Task Solo<TTransport>(this IUniversalHubClient<object> client) where TTransport : IHubClientTransport
+    {
+        await client.SetEnabled(typeof(TTransport), true).ConfigureAwait(false);
+        foreach (var other in client.Transports.Where(x => x.GetType() != typeof(TTransport)))
+            await client.SetEnabled(other.GetType(), false).ConfigureAwait(false);
+    }
+}
+
+
 internal static class UniversalHubClientErrors
 {
     // BleHubClient reports a refusal (full, ValidateClient, not running) this way on every transport
@@ -57,6 +108,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
     readonly Lazy<IReadOnlyList<IHubClientTransport>> transports;
     readonly UniversalHubClientOptions options;
     readonly ILogger? logger;
+    readonly HashSet<Type> disabled = new();
     IHubClientTransport? connectedThrough;
 
 
@@ -85,6 +137,42 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         : null;
 
 
+    public event EventHandler? EnabledChanged;
+
+    public bool IsEnabled(Type transport)
+    {
+        this.Validate(transport);
+        lock (this.disabled)
+            return !this.disabled.Contains(transport);
+    }
+
+
+    public async Task SetEnabled(Type transport, bool enabled)
+    {
+        this.Validate(transport);
+        bool changed;
+        lock (this.disabled)
+            changed = enabled ? this.disabled.Remove(transport) : this.disabled.Add(transport);
+
+        if (!changed)
+            return;
+
+        this.logger?.LogInformation("{Transport} {State}", transport.Name, enabled ? "enabled" : "disabled");
+        this.EnabledChanged?.Invoke(this, EventArgs.Empty);
+
+        if (!enabled && this.Transport?.GetType() == transport)
+            await this.inner.Disconnect().ConfigureAwait(false);
+    }
+
+
+    void Validate(Type transport)
+    {
+        ArgumentNullException.ThrowIfNull(transport);
+        if (!this.Transports.Any(x => x.GetType() == transport))
+            throw new ArgumentException($"{transport.Name} is not a transport this hub client has", nameof(transport));
+    }
+
+
     public IObservable<HubHostInfo> DiscoverAll() => this.Discover(this.Transports);
 
     public IObservable<HubHostInfo> DiscoverAll(IEnumerable<Type> transports)
@@ -102,48 +190,92 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
     IObservable<HubHostInfo> Discover(IReadOnlyList<IHubClientTransport> transports) => Observable.Create<HubHostInfo>(observer =>
     {
         var hosts = new Dictionary<string, HubHostInfo>(StringComparer.OrdinalIgnoreCase);
+        var scans = new Dictionary<IHubClientTransport, IDisposable>();
         var gate = new object();
         var priority = this.Priority;
         var context = new HubClientContext(this.client, new BleHubConnectOptions());
+        var disposed = false;
 
-        void Update(IHubClientTransport transport, HubHostSighting seen)
+        void Publish(string name, HubHostInfo updated)
         {
-            HubHostInfo updated;
-            lock (gate)
-            {
-                var current = hosts.TryGetValue(seen.Name, out var existing) ? existing : new HubHostInfo(seen.Name, seen.Name, null);
-                updated = current.With(transport.GetType(), seen.Endpoint, priority);
-                if (seen.HostId != null)
-                    updated = updated with { HostId = seen.HostId };
-
-                if (updated.Transports.Count == 0)
-                    hosts.Remove(seen.Name);
-                else
-                    hosts[seen.Name] = updated;
-            }
+            if (updated.Transports.Count == 0)
+                hosts.Remove(name);
+            else
+                hosts[name] = updated;
             observer.OnNext(updated);
         }
 
-        var scans = new List<IDisposable>();
-        foreach (var transport in transports.Where(x => x.IsSupported))
+        void Update(IHubClientTransport transport, HubHostSighting seen)
         {
-            try
+            lock (gate)
             {
-                scans.Add(transport.Discover(context).Subscribe(
-                    seen => Update(transport, seen),
-                    ex => this.logger?.LogWarning(ex, "{Transport} discovery stopped", transport.DisplayName)
-                ));
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogWarning(ex, "{Transport} discovery is unavailable", transport.DisplayName);
+                // a scan that was stopped may still report on its way out
+                if (!scans.ContainsKey(transport))
+                    return;
+
+                var current = hosts.TryGetValue(seen.Name, out var existing) ? existing : new HubHostInfo(seen.Name, seen.Name, null);
+                var updated = current.With(transport.GetType(), seen.Endpoint, priority);
+                if (seen.HostId != null)
+                    updated = updated with { HostId = seen.HostId };
+
+                Publish(seen.Name, updated);
             }
         }
 
+        // under the gate: scan over what is enabled, stop what isn't - the hosts a stopped scan saw lose it
+        void Sync()
+        {
+            if (disposed)
+                return;
+
+            foreach (var transport in transports.Where(x => x.IsSupported))
+            {
+                var enabled = this.IsEnabled(transport.GetType());
+                if (enabled && !scans.ContainsKey(transport))
+                {
+                    try
+                    {
+                        scans[transport] = Disposable.Empty;
+                        scans[transport] = transport.Discover(context).Subscribe(
+                            seen => Update(transport, seen),
+                            ex => this.logger?.LogWarning(ex, "{Transport} discovery stopped", transport.DisplayName)
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        this.logger?.LogWarning(ex, "{Transport} discovery is unavailable", transport.DisplayName);
+                    }
+                }
+                else if (!enabled && scans.Remove(transport, out var scan))
+                {
+                    scan.Dispose();
+                    var type = transport.GetType();
+                    foreach (var host in hosts.Values.Where(x => x.Endpoints.ContainsKey(type)).ToList())
+                        Publish(host.Key, host.With(type, null, priority));
+                }
+            }
+        }
+
+        void OnEnabledChanged(object? sender, EventArgs e)
+        {
+            lock (gate)
+                Sync();
+        }
+
+        lock (gate)
+            Sync();
+        this.EnabledChanged += OnEnabledChanged;
+
         return () =>
         {
-            foreach (var scan in scans)
-                scan.Dispose();
+            this.EnabledChanged -= OnEnabledChanged;
+            lock (gate)
+            {
+                disposed = true;
+                foreach (var scan in scans.Values)
+                    scan.Dispose();
+                scans.Clear();
+            }
         };
     });
 
@@ -156,7 +288,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         var context = new HubClientContext(this.client, options.ToBle() with { AutomaticReconnect = this.options.AutomaticReconnect });
         var order = options
             .Order(this.Transports)
-            .Where(x => x.IsSupported && host.Endpoints.ContainsKey(x.GetType()))
+            .Where(x => x.IsSupported && this.IsEnabled(x.GetType()) && host.Endpoints.ContainsKey(x.GetType()))
             .ToList();
 
         var errors = new List<Exception>();

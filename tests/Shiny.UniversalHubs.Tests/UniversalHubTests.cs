@@ -508,6 +508,24 @@ public class UniversalHubTests : IAsyncLifetime
 
 
     [Fact]
+    public async Task DisablingTheTransportAConnectionIsOnDisconnectsIt()
+    {
+        var client = await this.Connect();
+        Assert.IsType<HttpClientTransport>(client.Transport);
+
+        await client.Disable<HttpClientTransport>();
+
+        Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
+        Assert.Null(client.Transport);
+        await Assert.ThrowsAsync<BleHubException>(() => client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice")));
+
+        await client.Enable<HttpClientTransport>();
+        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"));
+        Assert.Equal(BleHubClientStatus.Connected, client.Status);
+    }
+
+
+    [Fact]
     public void UniversalServerNeedsAHub()
         => Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(_ => { }));
 
