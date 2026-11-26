@@ -41,6 +41,7 @@ public sealed class NearbyHostTransport : IHubTransport, IPeerHostTransport
 
     public string DisplayName => "Nearby";
     public bool IsSupported => link.IsSupported;
+    IHubTransport IPeerHostTransport.HubTransport => this;
     string IPeerHostTransport.ConnectionPrefix => HubConnection.NearbyPrefix;
 
     UniversalHubHost IPeerHostTransport.Host => services.GetRequiredService<UniversalHubHost>();

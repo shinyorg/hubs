@@ -233,7 +233,6 @@ internal sealed class FrameHostSession
             rejection = await this.endpoint.Connect(link.LinkId, info, link.Channel, client =>
             {
                 client.Mtu = link.Mtu;
-                client.Peripheral = link.Native as Shiny.BluetoothLE.Hosting.IPeripheral;
             }).ConfigureAwait(false);
 
             if (rejection == null)
@@ -325,8 +324,6 @@ internal sealed class FrameHostSession
                     }
                     link.ConnectionId = connectionId;
                     link.ResumeToken = info.Token;
-                    if (this.endpoint.FindClient(connectionId) is { } client)
-                        client.Peripheral = link.Native as Shiny.BluetoothLE.Hosting.IPeripheral;
 
                     return this.SendLocked(link, FrameKind.HandshakeAck, message.MessageId, null, ProtocolSerializer.Serialize(this.CreateAck(link, null)), this.lifetime.Token);
                 }
@@ -550,6 +547,7 @@ internal sealed class FrameHostLink
     {
         public FrameHostSession Session => session;
         public IHubTransport? Transport => session.Transport;
+        public object? GetFeature(Type type) => link.Native is { } native && type.IsInstanceOfType(native) ? native : null;
 
         public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken)
             => session.Send(link, FrameKind.Push, link.NextHostMessageId(), eventName, arguments, cancellationToken);

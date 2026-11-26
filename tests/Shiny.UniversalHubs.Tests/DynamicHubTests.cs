@@ -25,7 +25,7 @@ public interface IDynamicTestHub
 
 /// <summary>
 /// Dynamic hubs - defined while the app runs, their methods answered by an <see cref="IDynamicHubHandler"/> with the
-/// callers' values untouched - served over the real Switchboard beside a compiled hub
+/// callers' values untouched - served over HTTP beside a compiled hub
 /// </summary>
 public class DynamicHubTests : IAsyncLifetime
 {
@@ -45,11 +45,12 @@ public class DynamicHubTests : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         this.app = Build(server => server
-            .AllowDynamicHubs(o => o.ServiceTypes.Add(ServiceType))
+            .AllowDynamicHubs()
+            .Http(o => o.DynamicServiceTypes.Add(ServiceType))
             .AddHub<TestHub>(CompiledUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CompiledUuid).UseHttp(ServiceType)));
 
         this.dynamicHubs = this.app.Services.GetRequiredService<IDynamicHubs>();
-        this.hub = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType) { MaxClients = 2 }, this.handler);
+        this.hub = this.dynamicHubs.Add(new DynamicHubDefinition("game") { MaxClients = 2 }.UseHttp(ServiceType).UseBluetoothLE(DynamicUuid), this.handler);
         TransportAssert.Equal([typeof(HttpHostTransport)], await this.hub.Start([typeof(HttpHostTransport)]));
     }
 
@@ -90,35 +91,35 @@ public class DynamicHubTests : IAsyncLifetime
     }
 
 
-    async Task<IUniversalHubClient<TContract>> Connect<TContract>(string characteristicUuid, string name = "Alice", TestHttpServer? server = null) where TContract : class
+    async Task<IUniversalHubClient<TContract>> Connect<TContract>(string hubName, string name = "Alice", TestHttpServer? server = null) where TContract : class
     {
         server ??= this.app;
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
+            .AddUniversalHubClient<TContract>(hubName, o =>
             {
-                o.UseHttp(ServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, characteristicUuid);
+                o.UseHttp(ServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); });
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
         var client = services.GetRequiredService<IUniversalHubClient<TContract>>();
-        await client.Connect(Host(characteristicUuid), new HubConnectOptions(name, "1.0"));
+        await client.Connect(Host(hubName), new HubConnectOptions(name, "1.0"));
         return client;
     }
 
 
-    Task<IUniversalHubClient<IDynamicTestHub>> Connect(string name = "Alice") => this.Connect<IDynamicTestHub>(DynamicUuid, name);
+    Task<IUniversalHubClient<IDynamicTestHub>> Connect(string name = "Alice") => this.Connect<IDynamicTestHub>("game", name);
 
 
-    static HubHostInfo Host(string characteristicUuid) => new HubHostInfo("DynHost", "DynHost", "dyn-host").With(
+    static HubHostInfo Host(string hubName) => new HubHostInfo("DynHost", "DynHost", "dyn-host").With(
         typeof(HttpClientTransport),
         new HttpHubEndpoint(new DiscoveredHttpServer(
             "DynHost",
             new Uri("http://localhost/hubs"),
             [],
             80,
-            new Dictionary<string, string> { ["hubs"] = characteristicUuid, ["proto"] = UniversalHubProtocol.Version.ToString(), ["path"] = "/hubs" }
+            new Dictionary<string, string> { ["hubs"] = hubName, ["proto"] = UniversalHubProtocol.Version.ToString(), ["path"] = "/hubs" }
         )),
         []
     );
@@ -240,7 +241,7 @@ public class DynamicHubTests : IAsyncLifetime
         Assert.Contains("not running", stopped.Message);
 
         var unknown = await Assert.ThrowsAsync<HubException>(() => this.Connect<IDynamicTestHub>("6e400099-b5a3-f393-e0a9-e50e24dcca9e"));
-        Assert.Contains("Hub not found", unknown.Message);
+        Assert.Contains("404", unknown.Message);   // a hub this host doesn't have isn't there to refuse anyone
     }
 
 
@@ -258,7 +259,7 @@ public class DynamicHubTests : IAsyncLifetime
         Assert.Null(this.dynamicHubs.Find("game"));
 
         // the same definition can come back - after a web app update, say
-        var again = this.dynamicHubs.Add(new DynamicHubDefinition("game", DynamicUuid, ServiceType), this.handler);
+        var again = this.dynamicHubs.Add(new DynamicHubDefinition("game").UseHttp(ServiceType).UseBluetoothLE(DynamicUuid), this.handler);
         await again.Start([typeof(HttpHostTransport)]);
         var returning = await this.Connect("Again");
         Assert.Equal(new Payload("back", 2), await returning.Hub.Echo(new Payload("back", 2)));
@@ -270,10 +271,15 @@ public class DynamicHubTests : IAsyncLifetime
     {
         var other = "6e400011-b5a3-f393-e0a9-e50e24dcca9e";
 
-        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("game", other, ServiceType), this.handler));
-        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat", DynamicUuid, ServiceType), this.handler));
-        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat", CompiledUuid, ServiceType), this.handler));
-        var type = Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat", other, "_other._tcp"), this.handler));
+        // the name is taken - by a dynamic hub, or a compiled one
+        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("game").UseBluetoothLE(other), this.handler));
+        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition(CompiledUuid), this.handler));
+        Assert.Throws<ArgumentException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("not a name"), this.handler));
+
+        // the characteristic is taken
+        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat").UseBluetoothLE(DynamicUuid), this.handler));
+        Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat").UseBluetoothLE(CompiledUuid), this.handler));
+        var type = Assert.Throws<InvalidOperationException>(() => this.dynamicHubs.Add(new DynamicHubDefinition("chat").UseHttp("_other._tcp"), this.handler));
         Assert.Contains("_dyntest._tcp", type.Message);
     }
 
@@ -284,8 +290,8 @@ public class DynamicHubTests : IAsyncLifetime
         await using var server = Build(s => s.AllowDynamicHubs(o => o.MaxHubs = 1));
         var hubs = server.Services.GetRequiredService<IDynamicHubs>();
 
-        hubs.Add(new DynamicHubDefinition("one", DynamicUuid, UniversalHubProtocol.ServiceType), this.handler);
-        var ex = Assert.Throws<InvalidOperationException>(() => hubs.Add(new DynamicHubDefinition("two", "6e400011-b5a3-f393-e0a9-e50e24dcca9e", UniversalHubProtocol.ServiceType), this.handler));
+        hubs.Add(new DynamicHubDefinition("one"), this.handler);
+        var ex = Assert.Throws<InvalidOperationException>(() => hubs.Add(new DynamicHubDefinition("two"), this.handler));
         Assert.Contains("at most 1", ex.Message);
     }
 
@@ -293,13 +299,13 @@ public class DynamicHubTests : IAsyncLifetime
     [Fact]
     public async Task AServerCanStartWithOnlyDynamicHubs()
     {
-        await using var server = Build(s => s.AllowDynamicHubs(o => o.ServiceTypes.Add(ServiceType)));
+        await using var server = Build(s => s.AllowDynamicHubs().Http(o => o.DynamicServiceTypes.Add(ServiceType)));
         var hubs = server.Services.GetRequiredService<IDynamicHubs>();
         var handler = new ScriptedHandler();
-        var added = hubs.Add(new DynamicHubDefinition("solo", DynamicUuid, ServiceType), handler);
-        await added.Start([typeof(HttpHostTransport)]);
+        var added = hubs.Add(new DynamicHubDefinition("solo").UseHttp(ServiceType), handler);
+        TransportAssert.Equal([typeof(HttpHostTransport)], added.RunningTransports.Count == 0 ? await added.Start() : added.RunningTransports);
 
-        var client = await this.Connect<IDynamicTestHub>(DynamicUuid, server: server);
+        var client = await this.Connect<IDynamicTestHub>("solo", server: server);
         Assert.Equal(new Payload("solo", 3), await client.Hub.Echo(new Payload("solo", 3)));
         Assert.Contains(handler.Calls, x => x.Method == "Echo");
     }
@@ -309,54 +315,50 @@ public class DynamicHubTests : IAsyncLifetime
     public void DynamicHubsRegistrationRules()
     {
         Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(_ => { }));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AllowDynamicHubs(o => o.ServiceTypes.Add("nope"))));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.AllowDynamicHubs().Http(o => o.DynamicServiceTypes.Add("nope"))));
         Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalServer(s => s.AllowDynamicHubs(o => o.MaxHubs = 0)));
     }
 
 
-    [Theory]
-    [InlineData("/hubs/6e400002-b5a3-f393-e0a9-e50e24dcca9e/connect", false)]  // a compiled hub that doesn't allow tunnels
-    [InlineData("/hubs/anything-else/connect", false)]                        // would reach the dynamic hubs' Switchboard
-    [InlineData("/api/status", true)]
-    public void WithDynamicHubsTunnelsOnlyReachHubsThatAllowThem(string path, bool allowed)
-    {
-        var compiled = this.app.Services.GetServices<IHubBinding>().ToList();
-        Assert.Equal(allowed, TunnelGate.IsAllowed(path, "/hubs", compiled, dynamicHubs: true));
-    }
-
-
     [Fact]
-    public async Task ADynamicHubThatAllowsTunnelsIsReachableThroughOne()
+    public void ADynamicHubCanAllowTunnels()
     {
-        var shared = this.dynamicHubs.Add(new DynamicHubDefinition("shared", "6e400012-b5a3-f393-e0a9-e50e24dcca9e", ServiceType) { AllowTunnel = true }, this.handler);
+        this.dynamicHubs.Add(new DynamicHubDefinition("shared").UseHttp(ServiceType, allowTunnel: true), this.handler);
         var host = this.app.Services.GetRequiredService<UniversalHubHost>();
-        Assert.True(TunnelGate.IsAllowed("/hubs/6e400012-b5a3-f393-e0a9-e50e24dcca9e/connect", "/hubs", host.Hubs, dynamicHubs: true));
-        Assert.False(TunnelGate.IsAllowed($"/hubs/{DynamicUuid}/connect", "/hubs", host.Hubs, dynamicHubs: true));
-        await this.dynamicHubs.Remove(shared.Definition.Name);
+
+        Assert.True(host.FindByKey("shared")!.GetSettings<HttpHubSettings>()!.AllowTunnel);
+        Assert.False(host.FindByKey("game")!.GetSettings<HttpHubSettings>()!.AllowTunnel);
+        // no characteristic, so not over BLE
+        Assert.DoesNotContain(typeof(BleHostTransport), host.FindByKey("shared")!.Transports);
     }
 
 
-    IUniversalHubClient<IDynamicHubCalls> CreateDynamicClient(string characteristicUuid)
+    IUniversalHubClient<IDynamicHubCalls> CreateDynamicClient(string hubName)
     {
         var services = new ServiceCollection()
             .AddLogging()
-            .AddDynamicHubClients(http: h =>
+            .AddDynamicHubClients(o => o.UseHttp(configure: h =>
             {
                 h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 h.ConnectTimeout = TimeSpan.FromSeconds(5);
-            })
+            }))
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
-        return services.GetRequiredService<IDynamicHubClients>().Create(characteristicUuid, ServiceType);
+        // the hub's own service type replaces the shared default
+        return services.GetRequiredService<IDynamicHubClients>().Create(hubName, o => o.UseHttp(ServiceType, h =>
+        {
+            h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
+            h.ConnectTimeout = TimeSpan.FromSeconds(5);
+        }));
     }
 
 
     [Fact]
     public async Task ADynamicClientCallsADynamicHubByName()
     {
-        var client = this.CreateDynamicClient(DynamicUuid);
-        await client.Connect(Host(DynamicUuid), new HubConnectOptions("Dyna", "1.0"));
+        var client = this.CreateDynamicClient("game");
+        await client.Connect(Host("game"), new HubConnectOptions("Dyna", "1.0"));
         Assert.IsType<HttpClientTransport>(client.Transport);
 
         var pushes = new List<(string Name, string Args)>();

@@ -2,53 +2,66 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.Net.HttpServer.Switchboard;
 using IGroupManager = Shiny.UniversalHubs.IGroupManager;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// What a host lets dynamic hubs use - set once, in the app, because a platform fixes it when the app is built
-/// (iOS lists every mDNS type in NSBonjourServices)
+/// What a host lets dynamic hubs use - set once, in the app. Each transport has its own say too (eg. the mDNS service types
+/// in HttpTransportOptions.DynamicServiceTypes, the GATT service in BluetoothLETransportOptions.DynamicServiceUuid).
 /// </summary>
 public sealed class DynamicHubOptions
 {
     /// <summary>
-    /// The mDNS service types a dynamic hub may be advertised under. Empty allows only
-    /// <see cref="HttpTransportOptions.ServiceType"/>. Hubs that share a type share one advertisement.
-    /// </summary>
-    public IList<string> ServiceTypes { get; } = new List<string>();
-
-    /// <summary>
     /// How many dynamic hubs may exist at once. An mDNS TXT record lists about six hubs per service type.
     /// </summary>
     public int MaxHubs { get; set; } = 6;
-
-    /// <summary>
-    /// The GATT service dynamic hubs are characteristics in, when the server hosts over BLE - the compiled hubs' service
-    /// unless set
-    /// </summary>
-    public string? BleServiceUuid { get; set; }
 }
 
 
 /// <summary>
-/// A hub defined while the app runs
+/// A hub defined while the app runs. It is served over every transport the server has set up that can serve it: one that
+/// needs per-hub settings (a BLE characteristic) only when they are given - <c>definition.UseBluetoothLE(...)</c> - and
+/// one with defaults (HTTP's service type) either way.
 /// </summary>
-/// <param name="Name">Unique among dynamic hubs; names the hub in logs and errors</param>
-/// <param name="CharacteristicUuid">The BLE characteristic - one per hub, also its HTTP path. Clients use the same one.</param>
-/// <param name="ServiceType">The mDNS service type, one of <see cref="DynamicHubOptions.ServiceTypes"/></param>
-public sealed record DynamicHubDefinition(string Name, string CharacteristicUuid, string ServiceType)
+/// <param name="name">The hub's name - how clients ask for it on every transport, unique among all hubs</param>
+public sealed class DynamicHubDefinition(string name)
 {
+    readonly Dictionary<Type, object> settings = new();
+
+    public string Name { get; } = name;
+
     /// <summary>
     /// Counted across every transport; null for no limit
     /// </summary>
     public int? MaxClients { get; init; } = 8;
 
     /// <summary>
-    /// Let clients reach this hub through a tunnel (the public internet)
+    /// What a transport is told about this hub, by the settings' type - transports add theirs with extension methods
+    /// (<c>UseHttp</c>, <c>UseBluetoothLE</c>)
     /// </summary>
-    public bool AllowTunnel { get; init; }
+    public DynamicHubDefinition With(object transportSettings)
+    {
+        ArgumentNullException.ThrowIfNull(transportSettings);
+        this.settings[transportSettings.GetType()] = transportSettings;
+        return this;
+    }
+
+    public T? GetSettings<T>() where T : class => this.settings.TryGetValue(typeof(T), out var value) ? (T)value : null;
+}
+
+
+/// <summary>
+/// A transport that can serve hubs added while the app runs. One that doesn't implement this serves them with no per-hub
+/// settings.
+/// </summary>
+public interface IDynamicHubTransport : IHubTransport
+{
+    /// <summary>
+    /// What this transport needs to know about the new hub - null to leave it off this transport. Throw to refuse the hub
+    /// (a setting this host doesn't allow, a clash with another hub).
+    /// </summary>
+    object? CreateSettings(DynamicHubDefinition definition);
 }
 
 
@@ -234,14 +247,12 @@ public interface IDynamicHubs
 /// The dynamic hubs: each one a hub of the host's, served over every transport the server has set up
 /// </summary>
 internal sealed class DynamicHubRegistry(
-    IServiceProvider services,
     UniversalHubHost host,
     DynamicHubOptions options,
     ILoggerFactory? loggerFactory = null
 ) : IDynamicHubs
 {
     readonly ConcurrentDictionary<string, DynamicHub> hubs = new(StringComparer.OrdinalIgnoreCase);
-    readonly ConcurrentDictionary<HubEntry, DynamicHttpHub> httpHubs = new();
     readonly object sync = new();
 
 
@@ -249,50 +260,42 @@ internal sealed class DynamicHubRegistry(
 
     public IDynamicHub? Find(string name) => this.hubs.TryGetValue(name, out var hub) ? hub : null;
 
-    DynamicHub? FindByKey(string? key)
-        => key == null ? null : this.hubs.Values.FirstOrDefault(x => x.Entry.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
-
-
     public IDynamicHub Add(DynamicHubDefinition definition, IDynamicHubHandler handler)
     {
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(handler);
-        ArgumentException.ThrowIfNullOrWhiteSpace(definition.Name);
-        UniversalHubProtocol.ValidateServiceType(definition.ServiceType);
-        var characteristic = BleUuid.Normalize(definition.CharacteristicUuid, nameof(definition.CharacteristicUuid));
-
-        var httpOptions = services.GetService<HttpTransportOptions>();
-        IList<string> allowed = options.ServiceTypes.Count == 0 ? [httpOptions?.ServiceType ?? UniversalHubProtocol.ServiceType] : options.ServiceTypes;
-        if (!allowed.Contains(definition.ServiceType, StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"{definition.ServiceType} isn't one of this host's dynamic hub service types ({String.Join(", ", allowed)})");
+        UniversalServerExtensions.ValidateHubName(definition.Name);
 
         lock (this.sync)
         {
-            if (this.hubs.ContainsKey(definition.Name))
-                throw new InvalidOperationException($"A dynamic hub named {definition.Name} already exists");
             if (this.hubs.Count >= options.MaxHubs)
                 throw new InvalidOperationException($"This host allows at most {options.MaxHubs} dynamic hubs");
-            if (host.Hubs.Any(x => x.GetSettings<BleHubSettings>()?.CharacteristicUuid.Equals(characteristic, StringComparison.OrdinalIgnoreCase) == true))
-                throw new InvalidOperationException($"Characteristic {characteristic} is already used by another hub - each hub needs its own");
+            if (host.FindByKey(definition.Name) != null)
+                throw new InvalidOperationException($"A hub named {definition.Name} already exists");
 
-            // every transport the server has
-            var transports = host.Transports.Select(x => x.GetType()).ToHashSet();
-            var bleService = options.BleServiceUuid
-                ?? host.Hubs.Select(x => x.GetSettings<BleHubSettings>()?.ServiceUuid).FirstOrDefault(x => x != null)
-                ?? HubProtocolOptions.DefaultServiceUuid;
-            var settings = new Dictionary<Type, object>
+            // each transport decides whether, and how, it serves the hub
+            var transports = new HashSet<Type>();
+            var settings = new Dictionary<Type, object>();
+            foreach (var transport in host.Transports)
             {
-                [typeof(BleHubSettings)] = new BleHubSettings(BleUuid.Normalize(bleService, nameof(options.BleServiceUuid)), characteristic),
-                [typeof(HttpHubSettings)] = new HttpHubSettings(definition.ServiceType, definition.AllowTunnel)
-            };
-            if (!transports.Contains(typeof(BleHostTransport)))
-                settings.Remove(typeof(BleHubSettings));
-            if (!transports.Contains(typeof(HttpHostTransport)))
-                settings.Remove(typeof(HttpHubSettings));
+                if (transport is IDynamicHubTransport dynamic)
+                {
+                    if (dynamic.CreateSettings(definition) is { } set)
+                    {
+                        transports.Add(transport.GetType());
+                        settings[set.GetType()] = set;
+                    }
+                }
+                else
+                {
+                    transports.Add(transport.GetType());
+                }
+            }
+            if (transports.Count == 0)
+                throw new InvalidOperationException($"No transport on this server can serve {definition.Name}");
 
-            // the characteristic stays the hub's key for now - it is how dynamic clients ask for it
             var entry = host.AddDynamic(
-                characteristic,
+                definition.Name,
                 definition.Name,
                 new HubOptions { MaxClients = definition.MaxClients },
                 new HandlerAdapter(handler),
@@ -313,78 +316,6 @@ internal sealed class DynamicHubRegistry(
 
         await host.RemoveDynamic(hub.Entry, reason).ConfigureAwait(false);
         this.hubs.TryRemove(name, out _);
-        this.httpHubs.TryRemove(hub.Entry, out _);
-    }
-
-
-    // ---- HTTP: the Switchboard every dynamic hub is reached through, at {BasePath}/{key} ----
-
-    const string LineHub = "Shiny.UniversalHubs.DynamicHub";
-
-
-    /// <summary>
-    /// The Switchboard side of a dynamic hub, made the first time HTTP needs it
-    /// </summary>
-    internal HttpHub? FindHttp(IHubBinding hub)
-        => hub is HubEntry entry && this.hubs.Values.Any(x => ReferenceEquals(x.Entry, entry)) ? this.GetHttp(entry) : null;
-
-
-    DynamicHttpHub GetHttp(HubEntry entry) => this.httpHubs.GetOrAdd(entry, e => new DynamicHttpHub(
-        e,
-        host,
-        services.GetRequiredService<HttpHostTransport>(),
-        services.GetRequiredService<FileTokens>(),
-        services.GetRequiredService<MediaTokens>(),
-        services.GetRequiredService<IOperator<DynamicHubBoard>>(),
-        (ILogger?)loggerFactory?.CreateLogger($"Shiny.UniversalHubs.{e.Name}") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance
-    ));
-
-
-    public ValueTask Handshake(Switchboard board, SwitchboardInvocation call)
-    {
-        var requested = call.Caller.HttpContext?.Request.RouteValues[DynamicHubBoard.RouteParameter] as string;
-        if (this.FindByKey(requested) is not { } hub)
-            return call.ReturnAsync(HubJson.Serialize(new HubHandshakeReply(false, "Hub not found", null, null, null)));
-
-        var http = this.GetHttp(hub.Entry);
-        if (board.Context.Items.TryGetValue(LineHub, out var existing) && !ReferenceEquals(existing, http))
-            return call.ReturnAsync(HubJson.Serialize(new HubHandshakeReply(false, "This line belongs to another hub", null, null, null)));
-
-        board.Context.Items[LineHub] = http;
-        http.TrackLine(board.Context.LineId);
-        return http.Handshake(board, call);
-    }
-
-
-    public ValueTask Invoke(Switchboard board, SwitchboardInvocation call)
-        => this.LineHttp(board) is { } http
-            ? http.Invoke(board, call)
-            : call.ReturnAsync(HubJson.Error(nameof(HubProtocolException), "Handshake required"));
-
-
-    public ValueTask Stream(Switchboard board, SwitchboardInvocation call)
-        => this.LineHttp(board) is { } http
-            ? http.Stream(board, call)
-            : call.StreamAsync(One(HubJson.Error(nameof(HubProtocolException), "Handshake required")));
-
-
-    public void LineGone(Switchboard board, HubDisconnect disconnect)
-    {
-        if (this.LineHttp(board) is { } http)
-            http.LineGone(board.Context.LineId, disconnect);
-    }
-
-
-    DynamicHttpHub? LineHttp(Switchboard board)
-        => board.Context.Items.TryGetValue(LineHub, out var value) && value is DynamicHttpHub http && this.httpHubs.Values.Contains(http)
-            ? http
-            : null;
-
-
-    static async IAsyncEnumerable<System.Text.Json.JsonElement> One(System.Text.Json.JsonElement item)
-    {
-        await Task.CompletedTask;
-        yield return item;
     }
 
 
@@ -409,49 +340,10 @@ internal sealed class DynamicHubRegistry(
         public Task OnConnectedAsync(HubCallerContext context) => handler.OnConnectedAsync(HubConnection.From(context.Client));
 
         public Task OnDisconnectedAsync(HubCallerContext context, HubDisconnect disconnect)
-        {
-            // the line's requests are over - nothing current to show, whatever the async flow still holds
-            HttpCall.Current = null;
-            return handler.OnDisconnectedAsync(HubConnection.From(context.Client), disconnect);
-        }
+            => handler.OnDisconnectedAsync(HubConnection.From(context.Client), disconnect);
 
         public Task OnRenamedAsync(HubCallerContext context, string? previousName)
             => handler.OnRenamedAsync(HubConnection.From(context.Client), previousName);
-    }
-}
-
-
-/// <summary>
-/// The one Switchboard every dynamic hub is reached through - the route says which hub
-/// </summary>
-internal sealed class DynamicHubBoard(DynamicHubRegistry registry) : Switchboard
-{
-    public const string RouteParameter = "hub";
-
-    public DynamicHubRegistry Registry => registry;
-
-    public override Task OnDisconnectedAsync(DisconnectContext disconnect)
-    {
-        registry.LineGone(this, HubLines.ToHubDisconnect(disconnect));
-        return Task.CompletedTask;
-    }
-
-
-    public static void Register()
-    {
-        if (SwitchboardRegistry.TryGet(typeof(DynamicHubBoard), out _))
-            return;
-
-        SwitchboardRegistry.Register(new SwitchboardDescriptor(
-            typeof(DynamicHubBoard),
-            sp => new DynamicHubBoard(sp.GetRequiredService<DynamicHubRegistry>()),
-            [],
-            [
-                new SwitchboardMethod(UniversalHubProtocol.HandshakeMethod, 1, 1, [], (board, call) => ((DynamicHubBoard)board).Registry.Handshake(board, call)),
-                new SwitchboardMethod(UniversalHubProtocol.InvokeMethod, 2, 2, [], (board, call) => ((DynamicHubBoard)board).Registry.Invoke(board, call)),
-                new SwitchboardMethod(UniversalHubProtocol.StreamMethod, 2, 2, [], (board, call) => ((DynamicHubBoard)board).Registry.Stream(board, call))
-            ]
-        ));
     }
 }
 
@@ -496,49 +388,4 @@ internal sealed class DynamicHub(DynamicHubDefinition definition, HubEntry entry
         public DynamicHubPush Groups(params IEnumerable<string> groupNames) => new(inner.Groups(groupNames));
         public DynamicHubPush GroupExcept(string groupName, params IEnumerable<string> excludedConnectionIds) => new(inner.GroupExcept(groupName, excludedConnectionIds));
     }
-}
-
-
-/// <summary>
-/// A dynamic hub served over HTTP - its lines share the one dynamic Switchboard, so it keeps track of its own
-/// </summary>
-internal sealed class DynamicHttpHub : HttpHub
-{
-    readonly IOperator<DynamicHubBoard> board;
-    readonly ConcurrentDictionary<string, byte> lines = new(StringComparer.Ordinal);
-
-
-    public DynamicHttpHub(
-        HubEntry entry,
-        UniversalHubHost host,
-        HttpHostTransport transport,
-        FileTokens fileTokens,
-        MediaTokens mediaTokens,
-        IOperator<DynamicHubBoard> board,
-        ILogger logger
-    ) : base(host, transport, fileTokens, mediaTokens, logger)
-    {
-        this.Binding = entry;
-        this.board = board;
-        entry.Runtime.ClientDisconnected += (_, e) =>
-        {
-            if (e.Client.Id.StartsWith(HubConnection.HttpPrefix, StringComparison.Ordinal))
-                this.lines.TryRemove(e.Client.Id[HubConnection.HttpPrefix.Length..], out byte _);
-        };
-    }
-
-
-    public override IHubBinding Binding { get; }
-
-    public void TrackLine(string lineId) => this.lines[lineId] = 0;
-
-    public override Task HangUpAll(HubDisconnect disconnect)
-    {
-        var message = HubJson.HangUpMessage(disconnect);
-        var ids = this.lines.Keys.ToList();
-        this.lines.Clear();
-        return Task.WhenAll(ids.Select(x => this.board.Lines.HangUpAsync(x, message, allowReconnect: false)));
-    }
-
-    protected override IHubPeerChannel CreateChannel(string lineId) => new LineChannel(this.board.Clients, this.board.Lines, lineId, this.Transport);
 }

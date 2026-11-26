@@ -45,6 +45,7 @@ public sealed class MultipeerHostTransport : IHubTransport, IPeerHostTransport
 
     public string DisplayName => "Multipeer";
     public bool IsSupported => link.IsSupported;
+    IHubTransport IPeerHostTransport.HubTransport => this;
     string IPeerHostTransport.ConnectionPrefix => HubConnection.MultipeerPrefix;
 
     UniversalHubHost IPeerHostTransport.Host => services.GetRequiredService<UniversalHubHost>();

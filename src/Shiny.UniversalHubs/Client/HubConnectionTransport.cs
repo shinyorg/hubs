@@ -36,8 +36,8 @@ public interface IHubConnectionTransport
     /// </summary>
     bool CanTransferFiles { get; }
 
-    Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken);
-    Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken);
+    Task<HubFileTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken);
+    Task<HubFileTransferResult> Download(string remoteFileName, Stream destination, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken);
 
     /// <summary>
     /// The app is leaving - tell the host and close. Not called when the transport reported the close itself.

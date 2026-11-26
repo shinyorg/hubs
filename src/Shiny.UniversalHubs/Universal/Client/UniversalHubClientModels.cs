@@ -180,9 +180,10 @@ public class UniversalHubClientOptions
     internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
 
     /// <summary>
-    /// The GATT service dynamic hubs are characteristics in (AddDynamicHubClients) - the host's DynamicHubOptions.BleServiceUuid
+    /// A transport set up again replaces the earlier one (in its place) instead of throwing - dynamic hub clients, whose
+    /// shared setup each hub may override
     /// </summary>
-    public string DynamicBleServiceUuid { get; set; } = HubProtocolOptions.DefaultServiceUuid;
+    internal bool ReplaceTransports { get; init; }
 
     /// <summary>
     /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
@@ -202,10 +203,14 @@ public class UniversalHubClientOptions
         where TTransport : class, IHubClientTransport
     {
         ArgumentNullException.ThrowIfNull(create);
-        if (this.transports.Any(x => x.Type == typeof(TTransport)))
+        var existing = this.transports.FindIndex(x => x.Type == typeof(TTransport));
+        if (existing >= 0 && !this.ReplaceTransports)
             throw new InvalidOperationException($"{typeof(TTransport).Name} is already set up for this hub client");
 
-        this.transports.Add((typeof(TTransport), create));
+        if (existing >= 0)
+            this.transports[existing] = (typeof(TTransport), create);
+        else
+            this.transports.Add((typeof(TTransport), create));
         if (services != null)
             this.ServiceActions.Add(services);
         return this;

@@ -180,7 +180,7 @@ public abstract class HubProxy : IHubConnection, IDisposable
     }
 
 
-    public async Task<L2CapTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<HubFileTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var external = this.AssertFiles();
         await using var file = File.OpenRead(localFilePath);
@@ -188,17 +188,17 @@ public abstract class HubProxy : IHubConnection, IDisposable
     }
 
 
-    public Task<L2CapTransferResult> UploadStream(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<HubFileTransferResult> UploadStream(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.AssertFiles().Upload(source, length, remoteFileName, progress, cancellationToken);
 
 
-    public async Task<L2CapTransferResult> DownloadFile(string remoteFileName, string localFilePath, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public async Task<HubFileTransferResult> DownloadFile(string remoteFileName, string localFilePath, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var external = this.AssertFiles();
         var temp = localFilePath + ".part";
         try
         {
-            L2CapTransferResult result;
+            HubFileTransferResult result;
             await using (var file = File.Create(temp))
                 result = await external.Download(remoteFileName, file, progress, cancellationToken).ConfigureAwait(false);
 

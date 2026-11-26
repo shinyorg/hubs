@@ -5,14 +5,12 @@ using Shiny.BluetoothLE.Hosting;
 using Shiny.UniversalHubs;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
-using Shiny.Net.HttpServer.Switchboard;
-using Shiny.Net.HttpServer.Switchboard.Client;
 using Shiny.Net.HttpServer.Testing;
 
 namespace Shiny.UniversalHubs.Tests;
 
 /// <summary>
-/// The real UniversalHubs host and client - generated proxy, generated hub dispatcher, Switchboard, file routes - talking
+/// The real UniversalHubs host and client - generated proxy, generated hub dispatcher, the HTTP WebSocket transport - talking
 /// over an in-memory HTTP connection
 /// </summary>
 public class UniversalHubTests : IAsyncLifetime
@@ -233,7 +231,7 @@ public class UniversalHubTests : IAsyncLifetime
         var client = await this.Connect();
         var id = Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients).Id;
 
-        Assert.StartsWith("sb:", id);
+        Assert.StartsWith("ws:", id);
         Assert.Contains($"connected-via:Http:{id}", this.log.Entries);
         Assert.Equal($"Http:{id}", await client.Hub.MyConnection());
 
@@ -248,11 +246,11 @@ public class UniversalHubTests : IAsyncLifetime
         var client = await this.Connect();
 
         // OnConnectedAsync ran inside the handshake request and stored a property; a later call sees both
-        Assert.Contains("connected-request:POST", this.log.Entries);
-        Assert.Equal("hello Alice|line:True|request:POST|ble:none", await client.Hub.Inspect());
+        Assert.Contains("connected-request:GET", this.log.Entries);
+        Assert.Equal("hello Alice|line:True|request:GET|ble:none", await client.Hub.Inspect());
 
         await client.Disconnect();
-        await WaitFor(() => this.log.Entries.Contains("disconnected-http:none"));
+        await WaitFor(() => this.log.Entries.Contains("disconnected-http:set"));   // the WebSocket's request, still there as it closes
     }
 
 
@@ -396,24 +394,6 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
-    [Theory]
-    [InlineData("/hubs/aaaa", true)]
-    [InlineData("/hubs/AAAA/connect", true)]
-    [InlineData("/hubs/bbbb", false)]
-    [InlineData("/hubs/bbbb/connect", false)]
-    [InlineData("/hubs/bbbbx", true)]        // not under a hub - someone else's route
-    [InlineData("/hubs/files/avatar.jpg", true)]
-    [InlineData("/hubs/media", true)]         // any hub allows it; the media token decides which hub
-    [InlineData("/api/status", true)]
-    public void TunnelsReachOnlyTheHubsThatAllowThem(string path, bool allowed)
-        => Assert.Equal(allowed, TunnelGate.IsAllowed(path, "/hubs", [new FakeBinding("aaaa", null, true), new FakeBinding("bbbb", null)]));
-
-
-    [Fact]
-    public void TunnelsReachNoFilesWhenNoHubAllowsThem()
-        => Assert.False(TunnelGate.IsAllowed("/hubs/files/avatar.jpg", "/hubs", [new FakeBinding("aaaa", null), new FakeBinding("bbbb", null)]));
-
-
     [Fact]
     public async Task StartingOneHubLeavesTheOtherRefusingClients()
     {
@@ -549,7 +529,7 @@ public class UniversalHubTests : IAsyncLifetime
 
         var client = Assert.Single(context.ConnectedClients);
         Assert.Equal("Alice", client.Name);
-        Assert.StartsWith("sb:", client.Id);
+        Assert.StartsWith("ws:", client.Id);
     }
 
 
@@ -706,42 +686,6 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
-    [Theory]
-    [InlineData(DisconnectReason.ClientClosed, HubDisconnectReason.ClientDisconnect)]
-    [InlineData(DisconnectReason.Dropped, HubDisconnectReason.ClientTimeout)]
-    [InlineData(DisconnectReason.HungUp, HubDisconnectReason.ServerDisconnect)]
-    [InlineData(DisconnectReason.ServerShutdown, HubDisconnectReason.ServerShutdown)]
-    [InlineData(DisconnectReason.Faulted, HubDisconnectReason.ConnectionFailed)]
-    public void HostMapsHowALineClosed(DisconnectReason line, HubDisconnectReason expected)
-        => Assert.Equal(new HubDisconnect(expected, "why"), HubLines.ToHubDisconnect(new DisconnectContext(line, "why", null)));
-
-
-    [Theory]
-    [InlineData(LineCloseReason.ClientClosed, HubDisconnectReason.ClientDisconnect)]
-    [InlineData(LineCloseReason.Dropped, HubDisconnectReason.ClientTimeout)]
-    [InlineData(LineCloseReason.RetriesExhausted, HubDisconnectReason.ClientTimeout)]
-    [InlineData(LineCloseReason.HungUp, HubDisconnectReason.ServerDisconnect)]
-    [InlineData(LineCloseReason.ServerClosed, HubDisconnectReason.ServerShutdown)]
-    [InlineData(LineCloseReason.Faulted, HubDisconnectReason.ConnectionFailed)]
-    public void ClientMapsHowALineClosed(LineCloseReason line, HubDisconnectReason expected)
-        => Assert.Equal(new HubDisconnect(expected), SwitchboardTransport.ToHubDisconnect(line, null));
-
-
-    [Fact]
-    public void HangUpMessagesCarryTheReason()
-    {
-        var disconnect = new HubDisconnect(HubDisconnectReason.ServerShutdown, "Game over");
-        var message = HubJson.HangUpMessage(disconnect);
-
-        Assert.Equal(disconnect, HubJson.ReadHangUp(message));
-        // whichever way the line reports the close, the host's own reason wins
-        Assert.Equal(disconnect, SwitchboardTransport.ToHubDisconnect(LineCloseReason.HungUp, message));
-        Assert.Equal(disconnect, HubLines.ToHubDisconnect(new DisconnectContext(DisconnectReason.HungUp, message, null)));
-        Assert.Null(HubJson.ReadHangUp("plain text"));
-        Assert.Null(HubJson.ReadHangUp("""{"reason":99}"""));
-    }
-
-
     [Fact]
     public async Task MaxClientsRefusesWithoutFallingBack()
     {
@@ -797,15 +741,6 @@ public class UniversalHubTests : IAsyncLifetime
 
 
     [Fact]
-    public void TransportHttpClientHasNoOverallTimeout()
-    {
-        // the line's event stream is open for the whole connection - HttpClient's default 100s would cut it
-        using var http = SwitchboardTransport.CreateHttpClient(new HttpClientTransportOptions());
-        Assert.Equal(Timeout.InfiniteTimeSpan, http.Timeout);
-    }
-
-
-    [Fact]
     public async Task FileRulesApply()
     {
         var client = await this.Connect();
@@ -828,57 +763,32 @@ public class UniversalHubTests : IAsyncLifetime
 
 
     [Fact]
-    public async Task FilesNeedAToken()
+    public async Task AHubThatIsNotRunningOverHttpIsNotFound()
     {
         using var http = new HttpClient(this.app.Server.CreateInMemoryHandler());
-        var response = await http.GetAsync("http://localhost/hubs/files/avatar.jpg");
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("http://localhost/hubs/no-such-hub")).StatusCode);
     }
 
 
     [Fact]
-    public async Task UnknownMethodsAreReportedLikeBle()
+    public async Task AHubIsOnlyReachedOverAWebSocket()
     {
-        // a raw Switchboard line, as a client on a different contract version would look
-        var line = new SwitchboardLineBuilder()
-            .WithUrl($"http://localhost/hubs/{CharacteristicUuid}", o => o.HttpClient = new HttpClient(this.app.Server.CreateInMemoryHandler()))
-            .Build();
-        await using var _ = line;
-        await line.StartAsync();
-
-        var reply = HubJson.ReadHandshakeReply(await line.InvokeCoreAsync<JsonElement>(
-            UniversalHubProtocol.HandshakeMethod,
-            [HubJson.Serialize(new HubHandshake(UniversalHubProtocol.Version, "Raw", null, null))],
-            CancellationToken.None
-        ));
-        Assert.True(reply.Accepted);
-        Assert.Equal("host-1", reply.HostId);
-
-        var envelope = await line.InvokeCoreAsync<JsonElement>(
-            UniversalHubProtocol.InvokeMethod,
-            ["NoSuchMethod", JsonDocument.Parse("[]").RootElement],
-            CancellationToken.None
-        );
-        var ex = Assert.Throws<HubRemoteException>(() => HubJson.ReadResult(envelope));
-        Assert.Equal("HubMethodNotFound", ex.RemoteErrorType);
+        using var http = new HttpClient(this.app.Server.CreateInMemoryHandler());
+        Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync($"http://localhost/hubs/{CharacteristicUuid}")).StatusCode);
     }
 
 
     [Fact]
-    public async Task OldProtocolVersionIsRefused()
+    public async Task HubsSeeTheRequestAnHttpClientConnectedWith()
     {
-        var line = new SwitchboardLineBuilder()
-            .WithUrl($"http://localhost/hubs/{CharacteristicUuid}", o => o.HttpClient = new HttpClient(this.app.Server.CreateInMemoryHandler()))
-            .Build();
-        await using var _ = line;
-        await line.StartAsync();
+        var client = await this.Connect();
+        var connected = Assert.Single(this.app.Services.GetRequiredService<IHubContext<TestHub>>().ConnectedClients);
+        var context = HubConnection.From(connected).HttpContext();
 
-        var reply = HubJson.ReadHandshakeReply(await line.InvokeCoreAsync<JsonElement>(
-            UniversalHubProtocol.HandshakeMethod,
-            [HubJson.Serialize(new HubHandshake(99, "Future", null, null))],
-            CancellationToken.None
-        ));
-        Assert.False(reply.Accepted);
-        Assert.Contains("protocol version 99", reply.Reason);
+        Assert.NotNull(context);
+        Assert.Equal("GET", context.Request.Method);
+        Assert.Null(HubConnection.From(connected).Get<IPeripheral>());
+        Assert.StartsWith("ws:", connected.Id);
+        await client.Disconnect();
     }
 }

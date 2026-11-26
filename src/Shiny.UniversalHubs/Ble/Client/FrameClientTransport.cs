@@ -143,19 +143,21 @@ internal sealed class FrameClientTransport : IHubConnectionTransport
     public bool CanTransferFiles => this.ack?.FileTransferPsm > 0 && this.link.CanOpenL2Cap && !this.resuming;
 
 
-    public async Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+    public async Task<HubFileTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
     {
         var ack = this.AssertFiles();
         using var channel = await this.link.OpenL2Cap(ack.FileTransferPsm, ack.FileTransferSecure, cancellationToken).ConfigureAwait(false);
-        return await channel.UploadFile(source, remoteFileName, length, ToAction(progress), null, cancellationToken).ConfigureAwait(false);
+        var result = await channel.UploadFile(source, remoteFileName, length, ToAction(progress), null, cancellationToken).ConfigureAwait(false);
+        return result.ToHub();
     }
 
 
-    public async Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+    public async Task<HubFileTransferResult> Download(string remoteFileName, Stream destination, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
     {
         var ack = this.AssertFiles();
         using var channel = await this.link.OpenL2Cap(ack.FileTransferPsm, ack.FileTransferSecure, cancellationToken).ConfigureAwait(false);
-        return await channel.DownloadFile(remoteFileName, destination, ToAction(progress), null, cancellationToken).ConfigureAwait(false);
+        var result = await channel.DownloadFile(remoteFileName, destination, ToAction(progress), null, cancellationToken).ConfigureAwait(false);
+        return result.ToHub();
     }
 
 
@@ -357,8 +359,8 @@ internal sealed class FrameClientTransport : IHubConnectionTransport
     }
 
 
-    static Action<TransferProgress>? ToAction(IProgress<TransferProgress>? progress)
-        => progress == null ? null : progress.Report;
+    static Action<TransferProgress>? ToAction(IProgress<HubTransferProgress>? progress)
+        => progress == null ? null : p => progress.Report(p.ToHub());
 }
 
 

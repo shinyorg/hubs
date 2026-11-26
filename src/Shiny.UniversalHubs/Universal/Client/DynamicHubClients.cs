@@ -1,8 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
-using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
@@ -38,10 +36,11 @@ public interface IDynamicHubCalls
 public interface IDynamicHubClients
 {
     /// <summary>
-    /// A new, disconnected client for the hub on <paramref name="characteristicUuid"/>, browsing for
-    /// <paramref name="mdnsServiceType"/>. Dispose it when done.
+    /// A new, disconnected client for the hub named <paramref name="hubName"/>. <paramref name="configure"/> picks its
+    /// transports with the hub's own settings (<c>o.UseHttp("_game._tcp").UseBluetoothLE(service, characteristic)</c>) -
+    /// replacing the shared ones from AddDynamicHubClients. Dispose it when done.
     /// </summary>
-    IUniversalHubClient<IDynamicHubCalls> Create(string characteristicUuid, string mdnsServiceType);
+    IUniversalHubClient<IDynamicHubCalls> Create(string hubName, Action<UniversalHubClientOptions>? configure = null);
 }
 
 
@@ -49,53 +48,46 @@ public static class DynamicHubClientExtensions
 {
     /// <summary>
     /// Registers <see cref="IDynamicHubClients"/>: hub clients created while the app runs, for hubs it has no compiled
-    /// contract for. <paramref name="configure"/> holds what every one shares - the host's BLE ServiceUuid, timeouts,
-    /// Multipeer - and runs again for each client; the mDNS service type is given per client. On Android, iOS and Mac
-    /// Catalyst it adds the BLE stack too; on plain .NET, register an IBleManager yourself to use BLE.
+    /// contract for. <paramref name="configure"/> holds what every one shares, and runs again for each client: set up every
+    /// transport the clients will use here, so what they need is registered once (<c>o.UseHttp().UseMultipeer("game")</c>);
+    /// each client may set one up again with its hub's settings, replacing the shared one.
     /// </summary>
-    /// <param name="configure">What every dynamic hub client shares, beside HTTP and BLE</param>
-    /// <param name="http">How every dynamic hub client connects over HTTP - timeouts, the HTTP stack</param>
-    public static IServiceCollection AddDynamicHubClients(
-        this IServiceCollection services,
-        Action<UniversalHubClientOptions>? configure = null,
-        Action<HttpClientTransportOptions>? http = null
-    )
+    public static IServiceCollection AddDynamicHubClients(this IServiceCollection services, Action<UniversalHubClientOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
         if (services.Any(x => x.ServiceType == typeof(IDynamicHubClients)))
             throw new InvalidOperationException("AddDynamicHubClients can only be called once");
 
         services.AddHubClientCore();
-        services.AddHttpServerLocator();
 
-        // add-on transports (Multipeer) register once, whatever the client
-        var shared = new UniversalHubClientOptions().UseHttp(configure: http);
-        configure?.Invoke(shared);
-        // and BLE, which every dynamic hub client uses
-        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, HubProtocolOptions.DefaultServiceUuid);
+        // what the shared transports need, registered once whatever the client
+        var shared = new UniversalHubClientOptions();
+        configure(shared);
+        foreach (var c in shared.ProtocolActions)
+            services.ConfigureHubProtocol(c);
         foreach (var c in shared.ServiceActions)
             c(services);
 
-        services.AddSingleton<IDynamicHubClients>(sp => new DynamicHubClients(sp, configure, http));
+        services.AddSingleton<IDynamicHubClients>(sp => new DynamicHubClients(sp, configure));
         return services;
     }
 }
 
 
-internal sealed class DynamicHubClients(IServiceProvider services, Action<UniversalHubClientOptions>? configure, Action<HttpClientTransportOptions>? http) : IDynamicHubClients
+internal sealed class DynamicHubClients(IServiceProvider services, Action<UniversalHubClientOptions> configure) : IDynamicHubClients
 {
-    public IUniversalHubClient<IDynamicHubCalls> Create(string characteristicUuid, string mdnsServiceType)
+    public IUniversalHubClient<IDynamicHubCalls> Create(string hubName, Action<UniversalHubClientOptions>? perHub = null)
     {
-        UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
+        UniversalServerExtensions.ValidateHubName(hubName);
 
-        var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
-        // a dynamic hub is served over HTTP and BLE under its characteristic, which is also its name - HTTP first, then
-        // whatever the app adds (Multipeer, Nearby), BLE last, unless the app sets a priority
-        var options = new UniversalHubClientOptions().UseHttp(mdnsServiceType, http);
-        configure?.Invoke(options);
-        options.UseBluetoothLE(options.DynamicBleServiceUuid, characteristic);
+        var options = new UniversalHubClientOptions { ReplaceTransports = true };
+        configure(options);
+        perHub?.Invoke(options);
+        if (options.TransportCount == 0)
+            throw new InvalidOperationException($"The {hubName} client isn't set up with any transport");
 
-        var proxy = new DynamicHubProxy(services.GetRequiredService<HubClientServices>(), characteristic);
+        var proxy = new DynamicHubProxy(services.GetRequiredService<HubClientServices>(), hubName);
         return new UniversalHubClient<IDynamicHubCalls>(
             proxy,
             options,

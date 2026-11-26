@@ -11,8 +11,6 @@
     </PropertyGroup>
     <ItemGroup>
         <PackageVersion Include="Shiny.Net.HttpServer" Version="$(HttpServerVersion)"/>
-        <PackageVersion Include="Shiny.Net.HttpServer.Switchboard" Version="$(HttpServerVersion)"/>
-        <PackageVersion Include="Shiny.Net.HttpServer.Switchboard.Client" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Discovery" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Testing" Version="$(HttpServerVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE" Version="$(ShinyVersion)"/>

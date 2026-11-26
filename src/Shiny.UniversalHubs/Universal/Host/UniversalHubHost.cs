@@ -497,7 +497,6 @@ internal sealed class UniversalHubHost : IUniversalHubHost
         runtime.ClientDisconnected += (_, e) =>
         {
             this.ClientGone?.Invoke(e.Client.Id);
-            PeerLinkPeers.Remove(e.Client.Id);   // after OnDisconnectedAsync, which still sees the peer
         };
         return runtime;
     }

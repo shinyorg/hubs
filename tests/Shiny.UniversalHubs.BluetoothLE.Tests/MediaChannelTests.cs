@@ -42,10 +42,14 @@ public class MediaChannelTests : IAsyncLifetime
                 {
                     o.LocalName = "Host";
                     if (media)
-                        o.EnableMediaChannels(MaxPacket, secure);
+                        o.EnableMediaChannels(MaxPacket);
                 })
                 .Protocol(o => o.RequestTimeout = this.options.RequestTimeout)
-                .BluetoothLE(o => o.ClientSweepInterval = TimeSpan.FromMinutes(5))
+                .BluetoothLE(o =>
+                {
+                    o.ClientSweepInterval = TimeSpan.FromMinutes(5);
+                    o.SecureMediaChannels = secure;
+                })
                 .AddHub<TestHub>(TestChar, hub => hub.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, TestChar))
             )
             .BuildServiceProvider();

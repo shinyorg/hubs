@@ -172,3 +172,19 @@ internal static class MultipeerNames
 /// What a hub was told by UseMultipeer - nothing beyond that it is served over Multipeer
 /// </summary>
 internal sealed record MultipeerHubSettings;
+
+
+/// <summary>
+/// A client's MultipeerConnectivity peer - <c>connection.MultipeerPeer()</c> in a hub
+/// </summary>
+/// <param name="DisplayName">The name the client's device connected under - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
+public sealed record MultipeerPeer(string DisplayName);
+
+
+public static class MultipeerPeerConnectionExtensions
+{
+    /// <summary>
+    /// The MultipeerConnectivity peer the client is connected through - null on the other transports
+    /// </summary>
+    public static MultipeerPeer? MultipeerPeer(this HubConnection connection) => connection.Get<MultipeerPeer>();
+}

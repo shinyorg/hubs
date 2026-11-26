@@ -205,18 +205,6 @@ public class MediaChannelTests : IAsyncLifetime
 
 
     [Fact]
-    public async Task AChannelNeedsAToken()
-    {
-        using var invoker = new HttpMessageInvoker(this.app.Server.CreateInMemoryHandler());
-        using var socket = new ClientWebSocket();
-        socket.Options.SetRequestHeader(UniversalHubProtocol.MediaTokenHeader, "not-a-token");
-        var ex = await Assert.ThrowsAnyAsync<WebSocketException>(() => socket.ConnectAsync(new Uri("ws://localhost/hubs/media"), invoker, CancellationToken.None));
-        Assert.Contains("401", ex.Message);
-        Assert.Empty(this.opened);
-    }
-
-
-    [Fact]
     public async Task WithoutMediaChannelsThereIsNoToken()
     {
         this.mediaChannels = false;

@@ -34,10 +34,10 @@ public sealed class HubConnectedClient
     public int Mtu { get; internal set; }
 
     /// <summary>
-    /// The BLE central this client is connected through - null when it is connected over another transport. A client that
-    /// resumed after a dropped link is on the central it came back on.
+    /// What the transport knows about the client's link, by type - the BLE central, the HTTP request, the Multipeer or
+    /// Nearby peer; null when its transport has no such thing. A client that resumed is on the link it came back on.
     /// </summary>
-    public Shiny.BluetoothLE.Hosting.IPeripheral? Peripheral { get; internal set; }
+    public T? Get<T>() where T : class => this.Channel?.GetFeature(typeof(T)) as T;
     public DateTimeOffset ConnectedAt { get; } = DateTimeOffset.UtcNow;
 
     /// <summary>

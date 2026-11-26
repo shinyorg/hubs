@@ -16,6 +16,12 @@ internal sealed record BleHubSettings(string ServiceUuid, string CharacteristicU
 
 
 /// <summary>
+/// What a dynamic hub was told by UseBluetoothLE: its characteristic, and its service when not the default
+/// </summary>
+internal sealed record BleDynamicHubSettings(string? ServiceUuid, string CharacteristicUuid);
+
+
+/// <summary>
 /// BLE hosting settings, beside the server's own (<see cref="UniversalServerOptions"/>)
 /// </summary>
 public sealed class BluetoothLETransportOptions
@@ -24,6 +30,56 @@ public sealed class BluetoothLETransportOptions
     /// How often to sweep for clients that dropped without unsubscribing
     /// </summary>
     public TimeSpan ClientSweepInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Listen for secure (encrypted) L2CAP channels for file transfers. Android listens on secure and insecure channels
+    /// separately; Apple ignores it.
+    /// </summary>
+    public bool SecureFileTransfers { get; set; }
+
+    /// <summary>
+    /// Listen for secure (encrypted) L2CAP channels for media channels
+    /// </summary>
+    public bool SecureMediaChannels { get; set; }
+
+    /// <summary>
+    /// L2CAP transfer tuning (chunk sizes, timeouts) - Shiny's defaults unless set
+    /// </summary>
+    public L2CapTransferOptions? FileTransfer { get; set; }
+
+    /// <summary>
+    /// The GATT service dynamic hubs are characteristics in - the compiled hubs' service unless set
+    /// </summary>
+    public string? DynamicServiceUuid { get; set; }
+}
+
+
+/// <summary>
+/// A file transfer request over L2CAP, for an <see cref="IBleFileHandler"/>. <see cref="Client"/> is the hub client on
+/// the same device, when the L2CAP peer could be matched.
+/// </summary>
+public sealed record BleFileRequest(L2CapFileRequest Request, HubConnectedClient? Client);
+
+
+/// <summary>
+/// Register to take over BLE file transfers entirely (serve from a database, generate content, route per client...).
+/// Every request must be answered with an Accept* or Reject call.
+/// </summary>
+public interface IBleFileHandler
+{
+    Task Handle(BleFileRequest request, CancellationToken cancellationToken);
+}
+
+
+internal static class BleFileTypes
+{
+    public static HubTransferDirection ToHub(this L2CapTransferType type) => type == L2CapTransferType.Upload ? HubTransferDirection.Upload : HubTransferDirection.Download;
+
+    public static HubFileTransferResult ToHub(this L2CapTransferResult result)
+        => new(result.Type.ToHub(), result.FileName, result.BytesTransferred, result.Elapsed);
+
+    public static HubTransferProgress ToHub(this TransferProgress progress)
+        => new(progress.BytesPerSecond, progress.BytesToTransfer, progress.BytesTransferred);
 }
 
 
@@ -31,7 +87,7 @@ public sealed class BluetoothLETransportOptions
 /// Serves hubs over BLE: every hub set up with UseBluetoothLE is a write+notify characteristic in its GATT service, its
 /// frames run through a frame session, and files and media channels go over L2CAP. Added with <c>hub.UseBluetoothLE(...)</c>.
 /// </summary>
-public sealed class BleHostTransport : IHubTransport, IDisposable
+public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
 {
     readonly IBleHostingManager hosting;
     readonly UniversalServerOptions serverOptions;
@@ -204,6 +260,24 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
         var ids = runtime.ConnectionIds(channel => channel is FrameHostLink.LinkChannel own && ReferenceEquals(own.Session, session));
         await Task.WhenAll(ids.Select(x => runtime.Disconnect(x, disconnect))).ConfigureAwait(false);
         await session.DisconnectPending(disconnect).ConfigureAwait(false);
+    }
+
+
+    object? IDynamicHubTransport.CreateSettings(DynamicHubDefinition definition)
+    {
+        // over BLE only when given a characteristic
+        if (definition.GetSettings<BleDynamicHubSettings>() is not { } dynamic)
+            return null;
+
+        var hubs = this.BleHubs.ToList();
+        if (hubs.Any(x => x.GetSettings<BleHubSettings>()!.CharacteristicUuid.Equals(dynamic.CharacteristicUuid, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException($"Characteristic {dynamic.CharacteristicUuid} is already used by another hub - each hub needs its own");
+
+        var service = dynamic.ServiceUuid
+            ?? this.options.DynamicServiceUuid
+            ?? hubs.Select(x => x.GetSettings<BleHubSettings>()!.ServiceUuid).FirstOrDefault()
+            ?? HubProtocolOptions.DefaultServiceUuid;
+        return new BleHubSettings(BleUuid.Normalize(service, nameof(dynamic.ServiceUuid)), dynamic.CharacteristicUuid);
     }
 
 
@@ -408,9 +482,9 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
             if (handler != null)
             {
                 this.fileServer = await this.hosting.HandleL2CapRequests(
-                    ft.Secure,
+                    this.options.SecureFileTransfers,
                     (req, ct) => handler.Handle(new BleFileRequest(req, this.FindClient(req.PeerIdentifier)), ct),
-                    ft.Transfer,
+                    this.options.FileTransfer,
                     (req, ex) => this.logger?.LogWarning(ex, "File transfer {File} failed", req?.FileName)
                 ).ConfigureAwait(false);
             }
@@ -419,26 +493,28 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
                 Directory.CreateDirectory(ft.RootDirectory);
                 var serverOptions = new L2CapFileServerOptions(ft.RootDirectory)
                 {
-                    Secure = ft.Secure,
+                    Secure = this.options.SecureFileTransfers,
                     AllowUploads = ft.AllowUploads,
                     AllowDownloads = ft.AllowDownloads,
                     OverwriteExistingUploads = ft.OverwriteExistingUploads,
                     MaxUploadSize = ft.MaxUploadSize,
-                    Authorize = ft.Authorize == null ? null : req => ft.Authorize(new BleFileRequest(req, this.FindClient(req.PeerIdentifier))),
+                    Authorize = this.serverOptions.AuthorizeFile is not { } authorize
+                        ? null
+                        : req => authorize(new UniversalHubFileRequest(req.Type.ToHub(), req.FileName, null, this.FindClient(req.PeerIdentifier))),
                     OnProgress = e => this.Host.OnFileProgress(new HubFileProgressEventArgs(
-                        this.FindClient(e.PeerIdentifier), e.PeerIdentifier, e.Type, e.FileName, e.Progress
+                        this.FindClient(e.PeerIdentifier), e.PeerIdentifier, e.Type.ToHub(), e.FileName, e.Progress.ToHub()
                     )),
                     OnCompleted = r => this.Host.OnFileTransferred(new HubFileTransferredEventArgs(
-                        this.FindClient(r.PeerIdentifier), r.PeerIdentifier, r.Result.Type, r.Result.FileName, r.LocalFilePath, r.Result.BytesTransferred, r.Result.Elapsed
+                        this.FindClient(r.PeerIdentifier), r.PeerIdentifier, r.Result.Type.ToHub(), r.Result.FileName, r.LocalFilePath, r.Result.BytesTransferred, r.Result.Elapsed
                     )),
                     OnError = (req, ex) => this.logger?.LogWarning(ex, "File transfer {File} failed", req?.FileName)
                 };
-                if (ft.Transfer != null)
-                    serverOptions.Transfer = ft.Transfer;
+                if (this.options.FileTransfer != null)
+                    serverOptions.Transfer = this.options.FileTransfer;
 
                 this.fileServer = await this.hosting.OpenL2CapFileServer(serverOptions).ConfigureAwait(false);
             }
-            this.SetFileTransfer(this.fileServer.Value.Psm, ft.Secure);
+            this.SetFileTransfer(this.fileServer.Value.Psm, this.options.SecureFileTransfers);
             this.logger?.LogInformation("File transfers served on PSM {Psm}", this.fileTransferPsm);
         }
         catch (Exception ex)
@@ -478,8 +554,8 @@ public sealed class BleHostTransport : IHubTransport, IDisposable
 
         try
         {
-            this.mediaServer = await this.hosting.OpenL2Cap(media.Secure, ch => this.OnMediaChannel(ch, media.MaxPacketSize)).ConfigureAwait(false);
-            this.SetMediaChannels(this.mediaServer.Value.Psm, media.Secure, media.MaxPacketSize);
+            this.mediaServer = await this.hosting.OpenL2Cap(this.options.SecureMediaChannels, ch => this.OnMediaChannel(ch, media.MaxPacketSize)).ConfigureAwait(false);
+            this.SetMediaChannels(this.mediaServer.Value.Psm, this.options.SecureMediaChannels, media.MaxPacketSize);
             this.logger?.LogInformation("Media channels served on PSM {Psm}", this.mediaServer.Value.Psm);
         }
         catch (Exception ex)

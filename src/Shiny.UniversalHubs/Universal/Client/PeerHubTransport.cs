@@ -170,7 +170,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
     public bool CanTransferFiles => this.files && !this.closed && !this.resuming;
 
 
-    public async Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+    public async Task<HubFileTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
     {
         if (!this.files)
             throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
@@ -209,7 +209,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
                 throw new HubException($"Upload failed: {done.Message}");
 
             progress?.Report(Progress(length, length, sw.Elapsed));
-            return new L2CapTransferResult(L2CapTransferType.Upload, remoteFileName, length, sw.Elapsed);
+            return new HubFileTransferResult(HubTransferDirection.Upload, remoteFileName, length, sw.Elapsed);
         }
         finally
         {
@@ -219,7 +219,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
     }
 
 
-    public async Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+    public async Task<HubFileTransferResult> Download(string remoteFileName, Stream destination, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
     {
         if (!this.files)
             throw new HubFileTransferNotSupportedException("The host does not serve file transfers");
@@ -255,7 +255,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
                     copied = file.Length;
                 }
                 progress?.Report(Progress(copied, copied, sw.Elapsed));
-                return new L2CapTransferResult(L2CapTransferType.Download, remoteFileName, copied, sw.Elapsed);
+                return new HubFileTransferResult(HubTransferDirection.Download, remoteFileName, copied, sw.Elapsed);
             }
             finally
             {
@@ -673,14 +673,14 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
     }
 
 
-    static TransferProgress Progress(long transferred, long? total, TimeSpan elapsed)
+    static HubTransferProgress Progress(long transferred, long? total, TimeSpan elapsed)
         => new(elapsed.TotalSeconds <= 0 ? 0 : (long)(transferred / elapsed.TotalSeconds), total, transferred);
 
 
-    sealed class PendingDownload(Stopwatch elapsed, IProgress<TransferProgress>? progress)
+    sealed class PendingDownload(Stopwatch elapsed, IProgress<HubTransferProgress>? progress)
     {
         public Stopwatch Elapsed => elapsed;
-        public IProgress<TransferProgress>? Progress => progress;
+        public IProgress<HubTransferProgress>? Progress => progress;
         public long? Length { get; set; }
         public TaskCompletionSource<string> Arrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }

@@ -157,3 +157,19 @@ public sealed class NearbyClientOptions
 /// What a hub was told by UseNearby - nothing beyond that it is served over Nearby
 /// </summary>
 internal sealed record NearbyHubSettings;
+
+
+/// <summary>
+/// A client's Nearby Connections endpoint - <c>connection.NearbyPeer()</c> in a hub
+/// </summary>
+/// <param name="EndpointName">The name the client's device connected under - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
+public sealed record NearbyPeer(string EndpointName);
+
+
+public static class NearbyPeerConnectionExtensions
+{
+    /// <summary>
+    /// The Nearby Connections endpoint the client is connected through - null on the other transports
+    /// </summary>
+    public static NearbyPeer? NearbyPeer(this HubConnection connection) => connection.Get<NearbyPeer>();
+}

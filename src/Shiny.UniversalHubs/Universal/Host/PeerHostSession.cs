@@ -10,8 +10,12 @@ namespace Shiny.UniversalHubs;
 /// What a peer-link session needs from the add-on transport that accepted it (Shiny.UniversalHubs.Multipeer,
 /// Shiny.UniversalHubs.Nearby). Everything past advertising is the same for every peer-to-peer radio.
 /// </summary>
-internal interface IPeerHostTransport : IHubTransport
+internal interface IPeerHostTransport
 {
+    /// <summary>
+    /// The transport hubs see their clients on (HubConnection.Transport)
+    /// </summary>
+    IHubTransport HubTransport { get; }
 
     /// <summary>
     /// Prefixed to the session id to make the connection id: <c>mc:</c>, <c>nb:</c>
@@ -28,7 +32,8 @@ internal interface IPeerHostTransport : IHubTransport
     IHubBinding? FindRunning(string? key);
 
     /// <summary>
-    /// The peer record HubConnection carries for a connected session (MultipeerPeer, NearbyPeer)
+    /// What the transport tells hubs about a session's peer - HubConnection.Get&lt;T&gt;() finds it by type (MultipeerPeer,
+    /// NearbyPeer, the HTTP request)
     /// </summary>
     object CreatePeer(IPeerConnection connection);
 
@@ -175,10 +180,8 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         // a session that drops without a goodbye leaves a resumable client held; one that was resumed elsewhere is ignored
         if (this.Binding is { } hub)
             hub.Endpoint.Disconnected(this.ConnectionId, this, this.ending ?? new HubDisconnect(HubDisconnectReason.ClientTimeout));
-        else
-            PeerLinkPeers.Remove(this.ConnectionId);
         transport.Remove(this);
-        this.Logger?.LogDebug("{Transport} session {Id} closed", transport.DisplayName, this.ConnectionId);
+        this.Logger?.LogDebug("{Transport} session {Id} closed", transport.HubTransport.DisplayName, this.ConnectionId);
     }
 
 
@@ -187,7 +190,12 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
     // ---- to the client (IHubPeerChannel) ----
 
-    public IHubTransport Transport => transport;
+    public IHubTransport Transport => transport.HubTransport;
+
+    internal IPeerHostTransport PeerTransport => transport;
+
+    public object? GetFeature(Type type) => this.peer is { } p && type.IsInstanceOfType(p) ? p : null;
+    object? peer;
 
     public Task Push(string eventName, byte[] arguments, CancellationToken cancellationToken)
     {
@@ -255,7 +263,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             rejection = $"Unsupported protocol version {handshake.Protocol}";
         else
         {
-            PeerLinkPeers.Add(this.ConnectionId, transport.CreatePeer(connection));
+            this.peer = transport.CreatePeer(connection);
             this.Binding = hub;
             try
             {
@@ -274,7 +282,6 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             if (rejection != null)
             {
                 this.Binding = null;
-                PeerLinkPeers.Remove(this.ConnectionId);
             }
         }
 
@@ -326,7 +333,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
                     // under the hub's send lock: this session is the connection now, and its reply goes ahead of the replay
                     this.ConnectionId = connectionId;
                     this.Binding = hub;
-                    PeerLinkPeers.Add(connectionId, transport.CreatePeer(connection));
+                    this.peer = transport.CreatePeer(connection);
                     this.Reply(message.Id, null, resume.Token, hub);
                     return Task.CompletedTask;
                 }, this.lifetime.Token).ConfigureAwait(false);
@@ -522,7 +529,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return;
         }
 
-        var path = FileRoutes.ResolvePath(ft, request.Name);
+        var path = HubFilePaths.Resolve(ft, request.Name);
         var refusal = path == null ? (400, "Invalid file name") : request.Upload ? this.CheckUpload(ft, request, path, client) : this.CheckDownload(ft, request, path, client);
         if (refusal is { } r)
         {
@@ -544,7 +551,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         try
         {
             await connection.SendFile(path!, PeerProtocol.FileResourceName(message.Id), null, this.lifetime.Token).ConfigureAwait(false);
-            this.Raise(client, L2CapTransferType.Download, request.Name, path!, length, sw.Elapsed);
+            this.Raise(client, HubTransferDirection.Download, request.Name, path!, length, sw.Elapsed);
         }
         catch (Exception ex)
         {
@@ -563,7 +570,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (413, $"Uploads are limited to {max} bytes");
         if (!ft.OverwriteExistingUploads && File.Exists(path))
             return (409, "The file already exists");
-        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Upload, request.Name, request.Size, client)) == false)
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(HubTransferDirection.Upload, request.Name, request.Size, client)) == false)
             return (403, "The host refused the transfer");
 
         return null;
@@ -576,7 +583,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (403, "Downloads are not allowed");
         if (!File.Exists(path))
             return (404, "No such file");
-        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(L2CapTransferType.Download, request.Name, null, client)) == false)
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(HubTransferDirection.Download, request.Name, null, client)) == false)
             return (403, "The host refused the transfer");
 
         return null;
@@ -609,7 +616,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
                     File.Move(received, upload.Path, true);
                     received = null;
                     done = new PeerFileDone(true, null, bytes);
-                    this.Raise(upload.Client, L2CapTransferType.Upload, upload.Name, upload.Path, bytes, upload.Elapsed.Elapsed);
+                    this.Raise(upload.Client, HubTransferDirection.Upload, upload.Name, upload.Path, bytes, upload.Elapsed.Elapsed);
                 }
             }
         }
@@ -634,7 +641,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
     }
 
 
-    void Raise(HubConnectedClient client, L2CapTransferType type, string name, string path, long bytes, TimeSpan elapsed)
+    void Raise(HubConnectedClient client, HubTransferDirection type, string name, string path, long bytes, TimeSpan elapsed)
     {
         try
         {

@@ -357,19 +357,18 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     public Task Disconnect() => this.inner.Disconnect();
 
-    // over Wi-Fi this is refused (NotSupportedException) until the Switchboard transport carries renames
     public Task Rename(string? name, CancellationToken cancellationToken = default) => this.inner.Rename(name, cancellationToken);
 
     public bool CanOpenMediaChannel => this.inner.CanOpenMediaChannel;
 
     public Task<IHubMediaChannel> OpenMediaChannel(CancellationToken cancellationToken = default) => this.inner.OpenMediaChannel(cancellationToken);
 
-    public Task<L2CapTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<HubFileTransferResult> UploadFile(string localFilePath, string? remoteFileName = null, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.UploadFile(localFilePath, remoteFileName, progress, cancellationToken);
 
-    public Task<L2CapTransferResult> UploadStream(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<HubFileTransferResult> UploadStream(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.UploadStream(source, length, remoteFileName, progress, cancellationToken);
 
-    public Task<L2CapTransferResult> DownloadFile(string remoteFileName, string localFilePath, IProgress<TransferProgress>? progress = null, CancellationToken cancellationToken = default)
+    public Task<HubFileTransferResult> DownloadFile(string remoteFileName, string localFilePath, IProgress<HubTransferProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.inner.DownloadFile(remoteFileName, localFilePath, progress, cancellationToken);
 }

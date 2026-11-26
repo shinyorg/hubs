@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -6,14 +5,40 @@ using Microsoft.Extensions.Logging;
 using Shiny.Net.Discovery;
 using Shiny.Net.HttpServer;
 using Shiny.Net.HttpServer.Discovery;
-using Shiny.Net.HttpServer.Switchboard;
+using Shiny.Net.HttpServer.WebSockets;
 
 namespace Shiny.UniversalHubs;
 
-public static class HttpHubExtensions
+public static class HttpConnectionExtensions
 {
     /// <summary>
-    /// Serves this hub over HTTP: a Switchboard at <c>{BasePath}/{hub name}</c>, advertised over mDNS
+    /// The HTTP request the client's WebSocket was opened with - its User, headers and connection - null on the other
+    /// transports
+    /// </summary>
+    public static HttpContext? HttpContext(this HubConnection connection) => connection.Get<HttpContext>();
+}
+
+
+public static class HttpHostExtensions
+{
+    /// <summary>
+    /// How this dynamic hub is served over HTTP - by default under HttpTransportOptions.ServiceType, not through tunnels
+    /// </summary>
+    /// <param name="mdnsServiceType">One of HttpTransportOptions.DynamicServiceTypes</param>
+    /// <param name="allowTunnel">Let clients reach it through a tunnel (the public internet)</param>
+    public static DynamicHubDefinition UseHttp(this DynamicHubDefinition definition, string? mdnsServiceType = null, bool allowTunnel = false)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        if (mdnsServiceType != null)
+            UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
+
+        return definition.With(new HttpHubSettings(mdnsServiceType, allowTunnel));
+    }
+
+
+    /// <summary>
+    /// Serves this hub over HTTP: a WebSocket at <c>{BasePath}/{hub name}</c> carrying the hub session (calls, pushes,
+    /// files and media channels), advertised over mDNS
     /// </summary>
     /// <param name="mdnsServiceType">
     /// The mDNS service type the hub is advertised under, eg. <c>_unigame._tcp</c> - its clients browse for the same one,
@@ -38,7 +63,7 @@ public static class HttpHubExtensions
 
 
     /// <summary>
-    /// HTTP hosting settings: the base path, mDNS, the server's lifetime, the file gate
+    /// HTTP hosting settings: the base path, mDNS, the server's lifetime
     /// </summary>
     public static UniversalServerBuilder Http(this UniversalServerBuilder server, Action<HttpTransportOptions> configure)
     {
@@ -70,6 +95,9 @@ public static class HttpHubExtensions
         foreach (var c in server.GetConfigurations<HttpHostTransport, HttpTransportOptions>())
             c(options);
 
+        foreach (var type in options.DynamicServiceTypes)
+            UniversalHubProtocol.ValidateServiceType(type);
+
         var serverExisted = services.Any(x => x.ServiceType == typeof(HttpServerOptions));
         services.AddShinyHttpServer(http =>
         {
@@ -82,88 +110,43 @@ public static class HttpHubExtensions
             foreach (var c in server.GetConfigurations<HttpHostTransport, ShinyHttpServerBuilder>())
                 c(http);
 
-            http.AddSwitchboard();
             http.Services.AddMdns();
             http.Services.AddSingleton(options);
-            http.Services.TryAddSingleton<FileTokens>();
-            http.Services.TryAddSingleton<MediaTokens>();
             http.Services.TryAddSingleton(sp => new HttpHostTransport(
                 sp,
                 sp.GetRequiredService<HttpTransportOptions>(),
                 sp.GetRequiredService<UniversalServerOptions>(),
-                sp.GetRequiredService<FileTokens>(),
-                sp.GetRequiredService<MediaTokens>(),
-                sp.GetRequiredService<UniversalHubHost>(),
+                sp.GetRequiredService<HubProtocolOptions>(),
                 sp.GetService<ILogger<HttpHostTransport>>()
             ));
             http.Services.AddSingleton<IHubTransport>(sp => sp.GetRequiredService<HttpHostTransport>());
-            http.Configure(app =>
-            {
-                // before routing: a hub that isn't shared over a tunnel doesn't exist as far as the internet can tell
-                app.Use(async (ctx, next) =>
-                {
-                    if (ctx.Connection.IsTunneled && !TunnelGate.IsAllowed(
-                        ctx.Request.Path,
-                        options.BasePath,
-                        app.Services!.GetRequiredService<UniversalHubHost>().Hubs,
-                        app.Services!.GetService<DynamicHubRegistry>() != null
-                    ))
-                    {
-                        ctx.Response.StatusCode = 404;
-                        return;
-                    }
-                    await next(ctx);
-                });
-                FileRoutes.Map(app, options);
-                MediaRoutes.Map(app, options);
-            });
-
-            var mapper = new HttpHubMapper(http, options);
-            foreach (var hub in server.Hubs.Where(x => x.Transports.Contains(typeof(HttpHostTransport))))
-                hub.Accept(mapper);
-
-            if (server.DynamicHubs != null)
-            {
-                DynamicHubBoard.Register();
-                http.Configure(app => app.MapSwitchboard<DynamicHubBoard>(
-                    UniversalHubProtocol.HubPath(options.BasePath, $"{{{DynamicHubBoard.RouteParameter}}}")
-                ));
-            }
+            http.Configure(app => app.MapRoute(
+                HttpMethods.Get,
+                UniversalHubProtocol.HubPath(options.BasePath, "{hub}"),
+                ctx => ctx.RequestServices.GetRequiredService<HttpHostTransport>().Accept(ctx),
+                new DisableRequestTimeoutAttribute()
+            ));
         }, autoStart: false); // IUniversalHubHost starts and stops it
-    }
-
-
-    /// <summary>
-    /// Gives each compiled hub its Switchboard
-    /// </summary>
-    sealed class HttpHubMapper(ShinyHttpServerBuilder http, HttpTransportOptions options) : IHubTypeVisitor
-    {
-        public void Visit<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THub>(string key) where THub : class
-        {
-            HubBoardRegistration.Register<THub>();
-            http.Services.TryAddSingleton<HttpHub<THub>>();
-            http.Services.AddSingleton<HttpHub>(sp => sp.GetRequiredService<HttpHub<THub>>());
-            http.Configure(app => app.MapSwitchboard<HubBoard<THub>>(UniversalHubProtocol.HubPath(options.BasePath, key)));
-        }
     }
 }
 
 
 /// <summary>
-/// Serves hubs over HTTP: each on its Switchboard, advertised over mDNS, with file and media routes beside them. Added with
+/// Serves hubs over HTTP: a WebSocket per hub connection at <c>{BasePath}/{hub name}</c>, carrying the same hub session
+/// the peer-to-peer transports do (Multipeer, Nearby), and an mDNS advertisement per service type. Added with
 /// <c>hub.UseHttp(...)</c>.
 /// </summary>
-public sealed class HttpHostTransport : IHubTransport, IListeningTransport
+public sealed class HttpHostTransport : IHubTransport, IDynamicHubTransport
 {
     readonly IServiceProvider services;
     readonly HttpTransportOptions options;
     readonly UniversalServerOptions serverOptions;
-    readonly FileTokens fileTokens;
-    readonly MediaTokens mediaTokens;
+    readonly HubProtocolOptions protocolOptions;
     readonly ILogger? logger;
     readonly object gate = new();
     readonly HashSet<IHubBinding> running = new();
     readonly List<IHttpServerAdvertiser> advertisers = new();
+    readonly HashSet<PeerHostSession> sessions = new();
     bool startedServer;
 
 
@@ -171,25 +154,15 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
         IServiceProvider services,
         HttpTransportOptions options,
         UniversalServerOptions serverOptions,
-        FileTokens fileTokens,
-        MediaTokens mediaTokens,
-        UniversalHubHost host,
+        HubProtocolOptions protocolOptions,
         ILogger<HttpHostTransport>? logger = null
     )
     {
         this.services = services;
         this.options = options;
         this.serverOptions = serverOptions;
-        this.fileTokens = fileTokens;
-        this.mediaTokens = mediaTokens;
+        this.protocolOptions = protocolOptions;
         this.logger = logger;
-
-        // a client that left takes its tokens with it
-        host.ClientGone += id =>
-        {
-            fileTokens.Remove(id);
-            mediaTokens.Remove(id);
-        };
     }
 
 
@@ -214,6 +187,9 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
     public IReadOnlyList<string> ListenUrls => this.AnyRunning ? this.Server.ListenUrls : [];
 
     HttpServer Server => this.services.GetRequiredService<HttpServer>();
+    internal UniversalHubHost Host => this.services.GetRequiredService<UniversalHubHost>();
+    internal UniversalServerOptions ServerOptions => this.serverOptions;
+    internal ILogger? Logger => this.logger;
 
     IReadOnlyList<IHubBinding> Running
     {
@@ -225,12 +201,86 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
     }
 
 
+    internal IHubBinding? FindRunning(string? key)
+    {
+        lock (this.gate)
+            return this.running.FirstOrDefault(x => x.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+    }
+
+
+    internal IReadOnlyList<PeerHostSession> Sessions
+    {
+        get
+        {
+            lock (this.sessions)
+                return this.sessions.ToList();
+        }
+    }
+
+    internal void Remove(PeerHostSession session)
+    {
+        lock (this.sessions)
+            this.sessions.Remove(session);
+    }
+
+
     /// <summary>
-    /// The Switchboard side of a hub - compiled, or dynamic
+    /// A WebSocket for <c>{BasePath}/{hub}</c>. Through a tunnel, a hub that doesn't allow tunnels (or isn't served over
+    /// HTTP) doesn't exist as far as the caller can tell; otherwise the session's handshake says whether the hub is running.
     /// </summary>
-    HttpHub? Find(IHubBinding hub)
-        => this.services.GetServices<HttpHub>().FirstOrDefault(x => ReferenceEquals(x.Binding, hub))
-           ?? this.services.GetService<DynamicHubRegistry>()?.FindHttp(hub);
+    internal async ValueTask Accept(HttpContext ctx)
+    {
+        var key = ctx.Request.RouteValues.TryGetValue("hub", out var value) ? value?.ToString() : null;
+        var hub = this.Host.FindByKey(key);
+        if (hub != null && !hub.UsesTransport(this))
+            hub = null;
+
+        if (hub == null || (ctx.Connection.IsTunneled && hub.GetSettings<HttpHubSettings>()?.AllowTunnel != true))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        if (!ctx.Request.IsWebSocketRequest())
+        {
+            ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await ctx.Response.WriteTextAsync("A WebSocket upgrade is required");
+            return;
+        }
+
+        var accept = new WebSocketAcceptOptions
+        {
+            MaxMessageLength = this.MaxMessageLength,
+            KeepAliveInterval = TimeSpan.FromSeconds(15)
+        };
+        await using var socket = await ctx.AcceptWebSocketAsync(accept);
+        var remote = ctx.Connection.ConnectionId.ToString();
+        var connection = new WebSocketPeerConnection(remote, new ServerFrames(socket), this.logger);
+        var session = new PeerHostSession(new SessionTransport(this, hub, ctx), connection);
+        lock (this.sessions)
+            this.sessions.Add(session);
+
+        this.logger?.LogDebug("HTTP session {Id} from {Remote} for {Hub}", session.ConnectionId, remote, hub.Name);
+        connection.Start(session);
+
+        // the WebSocket lives as long as this request does
+        try
+        {
+            await connection.Completion.WaitAsync(ctx.RequestAborted);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        connection.Dispose();
+    }
+
+
+    /// <summary>
+    /// The largest WebSocket message either side sends: a full payload or media packet, with the peer-link framing
+    /// </summary>
+    int MaxMessageLength => Math.Max(
+        Math.Max(this.protocolOptions.MaxPayloadSize, this.serverOptions.MediaChannels?.MaxPacketSize ?? 0),
+        WebSocketPeerConnection.FileChunkSize
+    ) + 64 * 1024;
 
 
     public async Task Start(IReadOnlyList<IHubBinding> hubs, CancellationToken cancellationToken)
@@ -254,7 +304,7 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
 
     public async Task Stop(IReadOnlyList<IHubBinding> hubs, HubDisconnect disconnect)
     {
-        // refuse new handshakes first, then hang up on everyone - the hubs see each line leave
+        // refuse new connections first, then tell everyone connected why they're going
         lock (this.gate)
         {
             foreach (var hub in hubs)
@@ -263,33 +313,36 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
 
         await this.Readvertise(CancellationToken.None).ConfigureAwait(false);
 
-        foreach (var hub in hubs)
-        {
-            try
-            {
-                if (this.Find(hub) is { } http)
-                    await http.HangUpAll(disconnect).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogWarning(ex, "Could not hang up {Hub} clients", hub.Name);
-            }
-        }
+        var stopping = this.Sessions.Where(x => x.Binding != null && hubs.Contains(x.Binding)).ToList();
+        await Task.WhenAll(stopping.Select(x => x.Binding!.Endpoint.Disconnect(x.ConnectionId, disconnect))).ConfigureAwait(false);
 
-        if (!this.AnyRunning)
+        // sessions still waiting to hand-shake with a hub that stopped have nowhere to go
+        foreach (var session in this.Sessions.Where(x => x.Binding == null && x.PeerTransport is SessionTransport t && hubs.Contains(t.Requested)))
+            session.Close();
+
+        if (!this.AnyRunning && this.startedServer)
         {
-            this.fileTokens.Clear();
-            this.mediaTokens.Clear();
-            if (this.startedServer)
-            {
-                this.startedServer = false;
-                await this.Server.StopAsync().ConfigureAwait(false);
-            }
+            this.startedServer = false;
+            await this.Server.StopAsync().ConfigureAwait(false);
         }
     }
 
 
     public Task HostRenamed(CancellationToken cancellationToken) => this.Readvertise(cancellationToken);
+
+
+    // ---- dynamic hubs ----
+
+    object? IDynamicHubTransport.CreateSettings(DynamicHubDefinition definition)
+    {
+        var settings = definition.GetSettings<HttpHubSettings>() ?? new HttpHubSettings(null, false);
+        var type = settings.ServiceType ?? this.options.ServiceType;
+        IList<string> allowed = this.options.DynamicServiceTypes.Count == 0 ? [this.options.ServiceType] : this.options.DynamicServiceTypes;
+        if (!allowed.Contains(type, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"{type} isn't one of this host's dynamic hub service types ({String.Join(", ", allowed)})");
+
+        return settings;
+    }
 
 
     /// <summary>
@@ -352,7 +405,7 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
 
 
     /// <summary>
-    /// Groups hubs by the mDNS service type they are advertised under: (service type, comma separated hub keys)
+    /// Groups hubs by the mDNS service type they are advertised under: (service type, comma separated hub names)
     /// </summary>
     internal static IReadOnlyList<(string ServiceType, string Hubs)> GetAdvertisements(IEnumerable<IHubBinding> hubs, string defaultServiceType)
     {
@@ -368,5 +421,57 @@ public sealed class HttpHostTransport : IHubTransport, IListeningTransport
             list.Add((group.Key, keys));
         }
         return list;
+    }
+
+
+    /// <summary>
+    /// What one HTTP session needs from the transport: the hub its URL named, and the request it came in on
+    /// </summary>
+    sealed class SessionTransport(HttpHostTransport http, IHubBinding hub, HttpContext context) : IPeerHostTransport
+    {
+        public IHubTransport HubTransport => http;
+        public string ConnectionPrefix => HubConnection.HttpPrefix;
+        public UniversalHubHost Host => http.Host;
+        public UniversalServerOptions ServerOptions => http.ServerOptions;
+        public ILogger? Logger => http.Logger;
+        public IHubBinding Requested => hub;
+
+        // only the hub in the URL - the tunnel gate was applied to it
+        public IHubBinding? FindRunning(string? key)
+            => hub.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && http.IsRunning(hub) ? hub : null;
+
+        public object CreatePeer(IPeerConnection connection) => context;
+        public void Remove(PeerHostSession session) => http.Remove(session);
+        public IEnumerable<PeerHostSession> Sessions => http.Sessions;
+    }
+
+
+    sealed class ServerFrames(WebSocket socket) : IWebSocketFrames
+    {
+        public ValueTask Send(ReadOnlyMemory<byte> message, CancellationToken cancellationToken) => socket.SendAsync(message, cancellationToken);
+
+        public async ValueTask<byte[]?> Receive(CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                var message = await socket.ReceiveAsync(cancellationToken).ConfigureAwait(false);
+                if (message == null)
+                    return null;
+                if (!message.IsText)
+                    return message.Payload.ToArray();
+            }
+        }
+
+        public async ValueTask Close()
+        {
+            try
+            {
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed").ConfigureAwait(false);
+            }
+            catch
+            {
+                // already gone
+            }
+        }
     }
 }

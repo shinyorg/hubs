@@ -169,15 +169,13 @@ public sealed class UniversalServerBuilder
     /// <summary>
     /// Lets hubs be defined while the app runs - by a downloaded web app, say - through <see cref="IDynamicHubs"/>. They
     /// are served over every transport this server has set up, and the server may start with no compiled hubs at all.
-    /// What they may use is fixed here, because the platforms fix it when the app is built: the mDNS service types (iOS
-    /// lists them in NSBonjourServices) and how many there may be.
+    /// How many there may be is fixed here; what each transport lets them use is set on that transport (eg.
+    /// HttpTransportOptions.DynamicServiceTypes).
     /// </summary>
     public UniversalServerBuilder AllowDynamicHubs(Action<DynamicHubOptions>? configure = null)
     {
         var options = this.DynamicHubs ?? new DynamicHubOptions();
         configure?.Invoke(options);
-        foreach (var type in options.ServiceTypes)
-            UniversalHubProtocol.ValidateServiceType(type);
         if (options.MaxHubs < 1)
             throw new InvalidOperationException("MaxHubs must be at least 1");
 

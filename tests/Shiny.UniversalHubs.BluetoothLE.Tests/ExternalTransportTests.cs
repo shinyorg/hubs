@@ -410,8 +410,8 @@ public class ExternalTransportTests : IAsyncLifetime
         public Task<ReadOnlyMemory<byte>> Invoke(string method, byte[] arguments, CancellationToken cancellationToken) => inner.Invoke(method, arguments, cancellationToken);
         public IAsyncEnumerable<ReadOnlyMemory<byte>> Stream(string method, byte[] arguments, CancellationToken cancellationToken) => inner.Stream(method, arguments, cancellationToken);
         public bool CanTransferFiles => false;
-        public Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<HubFileTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<HubFileTransferResult> Download(string remoteFileName, Stream destination, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task Close(CancellationToken cancellationToken) => inner.Close(cancellationToken);
     }
 
@@ -474,19 +474,19 @@ public class ExternalTransportTests : IAsyncLifetime
         }
 
 
-        public async Task<L2CapTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+        public async Task<HubFileTransferResult> Upload(Stream source, long length, string remoteFileName, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
         {
             using var reader = new StreamReader(source);
             this.Files[remoteFileName] = await reader.ReadToEndAsync(cancellationToken);
-            return new L2CapTransferResult(L2CapTransferType.Upload, remoteFileName, length, TimeSpan.Zero);
+            return new HubFileTransferResult(HubTransferDirection.Upload, remoteFileName, length, TimeSpan.Zero);
         }
 
 
-        public async Task<L2CapTransferResult> Download(string remoteFileName, Stream destination, IProgress<TransferProgress>? progress, CancellationToken cancellationToken)
+        public async Task<HubFileTransferResult> Download(string remoteFileName, Stream destination, IProgress<HubTransferProgress>? progress, CancellationToken cancellationToken)
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(this.Files[remoteFileName]);
             await destination.WriteAsync(bytes, cancellationToken);
-            return new L2CapTransferResult(L2CapTransferType.Download, remoteFileName, bytes.Length, TimeSpan.Zero);
+            return new HubFileTransferResult(HubTransferDirection.Download, remoteFileName, bytes.Length, TimeSpan.Zero);
         }
 
 

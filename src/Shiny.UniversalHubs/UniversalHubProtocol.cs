@@ -5,16 +5,15 @@ using System.Text.Json.Serialization;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// The Wi-Fi side of the wire: one Switchboard per hub at <c>{BasePath}/{characteristicUuid}</c>, called through a few
-/// reserved methods, plus plain HTTP routes for files. Method and event names travel inside these calls, exactly as they do
-/// over BLE.
+/// The HTTP side of the wire: a WebSocket per hub connection at <c>{BasePath}/{hub name}</c> carrying the peer-link hub
+/// session (<see cref="PeerProtocol"/>), and the mDNS advertisement clients find hosts by
 /// </summary>
 public static partial class UniversalHubProtocol
 {
     /// <summary>
-    /// Bumped on a breaking change to anything in this class. The host refuses a handshake from another version.
+    /// Bumped on a breaking change to the HTTP routes or the mDNS TXT keys. Clients skip hosts advertising another version.
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>
     /// The mDNS service type hosts advertise and clients browse for
@@ -23,37 +22,6 @@ public static partial class UniversalHubProtocol
 
     public const string DefaultBasePath = "/hubs";
 
-    /// <summary>
-    /// <c>hub.handshake(handshake)</c> → <c>reply</c>. Must be the first call on a line.
-    /// </summary>
-    public const string HandshakeMethod = "hub.handshake";
-
-    /// <summary>
-    /// <c>hub.invoke(method, [args...])</c> → result envelope
-    /// </summary>
-    public const string InvokeMethod = "hub.invoke";
-
-    /// <summary>
-    /// <c>hub.stream(method, [args...])</c> → a stream of item envelopes
-    /// </summary>
-    public const string StreamMethod = "hub.stream";
-
-    /// <summary>
-    /// Host → client: <c>hub.push(event, [args...])</c>
-    /// </summary>
-    public const string PushMethod = "hub.push";
-
-    /// <summary>
-    /// Sent with every file request - the token comes from the handshake reply
-    /// </summary>
-    public const string FileTokenHeader = "X-Hub-File-Token";
-
-    /// <summary>
-    /// Sent with the media channel's WebSocket upgrade - the token comes from the handshake reply
-    /// </summary>
-    public const string MediaTokenHeader = "X-Hub-Media-Token";
-
-    // mDNS TXT keys
     public const string TxtProtocol = "proto";
     public const string TxtHostId = "hostId";
     public const string TxtName = "name";
@@ -61,19 +29,9 @@ public static partial class UniversalHubProtocol
     public const string TxtHubs = "hubs";
 
     /// <summary>
-    /// Where a hub's Switchboard is mapped
+    /// Where a hub's WebSocket is
     /// </summary>
-    public static string HubPath(string basePath, string characteristicUuid) => $"{TrimBase(basePath)}/{characteristicUuid.ToLowerInvariant()}";
-
-    /// <summary>
-    /// Where files are served: <c>PUT</c> / <c>GET {FilesPath}/{name}</c>
-    /// </summary>
-    public static string FilesPath(string basePath) => $"{TrimBase(basePath)}/files";
-
-    /// <summary>
-    /// Where media channels are opened: a WebSocket upgrade on <c>GET {MediaPath}</c>
-    /// </summary>
-    public static string MediaPath(string basePath) => $"{TrimBase(basePath)}/media";
+    public static string HubPath(string basePath, string hubName) => $"{TrimBase(basePath)}/{hubName}";
 
     /// <summary>
     /// Throws unless <paramref name="serviceType"/> is an mDNS service type like <c>_myapp._tcp</c>
@@ -101,10 +59,9 @@ public static partial class UniversalHubProtocol
 
 
 /// <summary>
-/// The client's first call on a line
+/// The client's first message on a peer link (HTTP, Multipeer, Nearby)
 /// </summary>
-/// <param name="Resumable">Peer links (Multipeer, Nearby): the client can resume after a dropped session, so the host may
-/// hold it. Wi-Fi resumes on its own and ignores it. Absent from clients older than peer-link resume.</param>
+/// <param name="Resumable">The client can resume after a dropped session, so the host may hold it</param>
 public sealed record HubHandshake(
     int Protocol,
     string? Name,
@@ -115,37 +72,10 @@ public sealed record HubHandshake(
 
 
 /// <summary>
-/// The host's answer to <see cref="HubHandshake"/>
-/// </summary>
-/// <param name="Accepted">Whether the client may use the hub</param>
-/// <param name="Reason">Why it was refused</param>
-/// <param name="HostName">The host's name - the same local name it advertises over BLE</param>
-/// <param name="HostId">Identifies the host across transports</param>
-/// <param name="FileToken">Send as <see cref="UniversalHubProtocol.FileTokenHeader"/>; null when the host serves no files</param>
-/// <param name="MediaToken">Send as <see cref="UniversalHubProtocol.MediaTokenHeader"/>; null when the host has no media channels</param>
-/// <param name="MediaMaxPacketSize">The largest packet the host's media channels carry</param>
-public sealed record HubHandshakeReply(
-    bool Accepted,
-    string? Reason,
-    string? HostName,
-    string? HostId,
-    string? FileToken,
-    string? MediaToken = null,
-    int? MediaMaxPacketSize = null
-);
-
-
-/// <summary>
-/// The message a host hangs up a line with: why, and the host's own text. It travels as the Switchboard hang-up message,
-/// so it arrives with the close itself.
+/// Why a peer-link session ends: the host's reason and its own text, or the client saying it is leaving
 /// </summary>
 /// <param name="Reason">A <see cref="Shiny.UniversalHubs.HubDisconnectReason"/></param>
 /// <param name="Message">The text passed to Context.Abort, Disconnect or Stop</param>
 public sealed record HubHangUp(int Reason, string? Message);
 
 
-[JsonSerializable(typeof(HubHangUp))]
-[JsonSerializable(typeof(HubHandshake))]
-[JsonSerializable(typeof(HubHandshakeReply))]
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-internal partial class UniversalHubJsonContext : JsonSerializerContext;

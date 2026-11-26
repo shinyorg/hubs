@@ -5,8 +5,35 @@ using Shiny.BluetoothLE.Hosting;
 
 namespace Shiny.UniversalHubs;
 
+public static class BleConnectionExtensions
+{
+    /// <summary>
+    /// The BLE central the client is connected through - null on the other transports. A client that resumed is on the
+    /// central it came back on.
+    /// </summary>
+    public static IPeripheral? Peripheral(this HubConnection connection) => connection.Get<IPeripheral>();
+
+    /// <inheritdoc cref="Peripheral(HubConnection)"/>
+    public static IPeripheral? Peripheral(this HubConnectedClient client) => client.Get<IPeripheral>();
+}
+
+
 public static class BleHostExtensions
 {
+    /// <summary>
+    /// Serves this dynamic hub over Bluetooth LE too, as <paramref name="characteristicUuid"/> - without it, a dynamic hub
+    /// isn't served over BLE
+    /// </summary>
+    /// <param name="serviceUuid">The GATT service - BluetoothLETransportOptions.DynamicServiceUuid, else the compiled hubs' service, unless given</param>
+    public static DynamicHubDefinition UseBluetoothLE(this DynamicHubDefinition definition, string characteristicUuid, string? serviceUuid = null)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
+        var service = serviceUuid == null ? null : BleUuid.Normalize(serviceUuid, nameof(serviceUuid));
+        return definition.With(new BleDynamicHubSettings(service, characteristic));
+    }
+
+
     /// <summary>
     /// Serves this hub over Bluetooth LE: a write+notify characteristic in a GATT service, with files and media channels
     /// over L2CAP. On Android, iOS and Mac Catalyst it adds the BLE hosting stack (AddBluetoothLeHosting); on plain .NET,

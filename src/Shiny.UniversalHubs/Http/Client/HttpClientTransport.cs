@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Reactive.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -26,7 +27,6 @@ public static class HttpHubClientExtensions
         return options.UseTransport(
             sp => new HttpClientTransport(
                 http,
-                options.AutomaticReconnect,
                 // resolved on first discovery, so connecting to a known host needs no mDNS stack
                 () => sp.GetService<IHttpServerLocator>(),
                 sp.GetService<ILoggerFactory>()
@@ -72,22 +72,20 @@ public sealed record HttpHubEndpoint(DiscoveredHttpServer Server) : HubEndpoint;
 
 
 /// <summary>
-/// A hub client's HTTP side: browses mDNS for hosts listing the hub, and connects to its Switchboard. Added with
+/// A hub client's HTTP side: browses mDNS for hosts listing the hub, and connects to its WebSocket. Added with
 /// <c>o.UseHttp(...)</c>.
 /// </summary>
 public sealed class HttpClientTransport : IHubClientTransport
 {
     readonly HttpClientTransportOptions options;
-    readonly bool automaticReconnect;
     readonly Lazy<IHttpServerLocator?> locator;
     readonly ILoggerFactory? loggerFactory;
     readonly ILogger? logger;
 
 
-    internal HttpClientTransport(HttpClientTransportOptions options, bool automaticReconnect, Func<IHttpServerLocator?> locator, ILoggerFactory? loggerFactory)
+    internal HttpClientTransport(HttpClientTransportOptions options, Func<IHttpServerLocator?> locator, ILoggerFactory? loggerFactory)
     {
         this.options = options;
-        this.automaticReconnect = automaticReconnect;
         this.locator = new(locator);
         this.loggerFactory = loggerFactory;
         this.logger = loggerFactory?.CreateLogger<HttpClientTransport>();
@@ -176,33 +174,69 @@ public sealed class HttpClientTransport : IHubClientTransport
         foreach (var address in Addresses(server))
         {
             var baseUri = address == null ? server.BaseAddress : server.BaseAddressFor(address);
-            var root = baseUri.ToString().TrimEnd('/');
-            var hubUri = new Uri($"{root}/{Uri.EscapeDataString(client.HubName)}");
-            var filesUri = new Uri($"{root}/files");
-            var mediaUri = new Uri($"{root}/media");
+            var hubUri = ToWebSocket(new Uri($"{baseUri.ToString().TrimEnd('/')}/{Uri.EscapeDataString(client.HubName)}"));
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(this.options.ConnectTimeout);
+            IPeerConnection? connection = null;
             try
             {
+                connection = await this.Open(hubUri, timeout.Token).ConfigureAwait(false);
+                var opened = connection;
                 await client.Connect(
-                    events => new SwitchboardTransport(hubUri, filesUri, mediaUri, events, this.options, this.automaticReconnect, this.loggerFactory),
+                    events => new PeerHubTransport(
+                        this.DisplayName,
+                        opened,
+                        events,
+                        client.HubName,
+                        this.loggerFactory?.CreateLogger<PeerHubTransport>(),
+                        // a resume opens a new WebSocket to the same address
+                        client.ConnectOptions.AutomaticReconnect ? ct => this.Open(hubUri, ct) : null
+                    ),
                     timeout.Token
                 ).ConfigureAwait(false);
                 return;
             }
             catch (Exception ex) when (UniversalHubClientErrors.IsRefusal(ex) || cancellationToken.IsCancellationRequested)
             {
+                connection?.Dispose();
                 throw;
             }
             catch (Exception ex)
             {
+                connection?.Dispose();
                 this.logger?.LogDebug(ex, "{Uri} did not answer", hubUri);
                 errors.Add(ex);
             }
         }
         throw errors.Count == 1 ? errors[0] : new AggregateException("No address of the host answered", errors);
     }
+
+
+    async Task<IPeerConnection> Open(Uri uri, CancellationToken cancellationToken)
+    {
+        var socket = new ClientWebSocket();
+        socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        // the transport's HTTP stack when it has a custom one (tests); otherwise the WebSocket's own sockets
+        var invoker = this.options.MessageHandlerFactory is { } factory ? new HttpMessageInvoker(factory()) : null;
+        try
+        {
+            await socket.ConnectAsync(uri, invoker, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            socket.Dispose();
+            invoker?.Dispose();
+            throw new HubException($"Could not connect to {uri}: {ex.Message}", ex);
+        }
+        return new WebSocketPeerConnection(uri.Authority, new ClientFrames(socket, invoker), this.logger);
+    }
+
+
+    /// <summary>
+    /// Hubs are WebSockets: http becomes ws, https wss
+    /// </summary>
+    static Uri ToWebSocket(Uri uri) => new UriBuilder(uri) { Scheme = uri.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
 
 
     bool Serves(string hubName, DiscoveredHttpServer server)
@@ -235,5 +269,52 @@ public sealed class HttpClientTransport : IHubClientTransport
 
         foreach (var address in others)
             yield return address;
+    }
+
+
+    sealed class ClientFrames(ClientWebSocket socket, HttpMessageInvoker? invoker) : IWebSocketFrames
+    {
+        public ValueTask Send(ReadOnlyMemory<byte> message, CancellationToken cancellationToken)
+            => socket.SendAsync(message, WebSocketMessageType.Binary, true, cancellationToken);
+
+        public async ValueTask<byte[]?> Receive(CancellationToken cancellationToken)
+        {
+            var buffer = new byte[16 * 1024];
+            using var message = new MemoryStream();
+            while (true)
+            {
+                var result = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    return null;
+
+                message.Write(buffer, 0, result.Count);
+                if (result.EndOfMessage)
+                {
+                    if (result.MessageType == WebSocketMessageType.Binary)
+                        return message.ToArray();
+
+                    // text isn't part of the protocol - skip it
+                    message.SetLength(0);
+                }
+            }
+        }
+
+        public async ValueTask Close()
+        {
+            try
+            {
+                if (socket.State == WebSocketState.Open)
+                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // already gone
+            }
+            finally
+            {
+                socket.Dispose();
+                invoker?.Dispose();
+            }
+        }
     }
 }

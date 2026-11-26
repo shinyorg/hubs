@@ -1,12 +1,11 @@
 using System.Collections.Concurrent;
-using Shiny.Net.HttpServer.Switchboard;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// A client connected to a hub, over any transport
 /// </summary>
-/// <param name="Id">The connection id - the peripheral UUID over BLE, <c>sb:{lineId}</c> over HTTP, <c>mc:{id}</c> over Multipeer, <c>nb:{id}</c> over Nearby</param>
+/// <param name="Id">The connection id - the central's id over BLE, <c>ws:{id}</c> over HTTP, <c>mc:{id}</c> over Multipeer, <c>nb:{id}</c> over Nearby</param>
 /// <param name="Transport">
 /// The transport the client is connected through right now (<c>connection.Transport is BleHostTransport</c>) - null for a
 /// client connected through a channel outside the universal host
@@ -22,32 +21,15 @@ public sealed record HubConnection(string Id, IHubTransport? Transport, HubConne
     public IDictionary<string, object> Properties => this.Client.Items;
 
     /// <summary>
-    /// The BLE central the client is connected through - null on the other transports
+    /// What the transport knows about the client's link, by type - eg. the BLE central (connection.Peripheral()), the HTTP
+    /// request (connection.HttpContext()), the Multipeer or Nearby peer. Null when the transport has no such thing.
     /// </summary>
-    public Shiny.BluetoothLE.Hosting.IPeripheral? Ble => this.Client.Peripheral;
+    public T? Get<T>() where T : class => this.Client.Get<T>();
 
     /// <summary>
-    /// The Switchboard line the client is connected through, with the request being handled right now
-    /// (<see cref="CallerContext.HttpContext"/>: the connect request in OnConnectedAsync, the call's request in a hub
-    /// method), its User, line id and the line's own Items. Null on the other transports, and in OnDisconnectedAsync - the
-    /// line's requests are over by then.
+    /// Prefixed to the session id to make an HTTP connection id
     /// </summary>
-    public CallerContext? Http { get; init; }
-
-    /// <summary>
-    /// The MultipeerConnectivity peer the client is connected through - null on the other transports
-    /// </summary>
-    public MultipeerPeer? Multipeer { get; init; }
-
-    /// <summary>
-    /// The Nearby Connections endpoint the client is connected through - null on the other transports
-    /// </summary>
-    public NearbyPeer? Nearby { get; init; }
-
-    /// <summary>
-    /// Prefixed to the Switchboard line id to make an HTTP connection id
-    /// </summary>
-    internal const string HttpPrefix = "sb:";
+    internal const string HttpPrefix = "ws:";
 
     /// <summary>
     /// Prefixed to the session id to make a Multipeer connection id
@@ -59,16 +41,7 @@ public sealed record HubConnection(string Id, IHubTransport? Transport, HubConne
     /// </summary>
     internal const string NearbyPrefix = "nb:";
 
-    public static HubConnection From(HubConnectedClient client)
-    {
-        var transport = client.Channel?.Transport;
-        return new(client.Id, transport, client)
-        {
-            Http = transport is HttpHostTransport ? HttpCall.Current : null,
-            Multipeer = transport is IPeerHostTransport ? PeerLinkPeers.Find(client.Id) as MultipeerPeer : null,
-            Nearby = transport is IPeerHostTransport ? PeerLinkPeers.Find(client.Id) as NearbyPeer : null
-        };
-    }
+    public static HubConnection From(HubConnectedClient client) => new(client.Id, client.Channel?.Transport, client);
 
     public override string ToString() => $"{this.Client.Name ?? "(unnamed)"} [{this.Id}] over {this.Transport?.DisplayName ?? "an external channel"}";
 }
@@ -129,53 +102,5 @@ public abstract class UniversalHub<TContract> : IHubInternal where TContract : c
 
     Task IHubInternal.OnConnectedAsync() => this.OnConnectedAsync(this.Connection);
 
-    Task IHubInternal.OnDisconnectedAsync(HubDisconnect disconnect)
-    {
-        // the line's requests are over - nothing current to show, whatever the async flow still holds
-        HttpCall.Current = null;
-        return this.OnDisconnectedAsync(this.Connection, disconnect);
-    }
-}
-
-
-/// <summary>
-/// The Switchboard call the hub is running inside of, carried to <see cref="HubConnection.From"/> through the async flow
-/// </summary>
-internal static class HttpCall
-{
-    static readonly AsyncLocal<CallerContext?> current = new();
-
-    public static CallerContext? Current
-    {
-        get => current.Value;
-        set => current.Value = value;
-    }
-}
-
-
-/// <summary>
-/// A client's MultipeerConnectivity peer
-/// </summary>
-/// <param name="DisplayName">The name the client's device gave its peer - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
-public sealed record MultipeerPeer(string DisplayName);
-
-
-/// <summary>
-/// A client's Nearby Connections endpoint
-/// </summary>
-/// <param name="EndpointName">The name the client's device connected under - the hub's own client name is <see cref="HubConnectedClient.Name"/></param>
-public sealed record NearbyPeer(string EndpointName);
-
-
-/// <summary>
-/// The radio peer behind each peer-link connection id (<see cref="MultipeerPeer"/>, <see cref="NearbyPeer"/>), kept by the
-/// add-on transport while it is connected
-/// </summary>
-internal static class PeerLinkPeers
-{
-    static readonly ConcurrentDictionary<string, object> peers = new(StringComparer.Ordinal);
-
-    public static void Add(string connectionId, object peer) => peers[connectionId] = peer;
-    public static void Remove(string connectionId) => peers.TryRemove(connectionId, out _);
-    public static object? Find(string connectionId) => peers.TryGetValue(connectionId, out var peer) ? peer : null;
+    Task IHubInternal.OnDisconnectedAsync(HubDisconnect disconnect) => this.OnDisconnectedAsync(this.Connection, disconnect);
 }

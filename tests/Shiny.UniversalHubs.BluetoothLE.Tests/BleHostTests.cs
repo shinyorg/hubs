@@ -263,11 +263,11 @@ public class BleHostTests : IAsyncLifetime
         await this.Connect<ITestHub>(TestChar, "c1");
 
         var client = Assert.Single(this.testHub.ConnectedClients);
-        Assert.Equal("c1", client.Peripheral?.Uuid);
+        Assert.Equal("c1", client.Peripheral()?.Uuid);
 
         // a client on another transport has no central
         await this.testHub.TransportEndpoint.Connect("wifi-1", new Protocol.HandshakeInfo(1, "WiFi", null, null), new RecordingChannel(), CancellationToken.None);
-        Assert.Null(this.testHub.ConnectedClients.Single(x => x.Id == "wifi-1").Peripheral);
+        Assert.Null(this.testHub.ConnectedClients.Single(x => x.Id == "wifi-1").Peripheral());
     }
 
 

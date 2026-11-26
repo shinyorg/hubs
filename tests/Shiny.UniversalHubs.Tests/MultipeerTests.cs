@@ -73,7 +73,8 @@ public class MultipeerTests : IAsyncLifetime
                 o.AuthorizeFile = req => !req.FileName.StartsWith("secret", StringComparison.Ordinal);
             })
             .Multipeer(ServiceType)
-            .AllowDynamicHubs(o => o.ServiceTypes.Add(MdnsServiceType))
+            .AllowDynamicHubs()
+            .Http(o => o.DynamicServiceTypes.Add(MdnsServiceType))
             .AddHub<TestHub>(CharacteristicUuid, h => h.MaxClients(3).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
             .AddHub<OtherHub>(OtherCharacteristicUuid, h => h.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())
         );
@@ -93,12 +94,12 @@ public class MultipeerTests : IAsyncLifetime
     }
 
 
-    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid, bool automaticReconnect = true) where TContract : class
+    IUniversalHubClient<TContract> CreateClient<TContract>(string characteristicUuid, bool automaticReconnect = true, string? hubName = null) where TContract : class
     {
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<IMultipeerLink>(this.network)
-            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
+            .AddUniversalHubClient<TContract>(hubName ?? characteristicUuid, o =>
             {
                 o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); }).UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, characteristicUuid);
                 o.AutomaticReconnect = automaticReconnect;
@@ -125,10 +126,10 @@ public class MultipeerTests : IAsyncLifetime
     {
         const string dynamicUuid = "6e400010-b5a3-f393-e0a9-e50e24dcca9e";
         var handler = new DynamicHubTests.ScriptedHandler();
-        var hub = this.app.Services.GetRequiredService<IDynamicHubs>().Add(new DynamicHubDefinition("game", dynamicUuid, MdnsServiceType), handler);
+        var hub = this.app.Services.GetRequiredService<IDynamicHubs>().Add(new DynamicHubDefinition("game").UseHttp(MdnsServiceType), handler);
         TransportAssert.Equal([typeof(MultipeerHostTransport)], await hub.Start([typeof(MultipeerHostTransport)]));
 
-        var client = this.CreateClient<IDynamicTestHub>(dynamicUuid);
+        var client = this.CreateClient<IDynamicTestHub>(dynamicUuid, hubName: "game");
         await client.Connect(await Find(client), new HubConnectOptions("Mia").Only<MultipeerClientTransport>());
 
         Assert.IsType<MultipeerClientTransport>(client.Transport);
@@ -587,7 +588,7 @@ public class MultipeerTests : IAsyncLifetime
         try
         {
             await File.WriteAllTextAsync(local, "avatar bytes");
-            var progress = new List<TransferProgress>();
+            var progress = new List<HubTransferProgress>();
             var up = await client.UploadFile(local, "avatar.jpg", new SyncProgress(progress));
             Assert.Equal(12, up.BytesTransferred);
             Assert.Equal(12, progress.Last().BytesTransferred);
@@ -799,9 +800,9 @@ public class MultipeerTests : IAsyncLifetime
     }
 
 
-    sealed class SyncProgress(List<TransferProgress> list) : IProgress<TransferProgress>
+    sealed class SyncProgress(List<HubTransferProgress> list) : IProgress<HubTransferProgress>
     {
-        public void Report(TransferProgress value)
+        public void Report(HubTransferProgress value)
         {
             lock (list)
                 list.Add(value);

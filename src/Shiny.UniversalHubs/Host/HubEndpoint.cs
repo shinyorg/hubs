@@ -30,6 +30,12 @@ public interface IHubPeerChannel
     /// universal host.
     /// </summary>
     Shiny.UniversalHubs.IHubTransport? Transport => null;
+
+    /// <summary>
+    /// What the transport knows about the client's link, by type - the BLE central, the HTTP request, the Multipeer or
+    /// Nearby peer. <c>HubConnection.Get&lt;T&gt;()</c> asks the client's current channel.
+    /// </summary>
+    object? GetFeature(Type type) => null;
 }
 
 

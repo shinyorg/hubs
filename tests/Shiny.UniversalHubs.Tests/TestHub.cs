@@ -74,10 +74,10 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
     public override Task OnConnectedAsync(HubConnection connection)
     {
         log.Add($"connected:{connection.Client.Name}");
-        log.Add($"connected-request:{connection.Http?.HttpContext?.Request.Method}");
+        log.Add($"connected-request:{connection.HttpContext()?.Request.Method}");
         connection.Properties["greeting"] = $"hello {connection.Client.Name}";
         log.Add($"connected-via:{TransportAssert.Name(connection.Transport)}:{connection.Id}");
-        log.Add($"connected-peer:{connection.Multipeer?.DisplayName ?? connection.Nearby?.EndpointName}");
+        log.Add($"connected-peer:{connection.MultipeerPeer()?.DisplayName ?? connection.NearbyPeer()?.EndpointName}");
         return Task.CompletedTask;
     }
 
@@ -86,8 +86,8 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
         log.Add($"disconnected:{connection.Client.Name}:{disconnect.Description}");
         log.Add($"reason:{connection.Client.Name}:{disconnect.Reason}");
         log.Add($"disconnected-via:{TransportAssert.Name(connection.Transport)}:{connection.Id}");
-        log.Add($"disconnected-http:{(connection.Http == null ? "none" : "set")}");
-        log.Add($"disconnected-peer:{connection.Multipeer?.DisplayName ?? connection.Nearby?.EndpointName}");
+        log.Add($"disconnected-http:{(connection.HttpContext() == null ? "none" : "set")}");
+        log.Add($"disconnected-peer:{connection.MultipeerPeer()?.DisplayName ?? connection.NearbyPeer()?.EndpointName}");
         return Task.CompletedTask;
     }
 
@@ -95,9 +95,9 @@ public class TestHub(HubLog log) : UniversalHub<ITestHub>
     public Task<string?> WhoAmI() => Task.FromResult(this.Context.Client.Name);
     public Task<string> Inspect() => Task.FromResult(String.Join("|",
         this.Connection.Properties["greeting"],
-        $"line:{this.Connection.Id == HubConnection.HttpPrefix + this.Connection.Http?.LineId}",
-        $"request:{this.Connection.Http?.HttpContext?.Request.Method}",
-        $"ble:{(this.Connection.Ble == null ? "none" : "set")}"
+        $"line:{this.Connection.Id.StartsWith(HubConnection.HttpPrefix)}",
+        $"request:{this.Connection.HttpContext()?.Request.Method}",
+        $"ble:{(this.Connection.Get<IPeripheral>() == null ? "none" : "set")}"
     ));
 
     public Task<string> MyConnection() => Task.FromResult($"{TransportAssert.Name(this.Connection.Transport)}:{this.Connection.Id}");
