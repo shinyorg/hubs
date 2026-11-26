@@ -2,6 +2,7 @@ using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs.Protocol;
+using Shiny.UniversalHubs;
 
 namespace Shiny.BluetoothLE.Hubs;
 
@@ -381,7 +382,7 @@ internal sealed class BleFrameLink(
     {
         this.DropSubscriptions();
         await peripheral.ConnectAsync(new ConnectionConfig(false), cancellationToken).ConfigureAwait(false);
-        var attMtu = await BleHubClient.NegotiateMtu(peripheral, logger, cancellationToken).ConfigureAwait(false);
+        var attMtu = await NegotiateMtu(peripheral, logger, cancellationToken).ConfigureAwait(false);
 
         // fail fast if the host does not serve this hub
         await peripheral.GetCharacteristicAsync(serviceUuid, characteristicUuid, cancellationToken).ConfigureAwait(false);
@@ -404,6 +405,30 @@ internal sealed class BleFrameLink(
             .Where(x => x == ConnectionState.Disconnected)
             .Subscribe(__ => transport.OnLinkLost(new HubDisconnect(HubDisconnectReason.ClientTimeout))));
 
+        return attMtu;
+    }
+
+
+    /// <summary>
+    /// Asks for the largest ATT MTU (<see cref="FrameCodec.MaxAttMtu"/>) on a new BLE connection, so hub messages go in as
+    /// few frames as possible. Android negotiates what is asked for; Apple platforms negotiate on their own and can't be
+    /// asked, so the current MTU stands. Returns the ATT MTU - Shiny reports the payload size (ATT MTU minus the header).
+    /// </summary>
+    internal static async Task<int> NegotiateMtu(IPeripheral peripheral, ILogger? logger, CancellationToken cancellationToken)
+    {
+        var payload = peripheral.Mtu;
+        try
+        {
+            payload = await peripheral.TryRequestMtuAsync(FrameCodec.MaxAttMtu, cancelToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger?.LogDebug(ex, "MTU request failed - continuing with the current MTU");
+            payload = peripheral.Mtu;
+        }
+
+        var attMtu = payload + BleConstants.AttHeaderSize;
+        logger?.LogInformation("ATT MTU {Mtu} (asked for {Requested}, {Payload} byte frames)", attMtu, FrameCodec.MaxAttMtu, FrameCodec.GetFrameSize(attMtu));
         return attMtu;
     }
 

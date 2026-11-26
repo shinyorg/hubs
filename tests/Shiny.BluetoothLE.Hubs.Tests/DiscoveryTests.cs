@@ -28,7 +28,7 @@ public class DiscoveryTests
         if (withServer)
             services.AddUniversalServer(s => s.Configure(o => o.LocalName = "Me").AddHub<TestHub>("test", h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, TestChar)));
 
-        services.AddBleHubClient<ITestHub>(TestChar, o => o.ServiceUuid = serviceUuid);
+        services.AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(serviceUuid, TestChar));
         return services.BuildServiceProvider();
     }
 
@@ -37,7 +37,7 @@ public class DiscoveryTests
     (List<string?> Names, IDisposable Scan) Watch(ServiceProvider sp)
     {
         var names = new List<string?>();
-        var scan = sp.GetRequiredService<IBleHubClient<ITestHub>>().Discover().Subscribe(x => names.Add(x.Name));
+        var scan = sp.GetRequiredService<IUniversalHubClient<ITestHub>>().DiscoverAll().Subscribe(x => names.Add(x.Ble?.Name));
         Assert.True(this.ble.IsScanning);
         return (names, scan);
     }
@@ -147,8 +147,9 @@ public class DiscoveryTests
         var current = new FailingConnectPeripheral("host-1");
         this.ble.Known["host-1"] = current;
 
-        var client = sp.GetRequiredService<IBleHubClient<ITestHub>>();
-        await Assert.ThrowsAnyAsync<BleException>(() => client.Connect(new BleHubHostInfo(stale, "Host", -50)));
+        var client = sp.GetRequiredService<IUniversalHubClient<ITestHub>>();
+        var host = new HubHostInfo("Host", "Host", null, new BleHubHostInfo(stale, "Host", -50), null);
+        await Assert.ThrowsAnyAsync<BleException>(() => client.Connect(host));
         Assert.True(current.ConnectCalled);
     }
 }

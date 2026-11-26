@@ -98,11 +98,12 @@ public class MultipeerTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<IMultipeerLink>(this.network)
-            .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
                 o.AutomaticReconnect = automaticReconnect;
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
-                o.Multipeer(ServiceType, mc => mc.DisplayName = "Phone");
+                o.UseMultipeer(ServiceType, mc => mc.DisplayName = "Phone");
             })
             .BuildServiceProvider();
 
@@ -769,7 +770,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         Assert.Throws<ArgumentException>(() => MultipeerProtocol.ValidateServiceType(serviceType));
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(s => s.Multipeer(serviceType).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Multipeer(serviceType)));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer(serviceType)));
     }
 
 

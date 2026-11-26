@@ -60,7 +60,7 @@ public class BleHubHostTests : IAsyncLifetime
     /// <param name="mtu">The central's payload size, as Shiny reports it (ATT MTU minus 3)</param>
     async Task<TContract> Connect<TContract>(string characteristicUuid, string centralId, int mtu = 185, List<byte[]>? notified = null) where TContract : class
     {
-        var client = BleHubClientFactories.Create<TContract>(new BleHubClientServices(this.options, this.serializer), this.serviceUuid, characteristicUuid);
+        var client = BleHubClientFactories.Create<TContract>(new BleHubClientServices(this.options, this.serializer), characteristicUuid);
         var central = new FakeCentral(centralId, mtu);
         var ch = this.hosting.Characteristic(characteristicUuid);
 
@@ -293,7 +293,7 @@ public class BleHubHostTests : IAsyncLifetime
         this.Build(TimeSpan.FromMilliseconds(50));
         await this.host.Start();
         var ch = this.hosting.Characteristic(TestChar);
-        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), this.serviceUuid, TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), TestChar);
         var central = new FakeCentral("c1");
         ch.Notified = (id, frame) =>
         {
@@ -341,7 +341,7 @@ public class BleHubHostTests : IAsyncLifetime
         this.Build();
         await this.host.Start();
         var ch = this.hosting.Characteristic(TestChar);
-        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), this.serviceUuid, TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), TestChar);
         var central = new FakeCentral("c1");
         ch.Notified = (id, frame) => client.ReceiveFrame(frame);
         await ch.Subscribe(central);

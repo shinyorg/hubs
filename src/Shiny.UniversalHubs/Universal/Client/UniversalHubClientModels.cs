@@ -108,17 +108,56 @@ public sealed record HubConnectOptions(
 }
 
 
+/// <summary>
+/// How a hub client reaches its hub: the transports it uses (at least one), and how it connects over them
+/// </summary>
 public class UniversalHubClientOptions
 {
     /// <summary>
-    /// The BLE service the host serves its hubs under - must match the host's (AddUniversalServer's ServiceUuid)
+    /// The mDNS service type browsed for over HTTP (UseHttp) - the hub's own, as the host set it with UseHttp
     /// </summary>
-    public string ServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
+    internal string HttpServiceType { get; private set; } = UniversalHubProtocol.ServiceType;
 
     /// <summary>
-    /// The mDNS service type to browse - must match the host's
+    /// The transports this client uses
     /// </summary>
-    public string ServiceType { get; set; } = UniversalHubProtocol.ServiceType;
+    internal HubTransports Enabled { get; private set; }
+
+    internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
+
+    /// <summary>
+    /// The GATT service dynamic hubs are characteristics in (AddDynamicHubClients) - the host's DynamicHubOptions.BleServiceUuid
+    /// </summary>
+    public string DynamicBleServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
+
+
+    /// <summary>
+    /// Reaches the hub over HTTP: hosts found over mDNS, or an address you have (<see cref="HubHostInfo.FromUrl"/>)
+    /// </summary>
+    /// <param name="mdnsServiceType">The mDNS service type to browse - the one the host gave the hub's UseHttp. Null for the default.</param>
+    public UniversalHubClientOptions UseHttp(string? mdnsServiceType = null)
+    {
+        if (mdnsServiceType != null)
+            UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
+        if (this.Enabled.HasFlag(HubTransports.Http))
+            throw new InvalidOperationException("HTTP is already set up for this hub client");
+
+        this.HttpServiceType = mdnsServiceType ?? UniversalHubProtocol.ServiceType;
+        this.Enabled |= HubTransports.Http;
+        this.ServiceActions.Add(services => services.AddHttpServerLocator());
+        return this;
+    }
+
+
+    /// <summary>
+    /// Protocol limits (payload size, timeouts) - app-wide, shared with every other hub client and host in the app
+    /// </summary>
+    public UniversalHubClientOptions Protocol(Action<BleHubProtocolOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        this.ProtocolActions.Add(configure);
+        return this;
+    }
 
     /// <summary>
     /// How long one Wi-Fi address gets to answer before the next address (or BLE) is tried
@@ -144,20 +183,20 @@ public class UniversalHubClientOptions
     public Func<HttpMessageHandler>? HttpMessageHandlerFactory { get; set; }
 
     /// <summary>
-    /// Transports beyond BLE and HTTP, from add-on packages (<c>o.Multipeer(...)</c>, <c>o.Nearby(...)</c>)
+    /// Transports beyond HTTP: BLE (<c>o.UseBluetoothLE(...)</c>), and from add-on packages (<c>o.UseMultipeer(...)</c>,
+    /// <c>o.UseNearby(...)</c>)
     /// </summary>
     internal List<Func<IServiceProvider, IUniversalHubClientTransport>> Transports { get; } = new();
 
-    readonly HashSet<HubTransports> addOns = new();
-
     /// <summary>
-    /// Adds an add-on transport - each one once per hub client
+    /// Adds a transport - each one once per hub client
     /// </summary>
     internal void AddTransport(HubTransports transport, string name, Func<IServiceProvider, IUniversalHubClientTransport> factory)
     {
-        if (!this.addOns.Add(transport))
+        if (this.Enabled.HasFlag(transport))
             throw new InvalidOperationException($"{name} is already set up for this hub client");
 
+        this.Enabled |= transport;
         this.Transports.Add(factory);
     }
 

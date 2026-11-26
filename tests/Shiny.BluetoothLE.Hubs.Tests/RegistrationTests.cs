@@ -102,21 +102,21 @@ public class RegistrationTests
 
 
     [Fact]
-    public void ClientsUseTheirOwnServiceUuid()
+    public void ClientsAreRegisteredPerHubName()
     {
         using var sp = new ServiceCollection()
-            .AddBleHubClient<ITestHub>(TestChar)
-            .AddBleHubClient<ISecondHub>(SecondChar, o => o
+            .AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, TestChar))
+            .AddUniversalHubClient<ISecondHub>("second", o => o
                 .Protocol(p => p.RequestTimeout = TimeSpan.FromSeconds(4))
-                .ServiceUuid = Custom.ToUpperInvariant())
+                .UseBluetoothLE(Custom.ToUpperInvariant(), SecondChar))
             .BuildServiceProvider();
 
         var test = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<ITestHub>>();
         var second = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<ISecondHub>>();
-        Assert.Equal(BleHubProtocolOptions.DefaultServiceUuid, test.ServiceUuid);
-        Assert.Equal(Custom, second.ServiceUuid);
-        Assert.Equal(SecondChar, second.CharacteristicUuid);
+        Assert.Equal("test", test.HubName);
+        Assert.Equal("second", second.HubName);
         Assert.Same(second, sp.GetRequiredService<ISecondHub>());
+        Assert.Same(second, sp.GetRequiredService<IUniversalHubClient<ISecondHub>>().Hub);
 
         // protocol limits are app-wide
         Assert.Equal(TimeSpan.FromSeconds(4), sp.GetRequiredService<BleHubProtocolOptions>().RequestTimeout);
@@ -124,9 +124,12 @@ public class RegistrationTests
 
 
     [Fact]
-    public void ClientRefusesInvalidUuids()
+    public void ClientRefusesMistakes()
     {
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddBleHubClient<ITestHub>(TestChar, o => o.ServiceUuid = "180D"));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddBleHubClient<ITestHub>("nope"));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE("180D", TestChar)));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseBluetoothLE(Custom, "nope")));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("not valid", o => o.UseHttp()));
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", _ => { }));
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>("test", o => o.UseHttp().UseHttp()));
     }
 }

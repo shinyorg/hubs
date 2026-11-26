@@ -66,7 +66,7 @@ public static class MultipeerExtensions
     /// services.AddUniversalHubClient&lt;IGameHub&gt;(CharacteristicUuid, "_unigame._tcp", o => o.Multipeer("unigame-mc"));
     /// </code>
     /// </summary>
-    public static UniversalHubClientOptions Multipeer(this UniversalHubClientOptions options, string serviceType, Action<MultipeerClientOptions>? configure = null)
+    public static UniversalHubClientOptions UseMultipeer(this UniversalHubClientOptions options, string serviceType, Action<MultipeerClientOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         MultipeerProtocol.ValidateServiceType(serviceType);

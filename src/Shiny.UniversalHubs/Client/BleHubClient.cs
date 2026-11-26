@@ -10,7 +10,8 @@ using Shiny.BluetoothLE.Hubs.Protocol;
 namespace Shiny.BluetoothLE.Hubs;
 
 /// <summary>
-/// Base class for the generated hub proxies - owns the BLE connection, handshake, call correlation, push dispatch and files
+/// Base class for the generated hub proxies - owns the connection over whichever transport carries it: handshake, call
+/// timeouts, push dispatch, files and media
 /// </summary>
 public abstract class BleHubClient : IBleHubConnection, IDisposable
 {
@@ -21,19 +22,22 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     Connection? connection;
 
 
-    protected BleHubClient(BleHubClientServices services, string serviceUuid, string characteristicUuid)
+    protected BleHubClient(BleHubClientServices services, string hubName)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hubName);
         this.services = services;
-        this.ServiceUuid = BleUuid.Normalize(serviceUuid, nameof(serviceUuid));
-        this.CharacteristicUuid = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
+        this.HubName = hubName;
         this.logger = services.LoggerFactory?.CreateLogger(this.GetType().FullName!);
     }
 
 
-    public string ServiceUuid { get; }
-    public string CharacteristicUuid { get; }
+    /// <summary>
+    /// The hub's name - how this client asks for it on every transport
+    /// </summary>
+    public string HubName { get; }
+    internal BleHubClientServices Services => this.services;
+    internal ILogger? Logger => this.logger;
     public BleHubClientStatus Status { get; private set; } = BleHubClientStatus.Disconnected;
-    public BleHubHostInfo? Host => this.connection?.Host;
     public string? HostName => this.connection?.HostName;
     public string? ClientName => this.connection?.ClientName;
 
@@ -55,71 +59,6 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     public event EventHandler<string?>? HostRenamed;
 
 
-    public IObservable<BleHubHostInfo> Discover()
-    {
-        var ble = this.services.BleManager ?? throw new InvalidOperationException("IBleManager is not registered - call AddBluetoothLE()");
-        return Observable
-            .FromAsync(() => ble.RequestAccessAsync())
-            .SelectMany(access => access == AccessState.Available
-                ? ble.Scan(new ScanConfig(this.ServiceUuid))
-                : Observable.Throw<ScanResult>(new BleHubException($"Bluetooth is not available ({access})"))
-            )
-            // a scan on the device that is hosting can report the device's own advertisement - checked per result, since
-            // this app's host can start or stop advertising mid-scan
-            .Where(x => this.services.LocalAdvertisement?.IsLocal(this.ServiceUuid, x.AdvertisementData?.LocalName) != true)
-            .Select(x => new BleHubHostInfo(x.Peripheral, x.AdvertisementData?.LocalName ?? x.Peripheral.Name, x.Rssi));
-    }
-
-
-    public async Task Connect(BleHubHostInfo host, BleHubConnectOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        var ble = this.services.BleManager ?? throw new InvalidOperationException("IBleManager is not registered - call AddBluetoothLE()");
-        if (ble.IsScanning)
-            ble.StopScan();
-
-        // A scan started since this host was discovered drops it from the manager's cache (Shiny does that on
-        // Apple), and the connection's events then go to the manager's new instance - connecting the old one waits
-        // forever. Connect the manager's current instance for the same device.
-        if (ble.GetKnownPeripheral(host.Peripheral.Uuid) is { } current && !ReferenceEquals(current, host.Peripheral))
-        {
-            this.logger?.LogDebug("Using the current instance of {Peripheral} - the discovered one went stale", host.Peripheral.Uuid);
-            host = host with { Peripheral = current };
-        }
-
-        var p = host.Peripheral;
-        await this.ConnectTransportCore(host, events =>
-        {
-            this.services.Connections.Acquire(p.Uuid);
-            var link = new BleFrameLink(p, this.ServiceUuid, this.CharacteristicUuid, this.services.Connections, this.logger);
-            return new FrameClientTransport(this.services.Options, link, events, this.logger);
-        }, options, cancellationToken).ConfigureAwait(false);
-    }
-
-
-    /// <summary>
-    /// Asks for the largest ATT MTU (<see cref="FrameCodec.MaxAttMtu"/>) on a new BLE connection, so hub messages go in as
-    /// few frames as possible. Android negotiates what is asked for; Apple platforms negotiate on their own and can't be
-    /// asked, so the current MTU stands. Returns the ATT MTU - Shiny reports the payload size (ATT MTU minus the header).
-    /// </summary>
-    internal static async Task<int> NegotiateMtu(IPeripheral peripheral, ILogger? logger, CancellationToken cancellationToken)
-    {
-        var payload = peripheral.Mtu;
-        try
-        {
-            payload = await peripheral.TryRequestMtuAsync(FrameCodec.MaxAttMtu, cancelToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            logger?.LogDebug(ex, "MTU request failed - continuing with the current MTU");
-            payload = peripheral.Mtu;
-        }
-
-        var attMtu = payload + BleConstants.AttHeaderSize;
-        logger?.LogInformation("ATT MTU {Mtu} (asked for {Requested}, {Payload} byte frames)", attMtu, FrameCodec.MaxAttMtu, FrameCodec.GetFrameSize(attMtu));
-        return attMtu;
-    }
-
-
     /// <summary>
     /// Connects over a caller supplied frame link (tests / in-memory). Frames from the host go to <see cref="ReceiveFrame"/>.
     /// </summary>
@@ -131,7 +70,6 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         Func<ushort, bool, CancellationToken, Task<L2CapChannel>>? openL2Cap = null,
         Func<CancellationToken, Task<int>>? relink = null
     ) => this.ConnectTransportCore(
-        null,
         events => new FrameClientTransport(this.services.Options, new DelegateFrameLink(write, mtu, openL2Cap, relink), events, this.logger),
         options,
         cancellationToken
@@ -150,12 +88,11 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     )
     {
         ArgumentNullException.ThrowIfNull(createTransport);
-        return this.ConnectTransportCore(null, createTransport, options, cancellationToken);
+        return this.ConnectTransportCore(createTransport, options, cancellationToken);
     }
 
 
     async Task ConnectTransportCore(
-        BleHubHostInfo? host,
         Func<IBleHubClientTransportEvents, IBleHubClientTransport> createTransport,
         BleHubConnectOptions? options,
         CancellationToken cancellationToken
@@ -165,7 +102,7 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
         try
         {
             this.AssertDisconnected();
-            var conn = this.Begin(host);
+            var conn = this.Begin();
             conn.External = createTransport(new ExternalEvents(this, conn));
 
             // the transport says whether it can resume - it knows whether it can reopen its link
@@ -451,9 +388,9 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
 
     // ---- connection lifecycle ----
 
-    Connection Begin(BleHubHostInfo? host)
+    Connection Begin()
     {
-        var conn = new Connection(host);
+        var conn = new Connection();
         this.connection = conn;
         this.SetStatus(BleHubClientStatus.Connecting, null);
         _ = Task.Run(() => this.PumpPushes(conn));
@@ -617,9 +554,8 @@ public abstract class BleHubClient : IBleHubConnection, IDisposable
     }
 
 
-    sealed class Connection(BleHubHostInfo? host)
+    sealed class Connection
     {
-        public BleHubHostInfo? Host { get; } = host;
         public HandshakeAck? Ack { get; set; }
         public string? HostName { get; set; }
         public string? ClientName { get; set; }

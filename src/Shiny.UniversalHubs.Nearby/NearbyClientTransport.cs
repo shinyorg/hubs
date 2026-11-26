@@ -17,7 +17,7 @@ internal sealed class NearbyClientTransport(NearbyLink link, NearbyClientOptions
     // nothing to find where there is no Nearby Connections - not an error worth logging on every scan
     public IObservable<HubHostSighting> Discover(BleHubClient client) => !link.IsSupported ? Observable.Empty<HubHostSighting>() : Observable.Create<HubHostSighting>(observer =>
     {
-        var tag = NearbyProtocol.HubTag(client.CharacteristicUuid);
+        var tag = NearbyProtocol.HubTag(client.HubName);
 
         // a lost endpoint only comes with its id - remember what it was called when it was found
         var names = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
@@ -56,7 +56,7 @@ internal sealed class NearbyClientTransport(NearbyLink link, NearbyClientOptions
                     HubTransports.Nearby,
                     connection,
                     events,
-                    client.CharacteristicUuid,
+                    client.HubName,
                     loggerFactory?.CreateLogger<PeerHubTransport>(),
                     connectOptions.AutomaticReconnect ? ct => link.Connect(endpointId, endpointName, options.ConnectTimeout, ct) : null
                 ),

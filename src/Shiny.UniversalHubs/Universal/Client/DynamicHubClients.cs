@@ -60,12 +60,14 @@ public static class DynamicHubClientExtensions
         if (services.Any(x => x.ServiceType == typeof(IDynamicHubClients)))
             throw new InvalidOperationException("AddDynamicHubClients can only be called once");
 
-        services.AddBleHubClientCore();
+        services.AddHubClientCore();
         services.AddHttpServerLocator();
 
         // add-on transports (Multipeer) register once, whatever the client
         var shared = new UniversalHubClientOptions();
         configure?.Invoke(shared);
+        // and BLE and HTTP, which every dynamic hub client uses
+        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, BleHubProtocolOptions.DefaultServiceUuid).UseHttp();
         foreach (var c in shared.ServiceActions)
             c(services);
 
@@ -81,15 +83,14 @@ internal sealed class DynamicHubClients(IServiceProvider services, Action<Univer
     {
         UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
 
+        var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
         var options = new UniversalHubClientOptions();
         configure?.Invoke(options);
-        options.ServiceType = mdnsServiceType;
 
-        var proxy = new DynamicHubProxy(
-            services.GetRequiredService<BleHubClientServices>(),
-            BleUuid.Normalize(options.ServiceUuid, nameof(options.ServiceUuid)),
-            BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid))
-        );
+        // a dynamic hub is served over BLE and HTTP under its characteristic, which is also its name
+        options.UseBluetoothLE(options.DynamicBleServiceUuid, characteristic).UseHttp(mdnsServiceType);
+
+        var proxy = new DynamicHubProxy(services.GetRequiredService<BleHubClientServices>(), characteristic);
         return new UniversalHubClient<IDynamicHubCalls>(
             proxy,
             () => services.GetService<IHttpServerLocator>(),
@@ -104,8 +105,8 @@ internal sealed class DynamicHubClients(IServiceProvider services, Action<Univer
 /// <summary>
 /// The proxy a dynamic hub client calls through - what the generator writes for a contract, by name instead
 /// </summary>
-internal sealed class DynamicHubProxy(BleHubClientServices services, string serviceUuid, string characteristicUuid)
-    : BleHubClient(services, serviceUuid, characteristicUuid), IDynamicHubCalls, IBleHubClient<IDynamicHubCalls>
+internal sealed class DynamicHubProxy(BleHubClientServices services, string hubName)
+    : BleHubClient(services, hubName), IDynamicHubCalls, IBleHubClient<IDynamicHubCalls>
 {
     public IDynamicHubCalls Hub => this;
 

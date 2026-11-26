@@ -19,8 +19,8 @@ static class Emitter
         sb.AppendLine(GeneratedCode);
         sb.AppendLine($"{access} sealed partial class {c.ProxyName} : global::Shiny.BluetoothLE.Hubs.BleHubClient, {c.FullName}, global::Shiny.BluetoothLE.Hubs.IBleHubClient<{c.FullName}>");
         sb.AppendLine("{");
-        sb.AppendLine($"    public {c.ProxyName}(global::Shiny.BluetoothLE.Hubs.BleHubClientServices services, string serviceUuid, string characteristicUuid)");
-        sb.AppendLine("        : base(services, serviceUuid, characteristicUuid) { }");
+        sb.AppendLine($"    public {c.ProxyName}(global::Shiny.BluetoothLE.Hubs.BleHubClientServices services, string hubName)");
+        sb.AppendLine("        : base(services, hubName) { }");
         sb.AppendLine();
         sb.AppendLine($"    public {c.FullName} Hub => this;");
         sb.AppendLine();
@@ -70,7 +70,7 @@ static class Emitter
         sb.AppendLine();
         sb.AppendLine("    [global::System.Runtime.CompilerServices.ModuleInitializer]");
         sb.AppendLine($"    internal static void RegisterBleHubClient() => global::Shiny.BluetoothLE.Hubs.BleHubClientFactories.Register<{c.FullName}, {c.ProxyName}>(");
-        sb.AppendLine($"        static (services, serviceUuid, characteristicUuid) => new {c.ProxyName}(services, serviceUuid, characteristicUuid)");
+        sb.AppendLine($"        static (services, hubName) => new {c.ProxyName}(services, hubName)");
         sb.AppendLine("    );");
         sb.AppendLine("}");
         CloseNamespace(sb, c.Namespace);

@@ -62,7 +62,7 @@ public class MediaChannelTests : IAsyncLifetime
 
     async Task<BleHubClient> Connect(string centralId)
     {
-        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), BleHubProtocolOptions.DefaultServiceUuid, TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), TestChar);
         var central = new FakeCentral(centralId);
         var ch = this.hosting.Characteristic(TestChar);
         var previous = ch.Notified;
@@ -409,7 +409,7 @@ public class MediaChannelTests : IAsyncLifetime
     public async Task NotConnectedCantOpen()
     {
         await this.Start();
-        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), BleHubProtocolOptions.DefaultServiceUuid, TestChar);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), TestChar);
         Assert.False(client.CanOpenMediaChannel);
         await Assert.ThrowsAsync<BleHubDisconnectedException>(() => client.OpenMediaChannel());
     }

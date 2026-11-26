@@ -69,8 +69,9 @@ public class MediaChannelTests : IAsyncLifetime
     {
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType);
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
             })

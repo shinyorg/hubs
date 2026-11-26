@@ -95,8 +95,9 @@ public class DynamicHubTests : IAsyncLifetime
         server ??= this.app;
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<TContract>(characteristicUuid, ServiceType, o =>
+            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(ServiceType);
                 o.HttpMessageHandlerFactory = () => server.Server.CreateInMemoryHandler();
                 o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
             })

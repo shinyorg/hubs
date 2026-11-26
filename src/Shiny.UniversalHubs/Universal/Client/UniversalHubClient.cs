@@ -109,33 +109,13 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             }
         }
 
-        IDisposable? bleScan = null;
-        if (transports.HasFlag(HubTransports.Ble))
-        {
-            try
-            {
-                bleScan = this.inner.Discover().Subscribe(
-                    found =>
-                    {
-                        var name = found.Name ?? found.Id;
-                        Update(name, name, x => x with { Ble = found });
-                    },
-                    ex => this.logger?.LogWarning(ex, "BLE discovery stopped")
-                );
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogWarning(ex, "BLE discovery is unavailable");
-            }
-        }
-
         try
         {
-            if (transports.HasFlag(HubTransports.Http) && this.locator.Value is { } wifi)
+            if (transports.HasFlag(HubTransports.Http) && this.options.Enabled.HasFlag(HubTransports.Http) && this.locator.Value is { } wifi)
             {
                 try
                 {
-                    await foreach (var e in wifi.WatchAsync(this.options.ServiceType, ct).ConfigureAwait(false))
+                    await foreach (var e in wifi.WatchAsync(this.options.HttpServiceType, ct).ConfigureAwait(false))
                     {
                         if (!this.Serves(e.Server))
                             continue;
@@ -156,7 +136,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
                 }
             }
 
-            // BLE alone (or Wi-Fi gave up) - stay subscribed until the caller disposes
+            // no HTTP (or it gave up) - stay subscribed until the caller disposes
             await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -164,7 +144,6 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         }
         finally
         {
-            bleScan?.Dispose();
             foreach (var scan in extraScans)
                 scan.Dispose();
         }
@@ -185,12 +164,8 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
             {
                 switch (transport)
                 {
-                    case HubTransports.Http:
+                    case HubTransports.Http when this.options.Enabled.HasFlag(HubTransports.Http):
                         await this.ConnectHttpOrRediscover(host.Http!, options, cancellationToken).ConfigureAwait(false);
-                        break;
-
-                    case HubTransports.Ble:
-                        await this.inner.Connect(host.Ble!, this.ToBle(options), cancellationToken).ConfigureAwait(false);
                         break;
 
                     default:
@@ -254,7 +229,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         try
         {
             var fresh = await wifi.FindFirstAsync(
-                this.options.ServiceType,
+                this.options.HttpServiceType,
                 this.options.HttpRediscoverTimeout,
                 x => x.InstanceName.Equals(stale.InstanceName, StringComparison.OrdinalIgnoreCase) && this.Serves(x),
                 cancellationToken
@@ -278,7 +253,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         {
             var baseUri = address == null ? server.BaseAddress : server.BaseAddressFor(address);
             var root = baseUri.ToString().TrimEnd('/');
-            var hubUri = new Uri($"{root}/{this.client.CharacteristicUuid.ToLowerInvariant()}");
+            var hubUri = new Uri($"{root}/{Uri.EscapeDataString(this.client.HubName)}");
             var filesUri = new Uri($"{root}/files");
             var mediaUri = new Uri($"{root}/media");
 
@@ -312,7 +287,7 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         if (!server.TxtRecords.TryGetValue(UniversalHubProtocol.TxtHubs, out var hubs))
             return false;
 
-        var mine = this.client.CharacteristicUuid;
+        var mine = this.client.HubName;
         if (!hubs.Split(',').Any(x => x.Trim().Equals(mine, StringComparison.OrdinalIgnoreCase)))
             return false;
 
@@ -353,7 +328,6 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 
     public TContract Hub => this.inner.Hub;
     public BleHubClientStatus Status => this.inner.Status;
-    public BleHubHostInfo? Host => this.inner.Host;
     public string? HostName => this.inner.HostName;
     public string? ClientName => this.inner.ClientName;
     public bool CanTransferFiles => this.inner.CanTransferFiles;
@@ -381,11 +355,6 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         add => this.inner.HostRenamed += value;
         remove => this.inner.HostRenamed -= value;
     }
-
-    public IObservable<BleHubHostInfo> Discover() => this.inner.Discover();
-
-    public Task Connect(BleHubHostInfo host, BleHubConnectOptions? options = null, CancellationToken cancellationToken = default)
-        => this.inner.Connect(host, options, cancellationToken);
 
     public Task Disconnect() => this.inner.Disconnect();
 

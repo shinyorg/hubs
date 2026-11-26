@@ -82,7 +82,7 @@ public class HandlerHubTests : IAsyncLifetime
 
     async Task<TContract> Connect<TContract>(string characteristicUuid, string centralId) where TContract : class
     {
-        var client = BleHubClientFactories.Create<TContract>(new BleHubClientServices(this.options, this.serializer), ServiceUuid, characteristicUuid);
+        var client = BleHubClientFactories.Create<TContract>(new BleHubClientServices(this.options, this.serializer), characteristicUuid);
         var central = new FakeCentral(centralId);
         var ch = this.hosting.Characteristic(characteristicUuid);
 

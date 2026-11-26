@@ -66,7 +66,6 @@ public sealed record BleHubStatusChangedEventArgs(BleHubClientStatus Status, Hub
 public interface IBleHubConnection
 {
     BleHubClientStatus Status { get; }
-    BleHubHostInfo? Host { get; }
 
     /// <summary>
     /// The host's advertised name, from the handshake - kept up to date when the host renames itself
@@ -80,7 +79,8 @@ public interface IBleHubConnection
     string? ClientName { get; }
 
     /// <summary>
-    /// Whether the host serves L2CAP file transfers (and this device supports L2CAP)
+    /// Whether this connection can move files: the host serves them, and the transport can carry them (over BLE: this
+    /// device supports L2CAP)
     /// </summary>
     bool CanTransferFiles { get; }
 
@@ -99,13 +99,6 @@ public interface IBleHubConnection
     /// </summary>
     event EventHandler<string?>? HostRenamed;
 
-    /// <summary>
-    /// Scans for hosts serving this hub. Dispose the subscription to stop scanning. While this app hosts hubs too
-    /// (AddUniversalServer), its own advertisement is left out - matched by service UUID and advertised local name.
-    /// </summary>
-    IObservable<BleHubHostInfo> Discover();
-
-    Task Connect(BleHubHostInfo host, BleHubConnectOptions? options = null, CancellationToken cancellationToken = default);
     Task Disconnect();
 
     /// <summary>
@@ -149,55 +142,15 @@ public interface IBleHubClient<out TContract> : IBleHubConnection where TContrac
 
 
 /// <summary>
-/// Services the generated proxies need - registered by AddBleHubClient
+/// Services the generated proxies need - registered by AddUniversalHubClient
 /// </summary>
 public sealed class BleHubClientServices(
     BleHubProtocolOptions options,
     IBleHubSerializer serializer,
-    IBleManager? bleManager = null,
     ILoggerFactory? loggerFactory = null
 )
 {
     public BleHubProtocolOptions Options { get; } = options;
     public IBleHubSerializer Serializer { get; } = serializer;
-    public IBleManager? BleManager { get; } = bleManager;
     public ILoggerFactory? LoggerFactory { get; } = loggerFactory;
-    internal BleConnectionTracker Connections { get; } = new();
-
-    /// <summary>
-    /// What this app's own hub host is advertising - discovery leaves it out
-    /// </summary>
-    internal LocalHubAdvertisement? LocalAdvertisement { get; init; }
-}
-
-
-/// <summary>
-/// Several hub clients can share one BLE connection to a host - only the last one out disconnects
-/// </summary>
-internal sealed class BleConnectionTracker
-{
-    readonly Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
-
-    public void Acquire(string peripheralId)
-    {
-        lock (this.counts)
-            this.counts[peripheralId] = this.counts.TryGetValue(peripheralId, out var c) ? c + 1 : 1;
-    }
-
-    /// <summary>
-    /// Returns true when nobody else is using the connection
-    /// </summary>
-    public bool Release(string peripheralId)
-    {
-        lock (this.counts)
-        {
-            if (!this.counts.TryGetValue(peripheralId, out var c) || c <= 1)
-            {
-                this.counts.Remove(peripheralId);
-                return true;
-            }
-            this.counts[peripheralId] = c - 1;
-            return false;
-        }
-    }
 }

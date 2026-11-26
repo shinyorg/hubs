@@ -11,7 +11,7 @@ public class MtuTests
     public async Task EveryConnectionAsksForTheLargestAttMtu()
     {
         var p = new FakeMtuPeripheral("p");
-        var attMtu = await BleHubClient.NegotiateMtu(p, null, CancellationToken.None);
+        var attMtu = await BleFrameLink.NegotiateMtu(p, null, CancellationToken.None);
 
         Assert.Equal(517, p.Requested);
         Assert.Equal(517, attMtu);
@@ -23,7 +23,7 @@ public class MtuTests
     public async Task TheGrantedMtuIsUsedWhenItIsSmaller()
     {
         var p = new FakeMtuPeripheral("p", maxAttMtu: 247);
-        Assert.Equal(247, await BleHubClient.NegotiateMtu(p, null, CancellationToken.None));
+        Assert.Equal(247, await BleFrameLink.NegotiateMtu(p, null, CancellationToken.None));
         Assert.Equal(244, FrameCodec.GetFrameSize(247));
     }
 
@@ -33,7 +33,7 @@ public class MtuTests
     {
         // Apple negotiates on its own - Shiny reports the payload size it settled on
         var p = new FakeScanPeripheral("p", null, mtu: 182);
-        Assert.Equal(185, await BleHubClient.NegotiateMtu(p, null, CancellationToken.None));
+        Assert.Equal(185, await BleFrameLink.NegotiateMtu(p, null, CancellationToken.None));
     }
 
 
@@ -41,7 +41,7 @@ public class MtuTests
     public async Task AFailedRequestKeepsTheCurrentMtu()
     {
         var p = new FakeMtuPeripheral("p", fail: new InvalidOperationException("busy"));
-        Assert.Equal(BleConstants.DefaultAttMtu, await BleHubClient.NegotiateMtu(p, null, CancellationToken.None));
+        Assert.Equal(BleConstants.DefaultAttMtu, await BleFrameLink.NegotiateMtu(p, null, CancellationToken.None));
         Assert.Equal(517, p.Requested);
     }
 }

@@ -96,8 +96,9 @@ public class UniversalHubTests : IAsyncLifetime
         server ??= this.app;
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
                 o.HttpMessageHandlerFactory = () => server.Server.CreateInMemoryHandler();
                 o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
             })
@@ -161,8 +162,9 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var services = new ServiceCollection()
             .AddLogging()
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType);
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.HttpConnectTimeout = TimeSpan.FromSeconds(2);
             })
@@ -307,25 +309,47 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalServer(
             s => s.AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(serviceType))
         ));
-        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, serviceType));
+        Assert.Throws<ArgumentException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseHttp(serviceType)));
     }
 
 
     [Fact]
-    public void HubClientsUseTheirServiceUuid()
+    public async Task AHubServedOnlyOverHttpIsReachedByItsName()
     {
-        // hubs are characteristics in a single BLE service - two advertised 128-bit UUIDs overflow the advertisement
-        const string custom = "11111111-2222-3333-4444-555555555555";
-        using var sp = new ServiceCollection()
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.ServiceUuid = custom)
-            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.ServiceUuid = custom)
-            .BuildServiceProvider();
+        var builder = HttpServer.CreateBuilder();
+        builder.Options.Port = 0;
+        builder.Services.AddSingleton<HubLog>();
+        builder.Services.AddUniversalServer(server => server
+            .Configure(o => o.LocalName = "HttpOnly")
+            .Http(o =>
+            {
+                o.Advertise = false;
+                o.ManageHttpServer = false;
+            })
+            .AddHub<TestHub>("chat-room", h => h.UseHttp(MdnsServiceType)));
+        await using var app = TestHttpServer.For(builder.Build());
 
-        var test = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<ITestHub>>();
-        var other = (BleHubClient)(object)sp.GetRequiredService<IBleHubClient<IOtherHub>>();
-        Assert.Equal(custom, test.ServiceUuid);
-        Assert.Equal(custom, other.ServiceUuid);
-        Assert.NotEqual(test.CharacteristicUuid, other.CharacteristicUuid);
+        // no BLE anywhere - the hub is served over HTTP alone
+        var host = app.Services.GetRequiredService<IUniversalHubHost>();
+        Assert.Equal(HubTransports.Http, await host.Start());
+        Assert.Equal(HubTransports.Http, host.GetRunningTransports<TestHub>());
+
+        var services = new ServiceCollection()
+            .AddLogging()
+            .AddUniversalHubClient<ITestHub>("chat-room", o =>
+            {
+                o.UseHttp(MdnsServiceType);
+                o.HttpMessageHandlerFactory = () => app.Server.CreateInMemoryHandler();
+            })
+            .BuildServiceProvider();
+        this.clientContainers.Add(services);
+
+        var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
+        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"));
+        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.Equal("Alice", await client.Hub.WhoAmI());
+        Assert.Equal("HttpOnly", client.HostName);
+        await host.Stop();
     }
 
 

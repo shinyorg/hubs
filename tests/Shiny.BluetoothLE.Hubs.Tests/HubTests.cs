@@ -63,7 +63,7 @@ public class HubTests : IAsyncLifetime
 
     ITestHub CreateProxy(string peerId)
     {
-        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
+        var client = BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), CharacteristicUuid);
         this.clients[peerId] = client;
         return (ITestHub)client;
     }

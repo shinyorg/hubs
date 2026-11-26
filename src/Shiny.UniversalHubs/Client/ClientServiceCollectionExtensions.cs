@@ -1,102 +1,23 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Shiny.BluetoothLE;
 
 namespace Shiny.BluetoothLE.Hubs;
 
-public static class ClientServiceCollectionExtensions
+internal static class ClientServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the generated proxy for <typeparamref name="TContract"/> as a singleton. Resolve it as
-    /// IBleHubClient&lt;TContract&gt; (connection + Hub) or as TContract. It scans for and connects to
-    /// <see cref="BleHubClientOptions.ServiceUuid"/>, which must match the host's. On Android, iOS and Mac Catalyst it adds
-    /// the BLE stack (AddBluetoothLE) too; on plain .NET, register an IBleManager yourself.
+    /// What every hub client needs - the protocol, the serializer and the services proxies are created with - without a
+    /// proxy or a transport. AddUniversalHubClient calls it; so does a client created at runtime (dynamic hub clients).
     /// </summary>
-    /// <param name="characteristicUuid">The hub's characteristic - the one the host added it with</param>
-    /// <param name="configure">The service UUID, and the app-wide protocol limits</param>
-    public static IServiceCollection AddBleHubClient<TContract>(
-        this IServiceCollection services,
-        string characteristicUuid,
-        Action<BleHubClientOptions>? configure = null
-    ) where TContract : class
+    public static IServiceCollection AddHubClientCore(this IServiceCollection services)
     {
-        var options = new BleHubClientOptions();
-        configure?.Invoke(options);
-        var serviceUuid = BleUuid.Normalize(options.ServiceUuid, nameof(options.ServiceUuid));
-        var charUuid = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
-
-        services.AddBleHubClientCore();
-        foreach (var c in options.ProtocolActions)
-            services.ConfigureBleHubProtocol(c);
-
-        services.AddSingleton<IBleHubClient<TContract>>(sp => (IBleHubClient<TContract>)BleHubClientFactories.Create<TContract>(
-            sp.GetRequiredService<BleHubClientServices>(),
-            serviceUuid,
-            charUuid
-        ));
-        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
-        return services;
-    }
-
-
-    /// <summary>
-    /// What every hub client needs - the platform BLE stack, the protocol and serializer, and the services proxies are
-    /// created with - without a proxy. AddBleHubClient calls it; so does a client created at runtime (UniversalHubs'
-    /// dynamic hub clients).
-    /// </summary>
-    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
-    public static IServiceCollection AddBleHubClientCore(this IServiceCollection services)
-    {
-#if IOS || MACCATALYST
-        // the platform BLE central stack - a no-op when the app already added it. Hubs are a foreground thing, so iOS isn't
-        // asked to alert the user about connections and notifications while the app is in the background (Shiny's
-        // defaults). Call AddBluetoothLE(config) before this to use your own AppleBleConfiguration.
-        services.AddBluetoothLE(new AppleBleConfiguration
-        {
-            NotifyOnConnection = false,
-            NotifyOnDisconnection = false,
-            NotifyOnNotification = false
-        });
-#elif ANDROID
-        // the platform BLE central stack - a no-op when the app already added it
-        services.AddBluetoothLE();
-#endif
         services.AddBleHubCore();
         services.TryAddSingleton(sp => new BleHubClientServices(
             sp.GetRequiredService<BleHubProtocolOptions>(),
             sp.GetRequiredService<IBleHubSerializer>(),
-            sp.GetService<IBleManager>(),
             sp.GetService<ILoggerFactory>()
-        )
-        {
-            LocalAdvertisement = sp.GetService<LocalHubAdvertisement>()
-        });
-
+        ));
         return services;
-    }
-}
-
-
-/// <summary>
-/// How a hub client finds its host
-/// </summary>
-public sealed class BleHubClientOptions
-{
-    /// <summary>
-    /// The service the host serves its hubs under - scanned for and connected to. Must match the host's.
-    /// </summary>
-    public string ServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
-
-    internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
-
-    /// <summary>
-    /// Protocol limits (payload size, timeouts) - app-wide, shared with every other hub client and host in the app
-    /// </summary>
-    public BleHubClientOptions Protocol(Action<BleHubProtocolOptions> configure)
-    {
-        ArgumentNullException.ThrowIfNull(configure);
-        this.ProtocolActions.Add(configure);
-        return this;
     }
 }

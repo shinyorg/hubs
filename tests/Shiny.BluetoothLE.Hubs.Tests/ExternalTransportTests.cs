@@ -60,7 +60,7 @@ public class ExternalTransportTests : IAsyncLifetime
     public async ValueTask DisposeAsync() => await this.services.DisposeAsync();
 
 
-    BleHubClient CreateClient() => BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
+    BleHubClient CreateClient() => BleHubClientFactories.Create<ITestHub>(new BleHubClientServices(this.options, this.serializer), CharacteristicUuid);
 
 
     async Task<(ITestHub Hub, BleHubClient Client, MemoryTransport Transport)> Connect(string id = "wifi-1", string name = "Alice")
@@ -105,7 +105,6 @@ public class ExternalTransportTests : IAsyncLifetime
 
         Assert.Equal(BleHubClientStatus.Connected, client.Status);
         Assert.NotNull(client.ExternalTransport);
-        Assert.Null(client.Host);
         Assert.Contains("connected:Alice", this.log.Entries);
         Assert.Equal(["wifi-1"], this.runtime.GetMembers("everyone"));
 

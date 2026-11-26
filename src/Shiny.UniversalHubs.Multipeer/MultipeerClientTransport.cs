@@ -61,7 +61,7 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
                     HubTransports.Multipeer,
                     connection,
                     events,
-                    client.CharacteristicUuid,
+                    client.HubName,
                     loggerFactory?.CreateLogger<PeerHubTransport>(),
                     // a resume invites the same peer again - its MCPeerID lasts as long as the host's process
                     connectOptions.AutomaticReconnect ? ct => link.Connect(peer, options.InviteTimeout, ct) : null
@@ -86,7 +86,7 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
         if (!seen.Info!.TryGetValue(MultipeerProtocol.InfoHubs, out var hubs))
             return false;
 
-        var mine = client.CharacteristicUuid;
+        var mine = client.HubName;
         if (!hubs.Split(',').Any(x => x.Trim().Equals(mine, StringComparison.OrdinalIgnoreCase)))
             return false;
 

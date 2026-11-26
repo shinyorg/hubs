@@ -65,7 +65,7 @@ public static class NearbyExtensions
     /// services.AddUniversalHubClient&lt;IGameHub&gt;(CharacteristicUuid, "_mygame._tcp", o => o.Nearby("com.mycompany.mygame"));
     /// </code>
     /// </summary>
-    public static UniversalHubClientOptions Nearby(this UniversalHubClientOptions options, string serviceId, Action<NearbyClientOptions>? configure = null)
+    public static UniversalHubClientOptions UseNearby(this UniversalHubClientOptions options, string serviceId, Action<NearbyClientOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         NearbyProtocol.ValidateServiceId(serviceId);

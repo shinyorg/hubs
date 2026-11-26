@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
@@ -9,49 +8,44 @@ namespace Shiny.UniversalHubs;
 public static class UniversalHubClientExtensions
 {
     /// <summary>
-    /// Registers the generated proxy for <typeparamref name="TContract"/> (as AddBleHubClient does) plus Wi-Fi discovery
-    /// and transport. Resolve <see cref="IUniversalHubClient{TContract}"/>; IBleHubClient&lt;TContract&gt; and TContract
-    /// resolve to the same connection. On Android, iOS and Mac Catalyst it adds the BLE stack (AddBluetoothLE) too; on plain
-    /// .NET, register an IBleManager yourself.
+    /// Registers the generated proxy for <typeparamref name="TContract"/> as a client of the hub named
+    /// <paramref name="hubName"/>, over the transports <paramref name="configure"/> picks (at least one). Resolve
+    /// <see cref="IUniversalHubClient{TContract}"/>; IBleHubClient&lt;TContract&gt; and TContract resolve to the same
+    /// connection.
+    /// <code>
+    /// services.AddUniversalHubClient&lt;IGameHub&gt;("game", o => o
+    ///     .UseBluetoothLE(ServiceUuid, GameCharacteristicUuid)
+    ///     .UseHttp("_game._tcp"));
+    /// </code>
     /// </summary>
-    /// <summary>
-    /// The client side of a universal hub (see AddUniversalServer): discovers hosts over BLE and mDNS and connects over
-    /// either. <paramref name="mdnsServiceType"/> must match the one the hub was added with. Resolve <see cref="IUniversalHubClient{TContract}"/>.
-    /// On Android, iOS and Mac Catalyst it adds the BLE stack (AddBluetoothLE) too.
-    /// </summary>
+    /// <param name="hubName">The name the host added the hub under</param>
     public static IServiceCollection AddUniversalHubClient<TContract>(
         this IServiceCollection services,
-        string characteristicUuid,
-        string mdnsServiceType,
-        Action<UniversalHubClientOptions>? configure = null
+        string hubName,
+        Action<UniversalHubClientOptions> configure
     ) where TContract : class
     {
-        UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+        UniversalServerExtensions.ValidateHubName(hubName);
 
-        return services.AddUniversalHubClient<TContract>(characteristicUuid, o =>
-        {
-            o.ServiceType = mdnsServiceType;
-            configure?.Invoke(o);
-        });
-    }
-
-
-    public static IServiceCollection AddUniversalHubClient<TContract>(
-        this IServiceCollection services,
-        string characteristicUuid,
-        Action<UniversalHubClientOptions>? configure = null
-    ) where TContract : class
-    {
         var options = new UniversalHubClientOptions();
-        configure?.Invoke(options);
+        configure(options);
+        if (options.Enabled == HubTransports.None)
+            throw new InvalidOperationException($"The {hubName} client isn't set up with any transport - call UseBluetoothLE, UseHttp, UseMultipeer or UseNearby");
 
-        // blehubs adds the platform BLE stack (with iOS's background alerts off) on Android, iOS and Mac Catalyst
-        services.AddBleHubClient<TContract>(characteristicUuid, o => o.ServiceUuid = options.ServiceUuid);
-        services.AddHttpServerLocator();
+        services.AddHubClientCore();
+        foreach (var c in options.ProtocolActions)
+            services.ConfigureBleHubProtocol(c);
 
         foreach (var c in options.ServiceActions)
             c(services);
 
+        services.AddSingleton<IBleHubClient<TContract>>(sp => (IBleHubClient<TContract>)BleHubClientFactories.Create<TContract>(
+            sp.GetRequiredService<BleHubClientServices>(),
+            hubName
+        ));
+        services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
             sp.GetRequiredService<IBleHubClient<TContract>>(),
             // resolved on first discovery, so connecting to a known host needs no mDNS stack

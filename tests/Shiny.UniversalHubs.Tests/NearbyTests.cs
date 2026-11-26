@@ -102,11 +102,12 @@ public class NearbyTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<INearbyRadio>(device ?? this.network.CreateDevice())
-            .AddUniversalHubClient<TContract>(characteristicUuid, MdnsServiceType, o =>
+            .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
+                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
                 o.AutomaticReconnect = automaticReconnect;
                 o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
-                o.Nearby(ServiceId, nb => nb.EndpointName = "Phone");
+                o.UseNearby(ServiceId, nb => nb.EndpointName = "Phone");
             })
             .BuildServiceProvider();
 
@@ -386,8 +387,8 @@ public class NearbyTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<INearbyRadio>(this.network.CreateDevice())
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Nearby(ServiceId))
-            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.Nearby(ServiceId))
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId))
+            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId))
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
@@ -424,7 +425,7 @@ public class NearbyTests : IAsyncLifetime
     {
         // the chat sample: both phones host, and each visits the other
         var otherRadio = this.network.CreateDevice();
-        await using var otherApp = this.BuildHost(otherRadio, alsoOnThisDevice: s => s.AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Nearby(ServiceId)));
+        await using var otherApp = this.BuildHost(otherRadio, alsoOnThisDevice: s => s.AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId)));
         await otherApp.Services.GetRequiredService<IUniversalHubHost>().Start();
 
         // the other phone visits TestHost...
@@ -451,7 +452,7 @@ public class NearbyTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton(link)
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Nearby(ServiceId))
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId))
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
@@ -736,7 +737,7 @@ public class NearbyTests : IAsyncLifetime
         Assert.Throws<InvalidOperationException>(() => services.AddUniversalServer(server => server.Nearby(ServiceId).Nearby(ServiceId).AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby())));
 
         // Multipeer and Nearby side by side is fine - the same one twice is not
-        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Multipeer("x-mc").Nearby(ServiceId).Nearby(ServiceId)));
+        Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer("x-mc").UseNearby(ServiceId).UseNearby(ServiceId)));
     }
 
 
@@ -747,8 +748,8 @@ public class NearbyTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<INearbyRadio>(device)
-            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, MdnsServiceType, o => o.Nearby(ServiceId))
-            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, MdnsServiceType, o => o.Nearby("com.someone.else"))
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId))
+            .AddUniversalHubClient<IOtherHub>(OtherCharacteristicUuid, o => o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, OtherCharacteristicUuid).UseHttp(MdnsServiceType).UseNearby("com.someone.else"))
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
