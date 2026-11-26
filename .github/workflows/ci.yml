@@ -54,7 +54,7 @@ jobs:
     - name: Build
       run: dotnet build Build.slnf /restore -m -property:Configuration=Release
 
-    - name: Test Shiny.BluetoothLE.Hubs
+    - name: Test Shiny.UniversalHubs.BluetoothLE (and the core)
       run: dotnet test tests/Shiny.UniversalHubs.BluetoothLE.Tests --no-build -property:Configuration=Release
 
     - name: Test Shiny.UniversalHubs

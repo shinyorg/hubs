@@ -67,7 +67,7 @@ jobs:
     - name: Build
       run: dotnet build Build.slnf /restore -m -property:Configuration=Release -property:Version="$VERSION"
 
-    - name: Test Shiny.BluetoothLE.Hubs
+    - name: Test Shiny.UniversalHubs.BluetoothLE (and the core)
       run: dotnet test tests/Shiny.UniversalHubs.BluetoothLE.Tests --no-build -property:Configuration=Release
 
     - name: Test Shiny.UniversalHubs
@@ -101,8 +101,8 @@ jobs:
       run: >
         gh release create "$TAG"
         --repo "${{ github.repository }}"
-        --title "Shiny Hubs $VERSION"
-        --notes "Release notes: https://shinylib.net/universalhubs/release-notes/ and https://shinylib.net/blehubs/release-notes/"
+        --title "Shiny.UniversalHubs $VERSION"
+        --notes "Release notes: https://shinylib.net/universalhubs/release-notes/"
         --generate-notes
         --target "$GITHUB_SHA"
         $PRERELEASE

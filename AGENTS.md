@@ -1,99 +1,102 @@
-# Shiny Hubs — Working Notes
+# Shiny.UniversalHubs — Working Notes
 
-This repo holds every hub library:
-- **Shiny.BluetoothLE.Hubs** (`src/Shiny.BluetoothLE.Hubs*`): SignalR-style hubs over Bluetooth LE. Hub logic, the
-  wire protocol, the source generator, media channels and L2CAP files.
-- **Shiny.UniversalHubs** (`src/Shiny.UniversalHubs*`): the same hubs over Wi-Fi as well, through
-  **Shiny.Net.HttpServer.Switchboard** and mDNS, between Apple devices over **MultipeerConnectivity**
-  (`Shiny.UniversalHubs.Multipeer`), and between Android, iOS and macOS over Google's **Nearby Connections**
-  (`Shiny.UniversalHubs.Nearby`).
+**SignalR-style hubs over transports.** A hub is written once and served over the transports it picks - Bluetooth LE,
+HTTP (a WebSocket per hub connection, mDNS, tunnels), Apple's MultipeerConnectivity, Google's Nearby Connections, or a
+transport someone writes. Every client shares the hub's groups and pushes, whichever way it connected.
 
-The two were separate repos until 2026-10-23. blehubs' history stays in `~/Desktop/dev/blehubs`, which is no longer
-developed. Everything happens here, and all packages ship together.
+Shiny.BluetoothLE.Hubs (the BLE-only product, once a separate repo - its history is in `~/Desktop/dev/blehubs`) no longer
+exists on its own: its hubs, generator, files and media channels are the core here, and BLE is one transport package.
 
 - **Related repos:** httpserver (`~/Desktop/dev/httpserver`), consumed from NuGet. Versions are in
   `Directory.Packages.props`.
-- **Docs:** `README.md` covers both libraries and is every package's NuGet readme. The design detail lives on the docs
-  site (https://shinylib.net/blehubs/ and https://shinylib.net/universalhubs/, `how-it-works` in each).
+- **Docs:** `README.md` is every package's NuGet readme. The design detail lives on the docs site
+  (https://shinylib.net/universalhubs/).
 
 ## Layout
 
-- `src/Shiny.BluetoothLE.Hubs`: protocol (framing, chunking, codec), `[BleHubClient]`, `IBleHubMediaChannel`. Packs the
-  generator into `analyzers/dotnet/cs`.
-- `src/Shiny.BluetoothLE.Hubs.SourceGenerators`: proxies, dispatchers, push extensions (netstandard2.0, not packed on its own).
-- `src/Shiny.BluetoothLE.Hubs.Host` / `.Client`: `BleHub<T>`, `IBleHubHost`, `IHubContext<THub>`; `BleHubClient`, discovery.
-- `src/Shiny.UniversalHubs`: the shared Wi-Fi wire protocol (`UniversalHubProtocol`, `HubJson`), and the peer-link core
-  shared by Multipeer and Nearby (`IPeerConnection`, `PeerProtocol`, `PeerMediaChannel`; `PeerHostSession` lives in the
-  host package and `PeerHubTransport` in the client package).
-- `src/Shiny.UniversalHubs.Host`: the hub Switchboard, `IUniversalHubHost`, file and media routes, mDNS.
-- `src/Shiny.UniversalHubs.Client`: `IUniversalHubClient<T>`, merged discovery, `SwitchboardTransport`.
-- `src/Shiny.UniversalHubs.Multipeer`: the MultipeerConnectivity transport, host and client. Everything
-  but `Platforms/Apple/AppleMultipeerLink.cs` is plain .NET behind `IMultipeerLink`; it plugs into the internal add-on
-  seams (`IUniversalHubTransport`, `IUniversalHubClientTransport`) through `InternalsVisibleTo`.
-- `src/Shiny.UniversalHubs.Nearby`: the Nearby Connections transport. `NearbyLink` (channels, framing,
-  files) is plain .NET behind `INearbyRadio`; the radios are `Platforms/Android` (Google Play services) and
-  `Platforms/Apple` (`[LibraryImport]` into the native bridge).
+- `src/Shiny.UniversalHubs` (net11.0, no platform code): the core.
+  - `Core/`: arguments, serializer (`IHubSerializer`, `JsonHubSerializer`), exceptions, `HubDisconnect`, protocol
+    options, file types, `Protocol/` (BLE frame codec, chunking, handshake records).
+  - `Host/`: `HubRuntime` (the transport-free hub core), `HubContext`, `IHubEndpoint` / `IHubPeerChannel`, dispatchers.
+  - `Client/`: `HubProxy` (base of the generated proxies), `HubClientProtocol`, `IHubConnectionTransport`.
+  - `Universal/Host/`: `UniversalHubHost`, `IHubTransport`, `AddUniversalServer` builders, `UniversalHub<T>`,
+    `HubConnection`, dynamic hubs, `PeerHostSession` (the peer-link session HTTP, Multipeer and Nearby share).
+  - `Universal/Client/`: `UniversalHubClient`, `IHubClientTransport`, priority / prefer / allow, runtime enable/disable,
+    dynamic hub clients, `PeerHubTransport`.
+  - Root: `PeerProtocol`, `PeerLink` (`IPeerConnection`), `PeerMediaChannel`, `UniversalHubProtocol`.
+  - Packs the generator into `analyzers/dotnet/cs`.
+- `src/Shiny.UniversalHubs.SourceGenerators` (netstandard2.0, not packed on its own): proxies, dispatchers, pushes.
+- `src/Shiny.UniversalHubs.BluetoothLE` (`PlatformTargetFrameworks`): `BleHostTransport` (a GATT service per service
+  UUID, advertising, L2CAP files and media), `FrameHostSession`, `BleClientTransport` / `FrameClientTransport`
+  (scanning, GATT link), `BleUuid` / `BleAdvertisement` (short UUIDs, the 31-byte budget), the platform `#if`
+  registrations.
+- `src/Shiny.UniversalHubs.Http` (`PlatformTargetFrameworks`): `HttpHostTransport` (WebSocket route, mDNS),
+  `HttpClientTransport`, `WebSocketPeerConnection` (the peer link over a WebSocket, files chunked in-band).
+- `src/Shiny.UniversalHubs.Multipeer`: Multipeer, host and client. Everything but `Platforms/Apple/AppleMultipeerLink.cs`
+  is plain .NET behind `IMultipeerLink`.
+- `src/Shiny.UniversalHubs.Nearby`: Nearby. `NearbyLink` (channels, framing, files) is plain .NET behind `INearbyRadio`;
+  the radios are `Platforms/Android` (Google Play services) and `Platforms/Apple` (`[LibraryImport]` into the bridge).
 - `native/ShinyNearbyBridge`: Google's NearbyConnections Swift package behind `@_cdecl` C functions. `build.sh` makes
   `build/ios` and `build/macos` xcframeworks; run it before building the Nearby package or a sample for iOS / macOS.
   Its folder must not be named `nearby` (SwiftPM takes it for Google's package and reports a cycle).
-- `tests/Shiny.BluetoothLE.Hubs.Tests`: the generated proxy against a real `HubRuntime` through an in-memory radio, the
-  real `BleHubHost` against `FakeHostingManager`, codecs and generator diagnostics.
-- `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport,
-  over `FakeMultipeerNetwork` (in-memory MultipeerConnectivity) for Multipeer, and over `FakeNearbyNetwork` (in-memory
-  Nearby, with its 32 KB / 131 byte / one-connection-per-pair rules) for Nearby.
-- `skills/shiny-ble-hubs`, `skills/shiny-universal-hubs`: the published Claude Code skills.
-- `samples/Sample`: MAUI, iOS and Android. `samples/Sample/Calls` is the FaceTime-style call: app code over media
-  channels, Shiny.Audio's `IAudioDuplex` and the camera's `VideoEncoder` / `RemoteVideoView`, not a package.
-- `samples/Sample.MacOS`: the same app on macOS (maui-labs AppKit). It links all of `samples/Sample` (App, AppShell,
-  Pages, Hub, Game, Services, Calls), so code there must compile for macOS too: no MAUI `MainThread` (inject Shiny's
-  `IPlatform`: `InvokeOnMainThread` / `InvokeOnMainThreadAsync`). Only `MauiProgram` and the app delegate are Mac-only. Build it with `--no-incremental` after editing
+- `tests/Shiny.UniversalHubs.BluetoothLE.Tests`: the hub core and the BLE transport - the generated proxy against a real
+  `HubRuntime` through an in-memory frame link, the real `BleHostTransport` against `FakeHostingManager`, per-hub
+  services and advertising, codecs and generator diagnostics.
+- `tests/Shiny.UniversalHubs.Tests`: the real host and client over `Shiny.Net.HttpServer.Testing`'s in-memory transport
+  (HTTP / WebSocket), over `FakeMultipeerNetwork` and `FakeNearbyNetwork`, custom transports, priority, serializers,
+  dynamic hubs.
+- `skills/shiny-universal-hubs`: the published Claude Code skill. `skills/shiny-ble-hubs` is a short migration pointer
+  for people with old Shiny.BluetoothLE.Hubs code.
+- `samples/Sample`: MAUI, iOS and Android - a game, a chat, calls (`samples/Sample/Calls`, app code over media
+  channels), and the **Transports** page (`Services/TransportDriver.cs`): host and client switches per transport and
+  Solo, so each transport can be tested on its own.
+- `samples/Sample.MacOS`: the same app on macOS (maui-labs AppKit). It links all of `samples/Sample`, so code there must
+  compile for macOS too: no MAUI `MainThread` (inject Shiny's `IPlatform`). Only `MauiProgram` and the app delegate are
+  Mac-only, and it registers Shiny's macOS BLE stacks itself. Build it with `--no-incremental` after editing
   `samples/Sample`: incremental builds can skip the linked files.
 
 ## Rules
 
-- **Hub logic lives in Shiny.BluetoothLE.Hubs; UniversalHubs carries it.** UniversalHubs reaches the hub only through
-  the transport seams (`IHubContext<T>.TransportEndpoint`, `BleHubClient.ConnectExternal`, `IBleHubClientTransport`,
-  `IBleHubPeerChannel`). A feature that needs hub behavior goes into `Shiny.BluetoothLE.Hubs*` with its tests, in
-  the same change.
+- **Hub logic lives in the core; transports carry it.** A transport reaches a hub only through the seams
+  (`IHubBinding.Endpoint` / `IHubEndpoint`, `IHubPeerChannel` on the host; `HubClientContext.Connect` /
+  `IHubConnectionTransport` on the client). A feature that needs hub behavior goes into the core, with its tests.
+- **A transport's type is its identity.** Hubs pick transports by type, the host starts and stops them by type, clients
+  order and filter them by type. No transport registry, no names-as-keys. Transports a platform lacks report
+  `IsSupported = false` and are skipped quietly, so one registration works in a cross-platform app. First-party
+  transports use the core's internals through `InternalsVisibleTo`; anything a third-party transport needs must be public.
+- **A hub's name is its key on every transport** (HTTP path, mDNS / Multipeer / Nearby lists, peer handshake). BLE keys
+  by characteristic. Dynamic hubs are keyed by name too.
 - **AOT/trim safe, no reflection.** Dispatch, proxies and pushes come from the generator; arguments are serialized one
-  by one with their static type through `IBleHubSerializer`. Wi-Fi JSON goes through the source-generated
-  `UniversalHubJsonContext` or `JsonElement`. New public generics that DI constructs need `[DynamicallyAccessedMembers]`.
-- **Targets.** `Shiny.BluetoothLE.Hubs` and `Shiny.UniversalHubs` are `net11.0`. The host and client packages
-  multi-target `net11.0`, `-android`, `-ios` and `-maccatalyst` (`PlatformTargetFrameworks`) so `AddBleHubServer` /
-  `AddBleHubClient` register the platform BLE stacks. Keep platform code to those `#if` registration blocks.
-  `Shiny.UniversalHubs.Multipeer` targets `net11.0`, `-ios`, `-maccatalyst` and `-macos` (CI installs the `macos`
-  workload for it); its only platform code is the Apple link. `Shiny.UniversalHubs.Nearby` targets `net11.0`,
-  `-android`, `-ios` and `-macos`; its iOS / macOS builds are binding projects (an empty `ApiDefinition.cs`) only so the
-  SDK packs the xcframework beside the assembly. It lifts `Xamarin.AndroidX.Fragment.Ktx` to 1.9 because Google Play
-  services' `androidx.fragment` 1.9 absorbed it (MAUI apps otherwise fail D8 with duplicate classes).
-- **Registration is one call per side.** `AddBleHubServer(server => ...)` / `AddUniversalServer(server => ...)` once,
-  and `AddBleHubClient<T>` / `AddUniversalHubClient<T>` per contract. New settings go on the builders or options, not
-  new `Configure*` methods. Registration mistakes throw at registration.
+  by one with their static type through `IHubSerializer`. New public generics that DI constructs need
+  `[DynamicallyAccessedMembers]`.
+- **Targets.** The core is `net11.0`. `.BluetoothLE` and `.Http` multi-target `PlatformTargetFrameworks` (`net11.0`,
+  `-android`, `-ios`, `-maccatalyst`); BLE keeps platform code to its `#if` registration blocks. Multipeer targets
+  `net11.0`, `-ios`, `-maccatalyst`, `-macos` (CI installs the `macos` workload); its only platform code is the Apple
+  link. Nearby targets `net11.0`, `-android`, `-ios`, `-macos`; its iOS / macOS builds are binding projects (an empty
+  `ApiDefinition.cs`) so the SDK packs the xcframework; Android references Shiny.Core and lifts
+  `Xamarin.AndroidX.Fragment.Ktx` to 1.9 (Google Play services' `androidx.fragment` 1.9 absorbed it).
+- **Registration is one call per side.** `AddUniversalServer(server => ...)` once, `AddUniversalHubClient<T>("name", ...)`
+  per contract. New settings go on the builders or options. Registration mistakes throw at registration.
+- **BLE advertisement budget.** Hubs may have their own service UUIDs, but every `advertise: true` service must fit one
+  31-byte advertisement (3 bytes of flags, a field per UUID size). Registration throws when it doesn't; never let it
+  silently truncate.
 - **Hubs are foreground only.** No background BLE: no auto-connect, no state restoration.
-- **Four versioned wires.**
+- **Four versioned wires.** A breaking change bumps the version and the handshake refuses mismatches; additive optional
+  fields don't bump. Hub methods and events travel by name, so renaming one breaks deployed clients.
   - BLE: `FrameCodec.ProtocolVersion` and the `FrameKind` values. Never renumber a `FrameKind`.
-  - Wi-Fi: `UniversalHubProtocol.Version` covers the reserved method names, envelopes, handshake records, TXT keys and
-    the file and media routes.
-  - Peer links (Multipeer and Nearby): `PeerProtocol.Version` covers the message layout, the `PeerMessageKind` values
-    (never renumber), the control records, the file names, Multipeer's advertisement keys, and Nearby's endpoint info
-    and frames (`NearbyFrameKind`, never renumber).
-  - A breaking change bumps the version, and the handshake refuses mismatches. Hub methods and events travel by name,
-    so renaming one breaks deployed clients. Additive optional fields don't bump.
-- **Transport-free cores.** `HubRuntime` (host) and `HubClientProtocol` / `BleHubClient.ConnectTransport` (client) don't
-  know about BLE; `BleHubHost` and `BleHubClient.Connect` are thin adapters. Keep logic in the cores, testable without
-  hardware.
+  - Peer links (HTTP, Multipeer, Nearby): `PeerProtocol.Version` - the message layout, `PeerMessageKind` values (never
+    renumber), the control records, Multipeer's advertisement keys, Nearby's endpoint info and frames
+    (`NearbyFrameKind`, never renumber), and `WebSocketPeerConnection`'s frame kinds.
+  - HTTP: `UniversalHubProtocol.Version` - the WebSocket route and the mDNS TXT keys.
+  - Serializers: `IHubSerializer.Name` travels in the handshake; a mismatch is refused.
+- **Transport-free cores.** `HubRuntime` (host) and `HubClientProtocol` / `HubProxy.ConnectExternal` (client) don't know
+  about any transport. Keep logic in the cores, testable without hardware.
 - **Disconnect is cooperative** (iOS peripherals can't drop a central). Host-side disconnects send a `Disconnect` frame
-  over BLE, a `HubHangUp` over Wi-Fi and a `Disconnect` message over Multipeer and Nearby.
-- **Add-on transports stay add-ons.** A transport beyond BLE and HTTP goes in its own package behind
-  `IUniversalHubTransport` / `IUniversalHubClientTransport`, registered from the builders (`ServiceActions`,
-  `Transports`). Where it can't run it throws `PlatformNotSupportedException` from `Start` (skipped quietly) and returns
-  nothing from `Discover`, so one registration works in a cross-platform app.
+  over BLE and a `Disconnect` message over the peer link (HTTP, Multipeer, Nearby).
 - **Ordering:** whole messages per peer under a lock; client pushes raised one at a time in order; a client is
   registered and `OnConnectedAsync` has run before the handshake reply; `Context.Abort()` takes effect after the reply.
-- **One BLE service UUID, per-hub start/stop.** Every hub is a characteristic in one service. Never bring back per-hub
-  service UUIDs: two 128-bit UUIDs overflow the advertisement.
-- **The Switchboard source generator is removed from the UniversalHubs host project on purpose** (see its csproj).
-  `HubBoard<THub>` is dispatched by a hand-registered `SwitchboardDescriptor`.
+- **Code style:** no `continue` (filter with `Where`, or nest), no `goto`, no object construction inside an `if`
+  condition.
 
 ### Source generator
 
@@ -101,31 +104,31 @@ developed. Everything happens here, and all packages ship together.
 - Projects inside this repo that declare hubs or contracts (tests, samples) reference it with
   `OutputItemType="Analyzer" ReferenceOutputAssembly="false"`: project references don't carry analyzers the way the
   package does.
-- New user-facing mistakes get an `SBH0xx` diagnostic plus a `GeneratorTests` case, documented in
-  the `shiny-ble-hubs` skill and the docs site's `blehubs/contracts.mdx`.
+- It looks for `[UniversalHubContract]` and `UniversalHub<T>`, and skips referenced contracts whose assembly already has
+  its proxy.
+- New user-facing mistakes get an `SUH0xx` diagnostic plus a `GeneratorTests` case, documented in the
+  `shiny-universal-hubs` skill and the docs site's contracts page.
 
 ## Required updates for EVERY fix & feature
 
-A change is not "done" until these are in sync, for whichever library it touches:
+A change is not "done" until these are in sync:
 
-1. **Readme**: `README.md` covers both libraries (the package table, then UniversalHubs) and is every package's NuGet
-   readme.
-2. **Tests**: every behavior change gets a test in `tests/Shiny.BluetoothLE.Hubs.Tests` or `tests/Shiny.UniversalHubs.Tests`.
-3. **Skills** (`skills/<name>/SKILL.md` + `reference/api-reference.md`): update the trigger keywords when a new public
-   API is introduced. Hub behavior belongs in `shiny-ble-hubs`; `shiny-universal-hubs` points at it. Both sync to
-   `shinyorg/skills` (plugin `shiny`) through `.github/workflows/sync-skills.yml` when a release ships. The docs site lists them in
+1. **Readme**: `README.md` is every package's NuGet readme.
+2. **Tests**: every behavior change gets a test in `tests/Shiny.UniversalHubs.BluetoothLE.Tests` (core, BLE) or
+   `tests/Shiny.UniversalHubs.Tests` (HTTP, peer links, transports, client).
+3. **Skills** (`skills/shiny-universal-hubs/SKILL.md` + `reference/api-reference.md`): update the trigger keywords when
+   a new public API is introduced. Skills sync to `shinyorg/skills` (plugin `shiny`) through
+   `.github/workflows/sync-skills.yml` when a release ships. The docs site lists them in
    `src/content/docs/foundation/ai-skills.mdx` and `src/components/AiSkill.astro`.
 4. **Docs site** (`~/Desktop/dev/documentation`, Astro / Starlight):
-   - **BluetoothLE Hubs** (https://shinylib.net/blehubs/): `src/content/docs/blehubs/*.mdx`: `index`, `contracts`,
-     `hosting`, `client`, `files` (L2CAP and media channels), `how-it-works`.
-   - **Universal Hubs** (https://shinylib.net/universalhubs/): `src/content/docs/universalhubs/*.mdx`: `index`,
-     `hosting`, `client`, `how-it-works`. Link to the blehubs pages for hub behavior rather than repeating it.
-   - **Release notes**: `blehubs/release-notes.mdx` and `universalhubs/release-notes.mdx`, with `<RN type="feature|enhancement|fix|chore">`
-     (optional `breaking`, `platform`), grouped `## v<major>` → `### <version> - <date>`. Both libraries share one
-     version, so a release gets the same heading in both. Use `### <version> - TBD` for unreleased work.
-   - **Menu**: `src/sidebar-topics.mjs`: the **BluetoothLE Hubs** node, then **Universal Hubs** right after it.
-   - **Homepage catalog**: both entries in `src/data/libraryCatalog.ts`; each `label` must match the sidebar.
-   - Moving or renaming a page needs a redirect in `astro.config.mjs`.
+   - **Universal Hubs** (https://shinylib.net/universalhubs/): `src/content/docs/universalhubs/*.mdx`.
+   - **Release notes**: `universalhubs/release-notes.mdx`, with `<RN type="feature|enhancement|fix|chore">`
+     (optional `breaking`, `platform`), grouped `## v<major>` → `### <version> - <date>`. Use `### <version> - TBD` for
+     unreleased work.
+   - **Menu**: the **Universal Hubs** node in `src/sidebar-topics.mjs`; the homepage entry in
+     `src/data/libraryCatalog.ts` (its `label` must match the sidebar).
+   - The old `/blehubs/` pages redirect to Universal Hubs in `astro.config.mjs`; moving or renaming a page needs a
+     redirect there too.
    - Run `npm run build` in the docs repo after changes, because MDX errors only surface at build time.
 
 **Never write a release note for a sample-app fix.** Release notes describe the shipped libraries. Changes confined to
@@ -136,7 +139,7 @@ A change is not "done" until these are in sync, for whichever library it touches
 Both must stay green, and run without hardware or a network:
 
 ```
-dotnet test tests/Shiny.BluetoothLE.Hubs.Tests
+dotnet test tests/Shiny.UniversalHubs.BluetoothLE.Tests
 dotnet test tests/Shiny.UniversalHubs.Tests
 ```
 
@@ -146,28 +149,30 @@ fixed sleeps.
 ## Verifying on hardware
 
 Unit tests prove nothing about radios or real networks. BLE needs **two physical devices**: the iOS simulator has no
-Bluetooth and Android emulators are unreliable. Run the sample on both and work through each transport. Exercise both
-directions (iOS ↔ Android, phone ↔ Mac), over Wi-Fi and over Bluetooth only. When BLE misbehaves, compare against a
-generic tool (nRF Connect) to separate "the OS can't" from "the library doesn't".
+Bluetooth and Android emulators are unreliable. Run the sample on both and use its Transports page to Solo each transport
+in turn, in both directions (iOS ↔ Android, phone ↔ Mac). When BLE misbehaves, compare against a generic tool (nRF
+Connect) to separate "the OS can't" from "the library doesn't".
 
 ## Build & release
 
 - **Branches and versions**: `main` is the only working branch (`v1` is left as it is). Versions come from git tags,
   not the repo: there is no `version.json` / Nerdbank.GitVersioning. Untagged builds are `0.0.0-dev`
-  (`Directory.Build.props`); BluetoothLE.Hubs and UniversalHubs share every version. **A version never carries the git
-  commit hash**: no `-g<hash>` package suffix and no `+<hash>` metadata
-  (`IncludeSourceRevisionInInformationalVersion=false`). Keep it that way.
-- **Releasing**: push a `v2.0.0` (or `v2.0.0-beta.1`) tag on a `main` commit, or run the **Release** workflow by hand
+  (`Directory.Build.props`); every package shares every version. **A version never carries the git commit hash**: no
+  `-g<hash>` package suffix and no `+<hash>` metadata (`IncludeSourceRevisionInInformationalVersion=false`). Keep it
+  that way.
+- **Releasing**: push a `vX.Y.Z` (or `vX.Y.Z-beta.1`) tag on a `main` commit, or run the **Release** workflow by hand
   with a version (it creates the tag). `release.yml` builds the Nearby bridge, builds `Build.slnf` with
   `-p:Version=<tag>`, runs both test suites, pushes every package to NuGet (trusted publishing through OIDC) and creates
-  a GitHub release with generated notes. A `-suffix` makes both prerelease. nuget.org's trusted-publishing policy must
-  list this repo for the `Shiny.BluetoothLE.Hubs*` packages too. When you tag, promote the `### <version> - TBD`
-  headings in both release-notes pages to the release date.
+  a GitHub release with generated notes. A `-suffix` makes it a prerelease. nuget.org's trusted-publishing policy must
+  list this repo for every package, including the new `Shiny.UniversalHubs.BluetoothLE` and `Shiny.UniversalHubs.Http`.
+  When you tag, promote the `### <version> - TBD` heading in the release notes to the release date.
+- **Retired packages**: `Shiny.BluetoothLE.Hubs`, `.Host`, `.Client` and `Shiny.UniversalHubs.Host`, `.Client` are no
+  longer built. Deprecate them on nuget.org, pointing at `Shiny.UniversalHubs` (a manual step).
 - **CI**: `ci.yml` builds and tests every push / PR to `main` the way a release does (macOS runner, Nearby bridge
   cached on its sources, `Build.slnf` in Release packing to `artifacts/`, both test suites) and publishes nothing. Its
   runner and toolchain pins (.NET SDK, Xcode) match `release.yml`: bump them together. **The samples are not built in
-  CI**, so build them locally after API changes. Every package the libraries and tests use must be on nuget.org, or
-  restore fails.
+  CI**, so build them locally after API changes (`-f net11.0-ios`, `-f net11.0-android`, and `Sample.MacOS`). Every
+  package the libraries and tests use must be on nuget.org, or restore fails.
 - **Package icon**: `nuget.png` packs as `icon.png` for every package.
 - **Skill sync**: `skills/` syncs to `shinyorg/skills` only as the last job of a release (`release.yml` calls
   `sync-skills.yml`), so the published skills always match a shipped version. It opens a PR on branch

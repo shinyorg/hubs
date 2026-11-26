@@ -12,11 +12,11 @@
         <PackageIcon>icon.png</PackageIcon>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageReadmeSource Condition="'$(PackageReadmeSource)' == ''">README.md</PackageReadmeSource>
-        <PackageTags>ble bluetooth wifi mdns hub signalr switchboard ios android maui</PackageTags>
+        <PackageTags>hub hubs signalr realtime ble bluetooth http websocket mdns multipeer nearby ios android maui</PackageTags>
         <RepositoryUrl>https://github.com/shinyorg/hubs</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
-        <!-- the platforms with a Shiny BLE stack - the packages register it there; plain net11.0 brings its own -->
+        <!-- the platforms with a Shiny BLE stack - Shiny.UniversalHubs.BluetoothLE registers it there; plain net11.0 brings its own -->
         <PlatformTargetFrameworks>net11.0;net11.0-android;net11.0-ios;net11.0-maccatalyst</PlatformTargetFrameworks>
 
         <CI Condition="'$(GITHUB_ACTIONS)' == 'true'">true</CI>
