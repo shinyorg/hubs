@@ -37,7 +37,7 @@ public class DiscoveryTests
     (List<string?> Names, IDisposable Scan) Watch(ServiceProvider sp)
     {
         var names = new List<string?>();
-        var scan = sp.GetRequiredService<IUniversalHubClient<ITestHub>>().DiscoverAll().Subscribe(x => names.Add(x.Ble?.Name));
+        var scan = sp.GetRequiredService<IUniversalHubClient<ITestHub>>().DiscoverAll().Subscribe(x => names.Add(x.Endpoint<BleHubEndpoint>()?.Name));
         Assert.True(this.ble.IsScanning);
         return (names, scan);
     }
@@ -148,7 +148,7 @@ public class DiscoveryTests
         this.ble.Known["host-1"] = current;
 
         var client = sp.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        var host = new HubHostInfo("Host", "Host", null, new BleHubHostInfo(stale, "Host", -50), null);
+        var host = new HubHostInfo("Host", "Host", null).With(typeof(BleClientTransport), new BleHubEndpoint(stale, "Host", -50), []);
         await Assert.ThrowsAnyAsync<BleException>(() => client.Connect(host));
         Assert.True(current.ConnectCalled);
     }

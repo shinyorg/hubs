@@ -1,36 +1,52 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Reactive.Linq;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE;
 using Shiny.BluetoothLE.Hubs;
-using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A hub client that reaches its host over Wi-Fi, Multipeer or BLE. Everything from IBleHubClient works the same on any of
-/// them - the generated proxy (<see cref="IBleHubClient{TContract}.Hub"/>), events, Disconnected and the file methods.
+/// A hub client that reaches its host over whichever of its transports can - Bluetooth LE, HTTP, Multipeer, Nearby or your
+/// own. Everything from IBleHubClient works the same on any of them - the generated proxy
+/// (<see cref="IBleHubClient{TContract}.Hub"/>), events, Disconnected and the file methods.
 /// </summary>
 public interface IUniversalHubClient<out TContract> : IBleHubClient<TContract> where TContract : class
 {
     /// <summary>
-    /// The transport carrying the current connection, None while disconnected
+    /// Every transport this client has, in priority order - supported here or not (<see cref="IHubClientTransport.IsSupported"/>)
     /// </summary>
-    HubTransports Transport { get; }
+    IReadOnlyList<IHubClientTransport> Transports { get; }
 
     /// <summary>
-    /// Watches for hosts over BLE, mDNS and Multipeer at once. A host seen several ways is one <see cref="HubHostInfo"/>,
-    /// raised again whenever any side changes. Dispose the subscription to stop.
-    /// A transport that can't scan (Bluetooth off, no Wi-Fi, Multipeer not set up) is skipped; the others keep going.
+    /// The transport carrying the current connection, null while disconnected
     /// </summary>
-    IObservable<HubHostInfo> DiscoverAll(HubTransports transports = HubTransports.All);
+    IHubClientTransport? Transport { get; }
 
     /// <summary>
-    /// Connects over <see cref="HubConnectOptions.Prefer"/> when the host is reachable that way, and falls back to the other
-    /// transports (Wi-Fi, Multipeer, BLE) when that fails. A host refusing the client (full, ValidateClient) is not retried.
+    /// Watches for hosts over every transport at once. A host seen several ways is one <see cref="HubHostInfo"/>, raised
+    /// again whenever any side changes. Dispose the subscription to stop. A transport that can't scan (Bluetooth off, no
+    /// Wi-Fi) is skipped; the others keep going.
+    /// </summary>
+    IObservable<HubHostInfo> DiscoverAll();
+
+    /// <summary>
+    /// Watches for hosts over <paramref name="transports"/> only - client transport types this client has
+    /// </summary>
+    IObservable<HubHostInfo> DiscoverAll(IEnumerable<Type> transports);
+
+    /// <summary>
+    /// Connects over the first transport the host is seen on, in priority order (<see cref="HubConnectOptions.Prefer{TTransport}"/>
+    /// first), falling back to the next when one fails. A host refusing the client (full, ValidateClient) is not retried.
     /// </summary>
     Task Connect(HubHostInfo host, HubConnectOptions? options = null, CancellationToken cancellationToken = default);
+}
+
+
+internal static class UniversalHubClientErrors
+{
+    // BleHubClient reports a refusal (full, ValidateClient, not running) this way on every transport
+    public static bool IsRefusal(Exception ex)
+        => ex is BleHubException && ex.Message.StartsWith("Host refused", StringComparison.Ordinal);
 }
 
 
@@ -38,115 +54,97 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
 {
     readonly IBleHubClient<TContract> inner;
     readonly BleHubClient client;
-    readonly Lazy<IHttpServerLocator?> locator;
-    readonly Lazy<IReadOnlyList<IUniversalHubClientTransport>> extras;
+    readonly Lazy<IReadOnlyList<IHubClientTransport>> transports;
     readonly UniversalHubClientOptions options;
-    readonly ILoggerFactory? loggerFactory;
     readonly ILogger? logger;
+    IHubClientTransport? connectedThrough;
 
 
+    /// <param name="transports">Creates the client's transports, in priority order</param>
     public UniversalHubClient(
         IBleHubClient<TContract> inner,
-        Func<IHttpServerLocator?> locator,
         UniversalHubClientOptions options,
-        ILoggerFactory? loggerFactory = null,
-        Func<IReadOnlyList<IUniversalHubClientTransport>>? extras = null
+        Func<IReadOnlyList<IHubClientTransport>> transports,
+        ILoggerFactory? loggerFactory = null
     )
     {
         this.inner = inner;
         this.client = (BleHubClient)(object)inner;
-        this.locator = new(locator);
-        this.extras = new(extras ?? (() => []));
+        this.transports = new(transports);
         this.options = options;
-        this.loggerFactory = loggerFactory;
         this.logger = loggerFactory?.CreateLogger<UniversalHubClient<TContract>>();
     }
 
 
-    public HubTransports Transport => this.inner.Status is not (BleHubClientStatus.Connected or BleHubClientStatus.Reconnecting)
-        ? HubTransports.None
-        : this.client.ExternalTransport switch
-        {
-            null => HubTransports.Ble,
-            IHubTransportKind kind => kind.Transport,
-            _ => HubTransports.Http
-        };
+    public IReadOnlyList<IHubClientTransport> Transports => this.transports.Value;
+
+    IReadOnlyList<Type> Priority => this.Transports.Select(x => x.GetType()).ToList();
+
+    public IHubClientTransport? Transport => this.inner.Status is BleHubClientStatus.Connected or BleHubClientStatus.Reconnecting
+        ? this.connectedThrough
+        : null;
 
 
-    public IObservable<HubHostInfo> DiscoverAll(HubTransports transports = HubTransports.All) => Observable.Create<HubHostInfo>(async (observer, ct) =>
+    public IObservable<HubHostInfo> DiscoverAll() => this.Discover(this.Transports);
+
+    public IObservable<HubHostInfo> DiscoverAll(IEnumerable<Type> transports)
+    {
+        ArgumentNullException.ThrowIfNull(transports);
+        var wanted = transports.ToList();
+        var unknown = wanted.FirstOrDefault(t => !this.Transports.Any(x => x.GetType() == t));
+        if (unknown != null)
+            throw new ArgumentException($"{unknown.Name} is not a transport this hub client has", nameof(transports));
+
+        return this.Discover(this.Transports.Where(x => wanted.Contains(x.GetType())).ToList());
+    }
+
+
+    IObservable<HubHostInfo> Discover(IReadOnlyList<IHubClientTransport> transports) => Observable.Create<HubHostInfo>(observer =>
     {
         var hosts = new Dictionary<string, HubHostInfo>(StringComparer.OrdinalIgnoreCase);
         var gate = new object();
+        var priority = this.Priority;
+        var context = new HubClientContext(this.client, new BleHubConnectOptions());
 
-        void Update(string key, string name, Func<HubHostInfo, HubHostInfo> change)
+        void Update(IHubClientTransport transport, HubHostSighting seen)
         {
             HubHostInfo updated;
             lock (gate)
             {
-                var current = hosts.TryGetValue(key, out var existing) ? existing : new HubHostInfo(key, name, null, null, null);
-                updated = change(current);
-                if (updated.Transports == HubTransports.None)
-                    hosts.Remove(key);
+                var current = hosts.TryGetValue(seen.Name, out var existing) ? existing : new HubHostInfo(seen.Name, seen.Name, null);
+                updated = current.With(transport.GetType(), seen.Endpoint, priority);
+                if (seen.HostId != null)
+                    updated = updated with { HostId = seen.HostId };
+
+                if (updated.Transports.Count == 0)
+                    hosts.Remove(seen.Name);
                 else
-                    hosts[key] = updated;
+                    hosts[seen.Name] = updated;
             }
             observer.OnNext(updated);
         }
 
-        var extraScans = new List<IDisposable>();
-        foreach (var extra in this.extras.Value.Where(x => transports.HasFlag(x.Transport)))
+        var scans = new List<IDisposable>();
+        foreach (var transport in transports.Where(x => x.IsSupported))
         {
             try
             {
-                extraScans.Add(extra.Discover(this.client).Subscribe(
-                    seen => Update(seen.Name, seen.Name, x => seen.Apply(seen.HostId == null ? x : x with { HostId = seen.HostId })),
-                    ex => this.logger?.LogWarning(ex, "{Transport} discovery stopped", extra.Transport)
+                scans.Add(transport.Discover(context).Subscribe(
+                    seen => Update(transport, seen),
+                    ex => this.logger?.LogWarning(ex, "{Transport} discovery stopped", transport.DisplayName)
                 ));
             }
             catch (Exception ex)
             {
-                this.logger?.LogWarning(ex, "{Transport} discovery is unavailable", extra.Transport);
+                this.logger?.LogWarning(ex, "{Transport} discovery is unavailable", transport.DisplayName);
             }
         }
 
-        try
+        return () =>
         {
-            if (transports.HasFlag(HubTransports.Http) && this.options.Enabled.HasFlag(HubTransports.Http) && this.locator.Value is { } wifi)
-            {
-                try
-                {
-                    await foreach (var e in wifi.WatchAsync(this.options.HttpServiceType, ct).ConfigureAwait(false))
-                    {
-                        if (!this.Serves(e.Server))
-                            continue;
-
-                        var name = e.Server.TxtRecords.TryGetValue(UniversalHubProtocol.TxtName, out var n) ? n : e.Server.InstanceName;
-                        var hostId = e.Server.TxtRecords.TryGetValue(UniversalHubProtocol.TxtHostId, out var id) ? id : null;
-                        Update(name, name, x => e.Found
-                            ? x with { Http = e.Server, HostId = hostId ?? x.HostId }
-                            : x with { Http = null });
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                }
-                catch (Exception ex)
-                {
-                    this.logger?.LogWarning(ex, "Wi-Fi discovery is unavailable");
-                }
-            }
-
-            // no HTTP (or it gave up) - stay subscribed until the caller disposes
-            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-        }
-        finally
-        {
-            foreach (var scan in extraScans)
+            foreach (var scan in scans)
                 scan.Dispose();
-        }
+        };
     });
 
 
@@ -155,173 +153,43 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         ArgumentNullException.ThrowIfNull(host);
         options ??= new HubConnectOptions();
 
-        var order = options.Order.Where(x => options.Allowed.HasFlag(x) && host.Transports.HasFlag(x));
+        var context = new HubClientContext(this.client, options.ToBle() with { AutomaticReconnect = this.options.AutomaticReconnect });
+        var order = options
+            .Order(this.Transports)
+            .Where(x => x.IsSupported && host.Endpoints.ContainsKey(x.GetType()))
+            .ToList();
 
         var errors = new List<Exception>();
         foreach (var transport in order)
         {
             try
             {
-                switch (transport)
-                {
-                    case HubTransports.Http when this.options.Enabled.HasFlag(HubTransports.Http):
-                        await this.ConnectHttpOrRediscover(host.Http!, options, cancellationToken).ConfigureAwait(false);
-                        break;
-
-                    default:
-                        var extra = this.extras.Value.FirstOrDefault(x => x.Transport == transport)
-                                    ?? throw new BleHubException($"{transport} is not set up on this client");
-                        await extra.Connect(this.client, host, this.ToBle(options), cancellationToken).ConfigureAwait(false);
-                        break;
-                }
-
-                this.logger?.LogInformation("Connected to {Host} over {Transport}", host.Name, transport);
+                this.connectedThrough = transport;
+                await transport.Connect(context, host, cancellationToken).ConfigureAwait(false);
+                this.logger?.LogInformation("Connected to {Host} over {Transport}", host.Name, transport.DisplayName);
                 return;
             }
-            catch (Exception ex) when (IsRefusal(ex) || cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (UniversalHubClientErrors.IsRefusal(ex) || cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
             catch (Exception ex)
             {
-                this.logger?.LogInformation(ex, "Could not reach {Host} over {Transport}", host.Name, transport);
+                this.logger?.LogInformation(ex, "Could not reach {Host} over {Transport}", host.Name, transport.DisplayName);
                 errors.Add(ex);
             }
         }
 
         throw errors.Count switch
         {
-            0 => new BleHubException($"{host.Name} is not reachable over {options.Allowed}"),
+            0 => new BleHubException(
+                $"{host.Name} is not reachable over any transport this client may use - seen over "
+                + (host.Transports.Count == 0 ? "nothing" : String.Join(", ", host.Transports.Select(x => this.Transports.FirstOrDefault(t => t.GetType() == x)?.DisplayName ?? x.Name)))
+            ),
             1 => errors[0],
             _ => new BleHubException($"Could not reach {host.Name}: {String.Join("; ", errors.Select(x => x.Message))}", new AggregateException(errors))
         };
     }
-
-
-    /// <summary>
-    /// A host that restarted listens on a new port, and when it was killed it never said goodbye, so mDNS can still hand
-    /// out its old address. When no address answers, look the host up again by name and try what it advertises now.
-    /// </summary>
-    async Task ConnectHttpOrRediscover(DiscoveredHttpServer server, HubConnectOptions options, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await this.ConnectHttp(server, options, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (!IsRefusal(ex) && !cancellationToken.IsCancellationRequested)
-        {
-            var fresh = await this.Rediscover(server, cancellationToken).ConfigureAwait(false);
-            if (fresh == null)
-                throw;
-
-            this.logger?.LogInformation("{Host} moved to {Address} - retrying there", server.InstanceName, fresh.BaseAddress);
-            await this.ConnectHttp(fresh, options, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-
-    async Task<DiscoveredHttpServer?> Rediscover(DiscoveredHttpServer stale, CancellationToken cancellationToken)
-    {
-        // an address the app was given (HubHostInfo.FromUrl) has no advertisement to look up again
-        if (stale.TxtRecords.Count == 0 || this.options.HttpRediscoverTimeout <= TimeSpan.Zero || this.locator.Value is not { } wifi)
-            return null;
-
-        try
-        {
-            var fresh = await wifi.FindFirstAsync(
-                this.options.HttpServiceType,
-                this.options.HttpRediscoverTimeout,
-                x => x.InstanceName.Equals(stale.InstanceName, StringComparison.OrdinalIgnoreCase) && this.Serves(x),
-                cancellationToken
-            ).ConfigureAwait(false);
-
-            // the same address again would only fail the same way
-            return fresh == null || (fresh.BaseAddress == stale.BaseAddress && fresh.Addresses.SequenceEqual(stale.Addresses)) ? null : fresh;
-        }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            this.logger?.LogDebug(ex, "Could not look {Host} up again", stale.InstanceName);
-            return null;
-        }
-    }
-
-
-    async Task ConnectHttp(DiscoveredHttpServer server, HubConnectOptions options, CancellationToken cancellationToken)
-    {
-        var errors = new List<Exception>();
-        foreach (var address in Addresses(server))
-        {
-            var baseUri = address == null ? server.BaseAddress : server.BaseAddressFor(address);
-            var root = baseUri.ToString().TrimEnd('/');
-            var hubUri = new Uri($"{root}/{Uri.EscapeDataString(this.client.HubName)}");
-            var filesUri = new Uri($"{root}/files");
-            var mediaUri = new Uri($"{root}/media");
-
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(this.options.HttpConnectTimeout);
-            try
-            {
-                await this.client.ConnectExternal(
-                    events => new SwitchboardTransport(hubUri, filesUri, mediaUri, events, this.options, this.loggerFactory),
-                    this.ToBle(options),
-                    timeout.Token
-                ).ConfigureAwait(false);
-                return;
-            }
-            catch (Exception ex) when (IsRefusal(ex) || cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogDebug(ex, "{Uri} did not answer", hubUri);
-                errors.Add(ex);
-            }
-        }
-        throw errors.Count == 1 ? errors[0] : new AggregateException("No address of the host answered", errors);
-    }
-
-
-    bool Serves(DiscoveredHttpServer server)
-    {
-        if (!server.TxtRecords.TryGetValue(UniversalHubProtocol.TxtHubs, out var hubs))
-            return false;
-
-        var mine = this.client.HubName;
-        if (!hubs.Split(',').Any(x => x.Trim().Equals(mine, StringComparison.OrdinalIgnoreCase)))
-            return false;
-
-        if (server.TxtRecords.TryGetValue(UniversalHubProtocol.TxtProtocol, out var proto) && proto != UniversalHubProtocol.Version.ToString())
-        {
-            this.logger?.LogInformation("Ignoring {Host}: it speaks UniversalHubs protocol {Protocol}", server.InstanceName, proto);
-            return false;
-        }
-        return true;
-    }
-
-
-    /// <summary>
-    /// The advertised base address first, then every other resolved address with IPv4 ahead of IPv6
-    /// </summary>
-    static IEnumerable<IPAddress?> Addresses(DiscoveredHttpServer server)
-    {
-        yield return null;
-        foreach (var address in server.Addresses
-                     .Where(x => !x.Equals(IPAddress.Loopback) && !x.Equals(IPAddress.IPv6Loopback))
-                     .OrderBy(x => x.AddressFamily == AddressFamily.InterNetwork ? 0 : 1))
-        {
-            if (!server.BaseAddress.Host.Trim('[', ']').Equals(address.ToString(), StringComparison.OrdinalIgnoreCase))
-                yield return address;
-        }
-    }
-
-
-    BleHubConnectOptions ToBle(HubConnectOptions options) => options.ToBle() with { AutomaticReconnect = this.options.AutomaticReconnect };
-
-
-    // BleHubClient reports a refusal (full, ValidateClient, not running) this way on either transport
-    static bool IsRefusal(Exception ex)
-        => ex is BleHubException && ex.Message.StartsWith("Host refused", StringComparison.Ordinal);
 
 
     // ---- IBleHubClient<TContract> ----

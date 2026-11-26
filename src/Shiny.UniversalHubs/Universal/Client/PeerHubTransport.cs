@@ -13,7 +13,7 @@ namespace Shiny.UniversalHubs;
 /// Carries one hub connection over a peer-link session (Multipeer, Nearby). When the session drops and the host holds the
 /// connection, it opens a new session and resumes on it - same connection on the host, missed pushes replayed.
 /// </summary>
-internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKind
+internal sealed class PeerHubTransport : IBleHubClientTransport
 {
     static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(10);
     static readonly TimeSpan MaxResumeDelay = TimeSpan.FromSeconds(2);
@@ -44,7 +44,7 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
 
     /// <param name="reopen">Opens a new session to the same host, for a resume - null when this transport can't</param>
     public PeerHubTransport(
-        HubTransports transport,
+        string transport,
         IPeerConnection connection,
         IBleHubClientTransportEvents events,
         string characteristicUuid,
@@ -74,7 +74,10 @@ internal sealed class PeerHubTransport : IBleHubClientTransport, IHubTransportKi
     }
 
 
-    public HubTransports Transport { get; }
+    /// <summary>
+    /// The transport's name, for logs
+    /// </summary>
+    public string Transport { get; }
 
     /// <summary>
     /// The host's id, from the handshake reply

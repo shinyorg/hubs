@@ -11,38 +11,66 @@ using Shiny.BluetoothLE.Hubs.Protocol;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// Finds universal hub hosts over MultipeerConnectivity and connects to them - one session per hub connection
+/// A host seen over MultipeerConnectivity
 /// </summary>
-internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerClientOptions options, ILoggerFactory? loggerFactory) : IUniversalHubClientTransport
+/// <param name="DisplayName">The host's Multipeer display name</param>
+/// <param name="Info">What it advertises - the same keys as its mDNS TXT record</param>
+public sealed record MultipeerHubEndpoint(string DisplayName, IReadOnlyDictionary<string, string> Info) : HubEndpoint
 {
-    readonly ILogger? logger = loggerFactory?.CreateLogger<MultipeerClientTransport>();
+    /// <summary>
+    /// The native peer (an MCPeerID)
+    /// </summary>
+    internal object? Peer { get; init; }
+}
 
 
-    public HubTransports Transport => HubTransports.Multipeer;
+/// <summary>
+/// Finds universal hub hosts over MultipeerConnectivity and connects to them - one session per hub connection. Apple only:
+/// elsewhere <see cref="IsSupported"/> is false and it is left out. Added with <c>o.UseMultipeer(...)</c>.
+/// </summary>
+public sealed class MultipeerClientTransport : IHubClientTransport
+{
+    readonly IMultipeerLink link;
+    readonly MultipeerClientOptions options;
+    readonly ILoggerFactory? loggerFactory;
+    readonly ILogger? logger;
+
+
+    internal MultipeerClientTransport(IMultipeerLink link, MultipeerClientOptions options, ILoggerFactory? loggerFactory)
+    {
+        this.link = link;
+        this.options = options;
+        this.loggerFactory = loggerFactory;
+        this.logger = loggerFactory?.CreateLogger<MultipeerClientTransport>();
+    }
+
+
+    public string DisplayName => "Multipeer";
+    public bool IsSupported => this.link.IsSupported;
 
 
     // nothing to find where there is no MultipeerConnectivity (Android) - not an error worth logging on every scan
-    public IObservable<HubHostSighting> Discover(BleHubClient client) => !link.IsSupported ? Observable.Empty<HubHostSighting>() : Observable.Create<HubHostSighting>(observer =>
+    public IObservable<HubHostSighting> Discover(HubClientContext client) => !link.IsSupported ? Observable.Empty<HubHostSighting>() : Observable.Create<HubHostSighting>(observer =>
     {
         // a lost peer only comes with its peer - remember what it was called when it was found
         var names = new ConcurrentDictionary<object, string>();
         return link
-            .Browse(options.ServiceType, this.DisplayName(null))
+            .Browse(options.ServiceType, this.PeerName(null))
             .Subscribe(
                 seen =>
                 {
                     if (seen.Info == null)
                     {
                         if (names.TryRemove(seen.Peer, out var gone))
-                            observer.OnNext(new HubHostSighting(gone, null, x => x with { Multipeer = null }));
+                            observer.OnNext(new HubHostSighting(gone, null, null));
                     }
-                    else if (this.Serves(client, seen))
+                    else if (this.Serves(client.HubName, seen))
                     {
                         var name = seen.Info.TryGetValue(MultipeerProtocol.InfoName, out var n) ? n : seen.DisplayName;
                         var hostId = seen.Info.TryGetValue(MultipeerProtocol.InfoHostId, out var id) ? id : null;
-                        var host = new MultipeerHost(seen.DisplayName, seen.Info) { Peer = seen.Peer };
+                        var host = new MultipeerHubEndpoint(seen.DisplayName, seen.Info) { Peer = seen.Peer };
                         names[seen.Peer] = name;
-                        observer.OnNext(new HubHostSighting(name, hostId, x => x with { Multipeer = host }));
+                        observer.OnNext(new HubHostSighting(name, hostId, host));
                     }
                 },
                 observer.OnError
@@ -50,15 +78,16 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
     });
 
 
-    public async Task Connect(BleHubClient client, HubHostInfo host, BleHubConnectOptions connectOptions, CancellationToken cancellationToken)
+    public async Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken)
     {
-        var peer = host.Multipeer?.Peer ?? throw new BleHubException($"{host.Name} was not seen over Multipeer");
+        var connectOptions = client.ConnectOptions;
+        var peer = host.Endpoint<MultipeerHubEndpoint>()?.Peer ?? throw new BleHubException($"{host.Name} was not seen over Multipeer");
         var connection = await link.Connect(peer, options.InviteTimeout, cancellationToken).ConfigureAwait(false);
         try
         {
-            await client.ConnectExternal(
+            await client.Connect(
                 events => new PeerHubTransport(
-                    HubTransports.Multipeer,
+                    this.DisplayName,
                     connection,
                     events,
                     client.HubName,
@@ -66,7 +95,6 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
                     // a resume invites the same peer again - its MCPeerID lasts as long as the host's process
                     connectOptions.AutomaticReconnect ? ct => link.Connect(peer, options.InviteTimeout, ct) : null
                 ),
-                connectOptions,
                 cancellationToken
             ).ConfigureAwait(false);
         }
@@ -78,15 +106,14 @@ internal sealed class MultipeerClientTransport(IMultipeerLink link, MultipeerCli
     }
 
 
-    string DisplayName(string? name) => MultipeerNames.Truncate(options.DisplayName ?? name ?? "Hub client");
+    string PeerName(string? name) => MultipeerNames.Truncate(options.DisplayName ?? name ?? "Hub client");
 
 
-    bool Serves(BleHubClient client, MultipeerSighting seen)
+    bool Serves(string mine, MultipeerSighting seen)
     {
         if (!seen.Info!.TryGetValue(MultipeerProtocol.InfoHubs, out var hubs))
             return false;
 
-        var mine = client.HubName;
         if (!hubs.Split(',').Any(x => x.Trim().Equals(mine, StringComparison.OrdinalIgnoreCase)))
             return false;
 

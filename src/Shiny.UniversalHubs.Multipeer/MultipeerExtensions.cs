@@ -81,13 +81,14 @@ public static class MultipeerExtensions
         var mc = new MultipeerClientOptions(serviceType);
         configure?.Invoke(mc);
 
-        options.ServiceActions.Add(services => services.AddMultipeerLink());
-        options.AddTransport(HubTransports.Multipeer, "Multipeer", sp => new MultipeerClientTransport(
-            sp.GetRequiredService<IMultipeerLink>(),
-            mc,
-            sp.GetService<ILoggerFactory>()
-        ));
-        return options;
+        return options.UseTransport(
+            sp => new MultipeerClientTransport(
+                sp.GetRequiredService<IMultipeerLink>(),
+                mc,
+                sp.GetService<ILoggerFactory>()
+            ),
+            services => services.AddMultipeerLink()
+        );
     }
 
 

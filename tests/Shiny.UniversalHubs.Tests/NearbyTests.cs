@@ -104,9 +104,8 @@ public class NearbyTests : IAsyncLifetime
             .AddSingleton<INearbyRadio>(device ?? this.network.CreateDevice())
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
                 o.AutomaticReconnect = automaticReconnect;
-                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.UseNearby(ServiceId, nb => nb.EndpointName = "Phone");
             })
             .BuildServiceProvider();
@@ -118,8 +117,8 @@ public class NearbyTests : IAsyncLifetime
 
     static Task<HubHostInfo> Find<TContract>(IUniversalHubClient<TContract> client) where TContract : class
         => client
-            .DiscoverAll(HubTransports.Nearby)
-            .Where(x => x.Nearby != null)
+            .DiscoverAll([typeof(NearbyClientTransport)])
+            .Where(x => x.IsSeenOver<NearbyClientTransport>())
             .FirstAsync()
             .ToTask()
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -129,7 +128,7 @@ public class NearbyTests : IAsyncLifetime
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid, device, automaticReconnect);
         var found = await Find(client);
-        await client.Connect(found, new HubConnectOptions(name, "1.0") { Allowed = HubTransports.Nearby });
+        await client.Connect(found, new HubConnectOptions(name, "1.0").Only<NearbyClientTransport>());
         return client;
     }
 
@@ -137,7 +136,7 @@ public class NearbyTests : IAsyncLifetime
     async Task<IUniversalHubClient<ITestHub>> ConnectHttp(string name)
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
-        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name) { Allowed = HubTransports.Http });
+        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name).Only<HttpClientTransport>());
         return client;
     }
 
@@ -171,8 +170,8 @@ public class NearbyTests : IAsyncLifetime
 
         Assert.Equal("TestHost", found.Name);
         Assert.Equal("host-1", found.HostId);
-        Assert.Equal(HubTransports.Nearby, found.Transports);
-        Assert.Equal("TestHost", found.Nearby!.EndpointName);
+        Assert.Equal([typeof(NearbyClientTransport)], found.Transports);
+        Assert.Equal("TestHost", found.Endpoint<NearbyHubEndpoint>()!.EndpointName);
     }
 
 
@@ -189,26 +188,26 @@ public class NearbyTests : IAsyncLifetime
         // a client of the stopped hub doesn't list the host...
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
         var seen = new List<HubHostInfo>();
-        using var watch = other.DiscoverAll(HubTransports.Nearby).Subscribe(x =>
+        using var watch = other.DiscoverAll([typeof(NearbyClientTransport)]).Subscribe(x =>
         {
             lock (seen)
                 seen.Add(x);
         });
         await Task.Delay(200);
         lock (seen)
-            Assert.DoesNotContain(seen, x => x.Nearby != null);
+            Assert.DoesNotContain(seen, x => x.IsSeenOver<NearbyClientTransport>());
 
         // ...until it starts
         await this.host.StartHub<OtherHub>([typeof(NearbyHostTransport)]);
         await WaitFor(() =>
         {
             lock (seen)
-                return seen.Any(x => x.Nearby != null);
+                return seen.Any(x => x.IsSeenOver<NearbyClientTransport>());
         });
 
         HubHostInfo found;
         lock (seen)
-            found = seen.Last(x => x.Nearby != null);
+            found = seen.Last(x => x.IsSeenOver<NearbyClientTransport>());
         await other.Connect(found, new HubConnectOptions("Bob"));
         Assert.Equal("pong", await other.Hub.Ping());
     }
@@ -219,7 +218,7 @@ public class NearbyTests : IAsyncLifetime
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
         var seen = new List<HubHostInfo>();
-        using var watch = client.DiscoverAll(HubTransports.Nearby).Subscribe(x =>
+        using var watch = client.DiscoverAll([typeof(NearbyClientTransport)]).Subscribe(x =>
         {
             lock (seen)
                 seen.Add(x);
@@ -227,7 +226,7 @@ public class NearbyTests : IAsyncLifetime
         await WaitFor(() =>
         {
             lock (seen)
-                return seen.Any(x => x.Nearby != null);
+                return seen.Any(x => x.IsSeenOver<NearbyClientTransport>());
         });
 
         // OtherHub still runs, so the host still advertises - but no longer this hub
@@ -235,7 +234,7 @@ public class NearbyTests : IAsyncLifetime
         await WaitFor(() =>
         {
             lock (seen)
-                return seen.Last().Transports == HubTransports.None;
+                return seen.Last().Transports.Count == 0;
         });
     }
 
@@ -259,7 +258,7 @@ public class NearbyTests : IAsyncLifetime
     {
         var client = await this.Connect();
 
-        Assert.Equal(HubTransports.Nearby, client.Transport);
+        Assert.IsType<NearbyClientTransport>(client.Transport);
         Assert.Equal(BleHubClientStatus.Connected, client.Status);
         Assert.Equal("TestHost", client.HostName);
 
@@ -393,9 +392,9 @@ public class NearbyTests : IAsyncLifetime
         this.clientContainers.Add(services);
 
         var test = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await test.Connect(await Find(test), new HubConnectOptions("Alice") { Allowed = HubTransports.Nearby });
+        await test.Connect(await Find(test), new HubConnectOptions("Alice").Only<NearbyClientTransport>());
         var other = services.GetRequiredService<IUniversalHubClient<IOtherHub>>();
-        await other.Connect(await Find(other), new HubConnectOptions("Alice") { Allowed = HubTransports.Nearby });
+        await other.Connect(await Find(other), new HubConnectOptions("Alice").Only<NearbyClientTransport>());
 
         Assert.Equal("Alice", await test.Hub.WhoAmI());
         Assert.Equal("pong", await other.Hub.Ping());
@@ -430,11 +429,11 @@ public class NearbyTests : IAsyncLifetime
 
         // the other phone visits TestHost...
         var visitor = otherApp.Services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await visitor.Connect(await Find(visitor), new HubConnectOptions("Visiting") { Allowed = HubTransports.Nearby });
+        await visitor.Connect(await Find(visitor), new HubConnectOptions("Visiting").Only<NearbyClientTransport>());
 
         // ...and TestHost visits it back, over the same connection
         var back = await this.FindFrom(otherRadio.EndpointId, otherApp);
-        await back.Client.Connect(back.Host, new HubConnectOptions("Visiting back") { Allowed = HubTransports.Nearby });
+        await back.Client.Connect(back.Host, new HubConnectOptions("Visiting back").Only<NearbyClientTransport>());
 
         Assert.Equal("Visiting", await visitor.Hub.WhoAmI());
         Assert.Equal("Visiting back", await back.Client.Hub.WhoAmI());
@@ -458,8 +457,8 @@ public class NearbyTests : IAsyncLifetime
 
         var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
         var host = await client
-            .DiscoverAll(HubTransports.Nearby)
-            .Where(x => x.Nearby?.Peer as string == endpointId)
+            .DiscoverAll([typeof(NearbyClientTransport)])
+            .Where(x => x.Endpoint<NearbyHubEndpoint>()?.EndpointId == endpointId)
             .FirstAsync()
             .ToTask()
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -567,7 +566,7 @@ public class NearbyTests : IAsyncLifetime
 
         // the advertisement is still up for OtherHub, so the channel opens - the handshake is refused
         await this.host.StopHub<TestHub>();
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(found, new HubConnectOptions("Alice") { Allowed = HubTransports.Nearby }));
+        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<NearbyClientTransport>()));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -753,7 +752,7 @@ public class NearbyTests : IAsyncLifetime
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
-        using var first = services.GetRequiredService<IUniversalHubClient<ITestHub>>().DiscoverAll(HubTransports.Nearby).Subscribe(_ => { });
+        using var first = services.GetRequiredService<IUniversalHubClient<ITestHub>>().DiscoverAll([typeof(NearbyClientTransport)]).Subscribe(_ => { });
         var link = services.GetRequiredService<NearbyLink>();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => link.Discover("com.someone.else", NearbyStrategy.Cluster).FirstAsync().ToTask());
         Assert.Contains(ServiceId, ex.Message);

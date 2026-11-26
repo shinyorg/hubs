@@ -81,13 +81,14 @@ public static class NearbyExtensions
         var nearby = new NearbyClientOptions(serviceId);
         configure?.Invoke(nearby);
 
-        options.ServiceActions.Add(services => services.AddNearbyLink());
-        options.AddTransport(HubTransports.Nearby, "Nearby", sp => new NearbyClientTransport(
-            sp.GetRequiredService<NearbyLink>(),
-            nearby,
-            sp.GetService<ILoggerFactory>()
-        ));
-        return options;
+        return options.UseTransport(
+            sp => new NearbyClientTransport(
+                sp.GetRequiredService<NearbyLink>(),
+                nearby,
+                sp.GetService<ILoggerFactory>()
+            ),
+            services => services.AddNearbyLink()
+        );
     }
 
 

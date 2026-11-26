@@ -5,33 +5,6 @@ using System.Text.Json.Serialization;
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// Which links a hub is served over or reached through
-/// </summary>
-[Flags]
-public enum HubTransports
-{
-    None = 0,
-    Ble = 1,
-    Http = 2,
-
-    /// <summary>
-    /// Apple's MultipeerConnectivity (Wi-Fi, peer-to-peer Wi-Fi and Bluetooth, with no network needed) - Apple devices
-    /// only, and only once the Shiny.UniversalHubs.Multipeer package is set up. Without it, asking for it does nothing.
-    /// </summary>
-    Multipeer = 4,
-
-    /// <summary>
-    /// Google's Nearby Connections (Bluetooth, BLE, Wi-Fi LAN, Wi-Fi Direct, hotspot and Wi-Fi Aware, with no network
-    /// needed) - Android, iOS and macOS, and only once the Shiny.UniversalHubs.Nearby package is set up. Without it, asking
-    /// for it does nothing.
-    /// </summary>
-    Nearby = 8,
-
-    All = Ble | Http | Multipeer | Nearby
-}
-
-
-/// <summary>
 /// The Wi-Fi side of the wire: one Switchboard per hub at <c>{BasePath}/{characteristicUuid}</c>, called through a few
 /// reserved methods, plus plain HTTP routes for files. Method and event names travel inside these calls, exactly as they do
 /// over BLE.

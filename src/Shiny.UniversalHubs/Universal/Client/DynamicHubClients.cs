@@ -54,7 +54,13 @@ public static class DynamicHubClientExtensions
     /// Multipeer - and runs again for each client; the mDNS service type is given per client. On Android, iOS and Mac
     /// Catalyst it adds the BLE stack too; on plain .NET, register an IBleManager yourself to use BLE.
     /// </summary>
-    public static IServiceCollection AddDynamicHubClients(this IServiceCollection services, Action<UniversalHubClientOptions>? configure = null)
+    /// <param name="configure">What every dynamic hub client shares, beside HTTP and BLE</param>
+    /// <param name="http">How every dynamic hub client connects over HTTP - timeouts, the HTTP stack</param>
+    public static IServiceCollection AddDynamicHubClients(
+        this IServiceCollection services,
+        Action<UniversalHubClientOptions>? configure = null,
+        Action<HttpClientTransportOptions>? http = null
+    )
     {
         ArgumentNullException.ThrowIfNull(services);
         if (services.Any(x => x.ServiceType == typeof(IDynamicHubClients)))
@@ -64,39 +70,38 @@ public static class DynamicHubClientExtensions
         services.AddHttpServerLocator();
 
         // add-on transports (Multipeer) register once, whatever the client
-        var shared = new UniversalHubClientOptions();
+        var shared = new UniversalHubClientOptions().UseHttp(configure: http);
         configure?.Invoke(shared);
-        // and BLE and HTTP, which every dynamic hub client uses
-        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, BleHubProtocolOptions.DefaultServiceUuid).UseHttp();
+        // and BLE, which every dynamic hub client uses
+        shared.UseBluetoothLE(shared.DynamicBleServiceUuid, BleHubProtocolOptions.DefaultServiceUuid);
         foreach (var c in shared.ServiceActions)
             c(services);
 
-        services.AddSingleton<IDynamicHubClients>(sp => new DynamicHubClients(sp, configure));
+        services.AddSingleton<IDynamicHubClients>(sp => new DynamicHubClients(sp, configure, http));
         return services;
     }
 }
 
 
-internal sealed class DynamicHubClients(IServiceProvider services, Action<UniversalHubClientOptions>? configure) : IDynamicHubClients
+internal sealed class DynamicHubClients(IServiceProvider services, Action<UniversalHubClientOptions>? configure, Action<HttpClientTransportOptions>? http) : IDynamicHubClients
 {
     public IUniversalHubClient<IDynamicHubCalls> Create(string characteristicUuid, string mdnsServiceType)
     {
         UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
 
         var characteristic = BleUuid.Normalize(characteristicUuid, nameof(characteristicUuid));
-        var options = new UniversalHubClientOptions();
+        // a dynamic hub is served over HTTP and BLE under its characteristic, which is also its name - HTTP first, then
+        // whatever the app adds (Multipeer, Nearby), BLE last, unless the app sets a priority
+        var options = new UniversalHubClientOptions().UseHttp(mdnsServiceType, http);
         configure?.Invoke(options);
-
-        // a dynamic hub is served over BLE and HTTP under its characteristic, which is also its name
-        options.UseBluetoothLE(options.DynamicBleServiceUuid, characteristic).UseHttp(mdnsServiceType);
+        options.UseBluetoothLE(options.DynamicBleServiceUuid, characteristic);
 
         var proxy = new DynamicHubProxy(services.GetRequiredService<BleHubClientServices>(), characteristic);
         return new UniversalHubClient<IDynamicHubCalls>(
             proxy,
-            () => services.GetService<IHttpServerLocator>(),
             options,
-            services.GetService<ILoggerFactory>(),
-            () => options.Transports.Select(x => x(services)).ToList()
+            () => options.CreateTransports(services),
+            services.GetService<ILoggerFactory>()
         );
     }
 }

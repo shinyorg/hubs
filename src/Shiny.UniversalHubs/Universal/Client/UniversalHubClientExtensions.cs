@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs;
-using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
@@ -17,6 +16,7 @@ public static class UniversalHubClientExtensions
     ///     .UseBluetoothLE(ServiceUuid, GameCharacteristicUuid)
     ///     .UseHttp("_game._tcp"));
     /// </code>
+    /// Transports are tried in the order they are added (UseHttp first above), unless <c>o.Priority(...)</c> says otherwise.
     /// </summary>
     /// <param name="hubName">The name the host added the hub under</param>
     public static IServiceCollection AddUniversalHubClient<TContract>(
@@ -31,8 +31,9 @@ public static class UniversalHubClientExtensions
 
         var options = new UniversalHubClientOptions();
         configure(options);
-        if (options.Enabled == HubTransports.None)
-            throw new InvalidOperationException($"The {hubName} client isn't set up with any transport - call UseBluetoothLE, UseHttp, UseMultipeer or UseNearby");
+        if (options.TransportCount == 0)
+            throw new InvalidOperationException($"The {hubName} client isn't set up with any transport - call UseBluetoothLE, UseHttp, UseMultipeer, UseNearby or UseTransport");
+        options.ResolvePriority();
 
         services.AddHubClientCore();
         foreach (var c in options.ProtocolActions)
@@ -48,11 +49,9 @@ public static class UniversalHubClientExtensions
         services.AddSingleton(sp => (TContract)sp.GetRequiredService<IBleHubClient<TContract>>());
         services.AddSingleton<IUniversalHubClient<TContract>>(sp => new UniversalHubClient<TContract>(
             sp.GetRequiredService<IBleHubClient<TContract>>(),
-            // resolved on first discovery, so connecting to a known host needs no mDNS stack
-            () => sp.GetService<IHttpServerLocator>(),
             options,
-            sp.GetService<ILoggerFactory>(),
-            () => options.Transports.Select(x => x(sp)).ToList()
+            () => options.CreateTransports(sp),
+            sp.GetService<ILoggerFactory>()
         ));
         return services;
     }

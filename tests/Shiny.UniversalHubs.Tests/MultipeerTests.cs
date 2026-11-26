@@ -100,9 +100,8 @@ public class MultipeerTests : IAsyncLifetime
             .AddSingleton<IMultipeerLink>(this.network)
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
                 o.AutomaticReconnect = automaticReconnect;
-                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
                 o.UseMultipeer(ServiceType, mc => mc.DisplayName = "Phone");
             })
             .BuildServiceProvider();
@@ -114,8 +113,8 @@ public class MultipeerTests : IAsyncLifetime
 
     static Task<HubHostInfo> Find<TContract>(IUniversalHubClient<TContract> client) where TContract : class
         => client
-            .DiscoverAll(HubTransports.Multipeer)
-            .Where(x => x.Multipeer != null)
+            .DiscoverAll([typeof(MultipeerClientTransport)])
+            .Where(x => x.IsSeenOver<MultipeerClientTransport>())
             .FirstAsync()
             .ToTask()
             .WaitAsync(TimeSpan.FromSeconds(5));
@@ -130,9 +129,9 @@ public class MultipeerTests : IAsyncLifetime
         TransportAssert.Equal([typeof(MultipeerHostTransport)], await hub.Start([typeof(MultipeerHostTransport)]));
 
         var client = this.CreateClient<IDynamicTestHub>(dynamicUuid);
-        await client.Connect(await Find(client), new HubConnectOptions("Mia") { Allowed = HubTransports.Multipeer });
+        await client.Connect(await Find(client), new HubConnectOptions("Mia").Only<MultipeerClientTransport>());
 
-        Assert.Equal(HubTransports.Multipeer, client.Transport);
+        Assert.IsType<MultipeerClientTransport>(client.Transport);
         Assert.Equal(new Payload("mc", 7), await client.Hub.Echo(new Payload("mc", 7)));
         Assert.Contains("connected:Mia:Multipeer", handler.Log);
 
@@ -149,7 +148,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid, automaticReconnect);
         var found = await Find(client);
-        await client.Connect(found, new HubConnectOptions(name, "1.0") { Allowed = HubTransports.Multipeer });
+        await client.Connect(found, new HubConnectOptions(name, "1.0").Only<MultipeerClientTransport>());
         return client;
     }
 
@@ -157,7 +156,7 @@ public class MultipeerTests : IAsyncLifetime
     async Task<IUniversalHubClient<ITestHub>> ConnectHttp(string name)
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
-        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name) { Allowed = HubTransports.Http });
+        await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions(name).Only<HttpClientTransport>());
         return client;
     }
 
@@ -193,8 +192,8 @@ public class MultipeerTests : IAsyncLifetime
 
         Assert.Equal("TestHost", found.Name);
         Assert.Equal("host-1", found.HostId);
-        Assert.Equal(HubTransports.Multipeer, found.Transports);
-        Assert.Equal("TestHost", found.Multipeer!.DisplayName);
+        Assert.Equal([typeof(MultipeerClientTransport)], found.Transports);
+        Assert.Equal("TestHost", found.Endpoint<MultipeerHubEndpoint>()!.DisplayName);
     }
 
 
@@ -212,15 +211,15 @@ public class MultipeerTests : IAsyncLifetime
         // a client of the stopped hub doesn't list the host...
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
         var seen = new List<HubHostInfo>();
-        using var watch = other.DiscoverAll(HubTransports.Multipeer).Subscribe(seen.Add);
+        using var watch = other.DiscoverAll([typeof(MultipeerClientTransport)]).Subscribe(seen.Add);
         await Task.Delay(200);
-        Assert.DoesNotContain(seen, x => x.Multipeer != null);
+        Assert.DoesNotContain(seen, x => x.IsSeenOver<MultipeerClientTransport>());
 
         // ...until it starts
         await this.host.StartHub<OtherHub>([typeof(MultipeerHostTransport)]);
-        await WaitFor(() => seen.Any(x => x.Multipeer != null));
+        await WaitFor(() => seen.Any(x => x.IsSeenOver<MultipeerClientTransport>()));
 
-        var found = seen.Last(x => x.Multipeer != null);
+        var found = seen.Last(x => x.IsSeenOver<MultipeerClientTransport>());
         await other.Connect(found, new HubConnectOptions("Bob"));
         Assert.Equal("pong", await other.Hub.Ping());
     }
@@ -231,7 +230,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         var client = this.CreateClient<ITestHub>(CharacteristicUuid);
         var seen = new List<HubHostInfo>();
-        using var watch = client.DiscoverAll(HubTransports.Multipeer).Subscribe(x =>
+        using var watch = client.DiscoverAll([typeof(MultipeerClientTransport)]).Subscribe(x =>
         {
             lock (seen)
                 seen.Add(x);
@@ -239,14 +238,14 @@ public class MultipeerTests : IAsyncLifetime
         await WaitFor(() =>
         {
             lock (seen)
-                return seen.Any(x => x.Multipeer != null);
+                return seen.Any(x => x.IsSeenOver<MultipeerClientTransport>());
         });
 
         await this.host.StopHub<TestHub>();
         await WaitFor(() =>
         {
             lock (seen)
-                return seen.Last().Transports == HubTransports.None;
+                return seen.Last().Transports.Count == 0;
         });
     }
 
@@ -270,7 +269,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         var client = await this.Connect();
 
-        Assert.Equal(HubTransports.Multipeer, client.Transport);
+        Assert.IsType<MultipeerClientTransport>(client.Transport);
         Assert.Equal(BleHubClientStatus.Connected, client.Status);
         Assert.Equal("TestHost", client.HostName);
 
@@ -361,7 +360,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         var alice = await this.Connect("Alice");
         var bob = await this.ConnectHttp("Bob");
-        Assert.Equal(HubTransports.Http, bob.Transport);
+        Assert.IsType<HttpClientTransport>(bob.Transport);
 
         var aliceMessages = new List<string>();
         var bobMessages = new List<string>();
@@ -433,7 +432,7 @@ public class MultipeerTests : IAsyncLifetime
 
         await WaitFor(() => disconnect != null);
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerDisconnect, "Removed by host"), disconnect);
-        Assert.Equal(HubTransports.None, client.Transport);
+        Assert.Null(client.Transport);
     }
 
 
@@ -485,7 +484,7 @@ public class MultipeerTests : IAsyncLifetime
         this.network.Partitioned = true;
         this.network.Sessions.Single().Host.Drop();
         await WaitFor(() => client.Status == BleHubClientStatus.Reconnecting);
-        Assert.Equal(HubTransports.Multipeer, client.Transport);
+        Assert.IsType<MultipeerClientTransport>(client.Transport);
         await WaitFor(() => this.network.Sessions.Count == 1);
         await context.Clients.Group("team").Message("missed one");
         await context.Clients.All.Message("missed two");
@@ -550,7 +549,7 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "Game over"), disconnect);
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerShutdown"));
 
-        await Assert.ThrowsAnyAsync<Exception>(() => late.Connect(stale, new HubConnectOptions("Late") { Allowed = HubTransports.Multipeer }));
+        await Assert.ThrowsAnyAsync<Exception>(() => late.Connect(stale, new HubConnectOptions("Late").Only<MultipeerClientTransport>()));
         Assert.Equal(BleHubClientStatus.Disconnected, late.Status);
     }
 
@@ -563,7 +562,7 @@ public class MultipeerTests : IAsyncLifetime
 
         // the advertisement is still up for OtherHub, so the invitation is accepted - the handshake is refused
         await this.host.StopHub<TestHub>();
-        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(found, new HubConnectOptions("Alice") { Allowed = HubTransports.Multipeer }));
+        var ex = await Assert.ThrowsAsync<BleHubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<MultipeerClientTransport>()));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -785,16 +784,6 @@ public class MultipeerTests : IAsyncLifetime
             .Multipeer("one")
             .Multipeer("two")
             .AddHub<TestHub>(CharacteristicUuid, h => h.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseMultipeer())));
-
-
-    [Theory]
-    [InlineData(HubTransports.Http, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble })]
-    [InlineData(HubTransports.Ble, new[] { HubTransports.Ble, HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby })]
-    [InlineData(HubTransports.Multipeer, new[] { HubTransports.Multipeer, HubTransports.Http, HubTransports.Nearby, HubTransports.Ble })]
-    [InlineData(HubTransports.Nearby, new[] { HubTransports.Nearby, HubTransports.Http, HubTransports.Multipeer, HubTransports.Ble })]
-    [InlineData(HubTransports.All, new[] { HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble })]
-    public void TransportsAreTriedPreferredFirst(HubTransports prefer, HubTransports[] expected)
-        => Assert.Equal(expected, new HubConnectOptions { Prefer = prefer }.Order);
 
 
     [Fact]

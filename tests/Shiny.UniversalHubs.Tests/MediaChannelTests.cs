@@ -71,24 +71,20 @@ public class MediaChannelTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType);
-                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
-                o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
         var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await client.Connect(new HubHostInfo(
-            "MediaHost",
-            "MediaHost",
-            null,
-            null,
-            new DiscoveredHttpServer("MediaHost", new Uri("http://localhost/hubs"), [], 80, new Dictionary<string, string>
+        await client.Connect(new HubHostInfo("MediaHost", "MediaHost", null).With(
+            typeof(HttpClientTransport),
+            new HttpHubEndpoint(new DiscoveredHttpServer("MediaHost", new Uri("http://localhost/hubs"), [], 80, new Dictionary<string, string>
             {
                 ["hubs"] = CharacteristicUuid,
                 ["proto"] = UniversalHubProtocol.Version.ToString()
-            })
+            })),
+            []
         ), new HubConnectOptions(name));
 
         var connection = await client.Hub.MyConnection();   // "{transport}:{connectionId}"

@@ -20,15 +20,6 @@ public enum BleHubClientStatus
 
 
 /// <summary>
-/// A host found while scanning
-/// </summary>
-public sealed record BleHubHostInfo(IPeripheral Peripheral, string? Name, int Rssi)
-{
-    public string Id => this.Peripheral.Uuid;
-}
-
-
-/// <summary>
 /// What the client tells the host about itself during the handshake
 /// </summary>
 public sealed record BleHubConnectOptions(

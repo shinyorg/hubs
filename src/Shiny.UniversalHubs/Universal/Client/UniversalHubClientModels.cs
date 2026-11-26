@@ -1,46 +1,72 @@
+using System.Collections.Immutable;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Shiny.BluetoothLE.Hubs;
 using Shiny.Net.HttpServer.Discovery;
 
 namespace Shiny.UniversalHubs;
 
 /// <summary>
-/// A host found over BLE, Wi-Fi, Multipeer, Nearby or several of them. <see cref="UniversalHubClient{TContract}.DiscoverAll"/>
-/// raises a fresh snapshot whenever any side changes; when <see cref="Transports"/> is None the host has gone.
+/// A host found over one transport or several. <see cref="IUniversalHubClient{TContract}.DiscoverAll()"/> raises a fresh
+/// snapshot whenever any transport's view changes; when <see cref="Transports"/> is empty the host has gone.
 /// </summary>
 /// <param name="Key">Stable for one host across every transport - its advertised name</param>
 /// <param name="Name">The host's name</param>
-/// <param name="HostId">From mDNS, Multipeer or Nearby, when the host has been seen there</param>
-/// <param name="Ble">Set while the host is seen over BLE</param>
-/// <param name="Http">Set while the host is seen over mDNS</param>
-public sealed record HubHostInfo(
-    string Key,
-    string Name,
-    string? HostId,
-    BleHubHostInfo? Ble,
-    DiscoveredHttpServer? Http
-)
+/// <param name="HostId">The host's id, once a transport that carries it (mDNS, Multipeer, Nearby) has seen it</param>
+public sealed record HubHostInfo(string Key, string Name, string? HostId)
 {
     /// <summary>
-    /// Set while the host is seen over MultipeerConnectivity (Shiny.UniversalHubs.Multipeer)
+    /// What each transport saw of the host, by the client transport's type
     /// </summary>
-    public MultipeerHost? Multipeer { get; init; }
+    public IReadOnlyDictionary<Type, HubEndpoint> Endpoints { get; init; } = ImmutableDictionary<Type, HubEndpoint>.Empty;
 
     /// <summary>
-    /// Set while the host is seen over Nearby Connections (Shiny.UniversalHubs.Nearby)
+    /// The types of the client transports the host is seen on, in the client's priority order - the order a connect tries
+    /// them in, unless <see cref="HubConnectOptions"/> says otherwise
     /// </summary>
-    public NearbyHost? Nearby { get; init; }
-
-    public HubTransports Transports =>
-        (this.Ble != null ? HubTransports.Ble : HubTransports.None)
-        | (this.Http != null ? HubTransports.Http : HubTransports.None)
-        | (this.Multipeer != null ? HubTransports.Multipeer : HubTransports.None)
-        | (this.Nearby != null ? HubTransports.Nearby : HubTransports.None);
+    public IReadOnlyList<Type> Transports { get; init; } = [];
 
     /// <summary>
-    /// Signal strength, when seen over BLE
+    /// What a transport saw of the host, by the endpoint's type (eg. <c>host.Endpoint&lt;BleHubEndpoint&gt;()?.Rssi</c>) -
+    /// null when the host isn't seen over that transport
     /// </summary>
-    public int? Rssi => this.Ble?.Rssi;
+    public TEndpoint? Endpoint<TEndpoint>() where TEndpoint : HubEndpoint
+        => this.Endpoints.Values.OfType<TEndpoint>().FirstOrDefault();
+
+    /// <summary>
+    /// Whether the host is seen over <typeparamref name="TTransport"/>
+    /// </summary>
+    public bool IsSeenOver<TTransport>() where TTransport : IHubClientTransport => this.Endpoints.ContainsKey(typeof(TTransport));
+
+
+    /// <summary>
+    /// This host with <paramref name="transport"/>'s view replaced - <paramref name="endpoint"/> null when it no longer
+    /// sees the host - and <see cref="Transports"/> in <paramref name="priority"/> order
+    /// </summary>
+    internal HubHostInfo With(Type transport, HubEndpoint? endpoint, IReadOnlyList<Type> priority)
+    {
+        var endpoints = this.Endpoints.ToDictionary();
+        if (endpoint == null)
+            endpoints.Remove(transport);
+        else
+            endpoints[transport] = endpoint;
+
+        int Rank(Type type)
+        {
+            for (var i = 0; i < priority.Count; i++)
+            {
+                if (priority[i] == type)
+                    return i;
+            }
+            return Int32.MaxValue;
+        }
+
+        return this with
+        {
+            Endpoints = endpoints,
+            Transports = endpoints.Keys.OrderBy(Rank).ToList()
+        };
+    }
 
 
     /// <summary>
@@ -48,7 +74,7 @@ public sealed record HubHostInfo(
     /// Pass it to <see cref="IUniversalHubClient{TContract}.Connect"/>; it is reached over HTTP only.
     /// </summary>
     /// <param name="serverUrl">The server's address, eg. <c>https://abc.a.pinggy.link</c> or <c>http://192.168.1.20:5000</c></param>
-    /// <param name="endpoint">The server's base path - AddUniversalServer's Endpoint, <c>/hubs</c> unless it was changed</param>
+    /// <param name="endpoint">The server's base path - the host's HttpTransportOptions.BasePath, <c>/hubs</c> unless it was changed</param>
     public static HubHostInfo FromUrl(Uri serverUrl, string endpoint = UniversalHubProtocol.DefaultBasePath)
     {
         ArgumentNullException.ThrowIfNull(serverUrl);
@@ -57,19 +83,20 @@ public sealed record HubHostInfo(
 
         var root = serverUrl.GetLeftPart(UriPartial.Authority);
         var baseAddress = new Uri(root + UniversalHubProtocol.NormalizeBasePath(endpoint));
-        return new HubHostInfo(
-            root,
-            serverUrl.Host,
-            null,
-            null,
-            new DiscoveredHttpServer(serverUrl.Host, baseAddress, [], serverUrl.Port, new Dictionary<string, string>())
-        );
+        var server = new DiscoveredHttpServer(serverUrl.Host, baseAddress, [], serverUrl.Port, new Dictionary<string, string>());
+        return new HubHostInfo(root, serverUrl.Host, null).With(typeof(HttpClientTransport), new HttpHubEndpoint(server), []);
     }
 }
 
 
 /// <summary>
-/// What the client tells the host about itself, and which transports it may use
+/// What one client transport saw of a host - each transport has its own (BleHubEndpoint, HttpHubEndpoint, ...)
+/// </summary>
+public abstract record HubEndpoint;
+
+
+/// <summary>
+/// What the client tells the host about itself, and which transports it may use and in what order
 /// </summary>
 public sealed record HubConnectOptions(
     string? Name = null,
@@ -78,30 +105,60 @@ public sealed record HubConnectOptions(
 )
 {
     /// <summary>
-    /// Tried first when the host is reachable more than one way. Wi-Fi by default: more range, more bandwidth, no MTU.
-    /// The rest follow in the order Wi-Fi, Multipeer, Nearby, BLE.
+    /// Client transport types tried first, in this order; the rest follow in the client's priority
+    /// (UniversalHubClientOptions.Priority, else the order its transports were added in)
     /// </summary>
-    public HubTransports Prefer { get; init; } = HubTransports.Http;
+    public IReadOnlyList<Type> Preferred { get; init; } = [];
 
     /// <summary>
-    /// Transports that may be used at all - the others are the fallback when the preferred one fails
+    /// The only client transport types that may be used - null for any
     /// </summary>
-    public HubTransports Allowed { get; init; } = HubTransports.All;
+    public IReadOnlySet<Type>? Allowed { get; init; }
 
     /// <summary>
-    /// The order transports are tried in: <see cref="Prefer"/>, then Wi-Fi, Multipeer, Nearby and BLE. Wi-Fi comes first
-    /// among the rest because every peer can use it; Multipeer and Nearby beat BLE because they reach Wi-Fi speed with no
-    /// network at all, and Multipeer comes before Nearby because it is the OS's own on Apple devices.
+    /// Tries <typeparamref name="TTransport"/> before the others (after any preferred already)
     /// </summary>
-    internal IReadOnlyList<HubTransports> Order
+    public HubConnectOptions Prefer<TTransport>() where TTransport : IHubClientTransport => this.Prefer(typeof(TTransport));
+
+    /// <summary>
+    /// Tries <paramref name="transports"/> before the others, in this order (after any preferred already)
+    /// </summary>
+    public HubConnectOptions Prefer(params IEnumerable<Type> transports)
+        => this with { Preferred = [.. this.Preferred, .. transports.Where(x => !this.Preferred.Contains(x))] };
+
+    /// <summary>
+    /// Lets <typeparamref name="TTransport"/> be used - once anything is allowed, only what is allowed is used
+    /// </summary>
+    public HubConnectOptions Allow<TTransport>() where TTransport : IHubClientTransport => this.Allow(typeof(TTransport));
+
+    /// <summary>
+    /// Lets <paramref name="transports"/> be used - once anything is allowed, only what is allowed is used
+    /// </summary>
+    public HubConnectOptions Allow(params IEnumerable<Type> transports)
+        => this with { Allowed = (this.Allowed ?? ImmutableHashSet<Type>.Empty).Concat(transports).ToHashSet() };
+
+    /// <summary>
+    /// Uses <typeparamref name="TTransport"/> and nothing else
+    /// </summary>
+    public HubConnectOptions Only<TTransport>() where TTransport : IHubClientTransport
+        => this with { Preferred = [typeof(TTransport)], Allowed = new HashSet<Type> { typeof(TTransport) } };
+
+
+    /// <summary>
+    /// The order <paramref name="transports"/> (in the client's priority) are tried in: <see cref="Preferred"/> first, then
+    /// the rest, leaving out what isn't <see cref="Allowed"/>
+    /// </summary>
+    internal IReadOnlyList<IHubClientTransport> Order(IReadOnlyList<IHubClientTransport> transports)
     {
-        get
-        {
-            HubTransports[] order = [HubTransports.Http, HubTransports.Multipeer, HubTransports.Nearby, HubTransports.Ble];
-            return order.Contains(this.Prefer)
-                ? [this.Prefer, .. order.Where(x => x != this.Prefer)]
-                : order;
-        }
+        var unknown = this.Preferred.Concat(this.Allowed ?? Enumerable.Empty<Type>()).FirstOrDefault(t => !transports.Any(x => x.GetType() == t));
+        if (unknown != null)
+            throw new ArgumentException($"{unknown.Name} is not a transport this hub client has");
+
+        var preferred = this.Preferred.Select(t => transports.First(x => x.GetType() == t));
+        return preferred
+            .Concat(transports.Where(x => !this.Preferred.Contains(x.GetType())))
+            .Where(x => this.Allowed == null || this.Allowed.Contains(x.GetType()))
+            .ToList();
     }
 
     internal BleHubConnectOptions ToBle() => new(this.Name, this.AppVersion, this.Properties);
@@ -109,44 +166,83 @@ public sealed record HubConnectOptions(
 
 
 /// <summary>
-/// How a hub client reaches its hub: the transports it uses (at least one), and how it connects over them
+/// How a hub client reaches its hub: the transports it uses (at least one), the order it tries them in, and how it connects
 /// </summary>
 public class UniversalHubClientOptions
 {
-    /// <summary>
-    /// The mDNS service type browsed for over HTTP (UseHttp) - the hub's own, as the host set it with UseHttp
-    /// </summary>
-    internal string HttpServiceType { get; private set; } = UniversalHubProtocol.ServiceType;
-
-    /// <summary>
-    /// The transports this client uses
-    /// </summary>
-    internal HubTransports Enabled { get; private set; }
+    readonly List<(Type Type, Func<IServiceProvider, IHubClientTransport> Factory)> transports = new();
+    readonly List<Type> priority = new();
 
     internal List<Action<BleHubProtocolOptions>> ProtocolActions { get; } = new();
+
+    /// <summary>
+    /// Registrations the transports need
+    /// </summary>
+    internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
 
     /// <summary>
     /// The GATT service dynamic hubs are characteristics in (AddDynamicHubClients) - the host's DynamicHubOptions.BleServiceUuid
     /// </summary>
     public string DynamicBleServiceUuid { get; set; } = BleHubProtocolOptions.DefaultServiceUuid;
 
+    /// <summary>
+    /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
+    /// missed pushes. Over HTTP the line resumes on its own; over BLE, Multipeer and Nearby the client reconnects
+    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (UniversalServerOptions.ResumeWindow).
+    /// </summary>
+    public bool AutomaticReconnect { get; set; } = true;
+
 
     /// <summary>
-    /// Reaches the hub over HTTP: hosts found over mDNS, or an address you have (<see cref="HubHostInfo.FromUrl"/>)
+    /// Reaches the hub over a transport of your own. Each transport type once per hub client; transports are tried in the
+    /// order they are added unless <see cref="Priority(Type[])"/> says otherwise.
     /// </summary>
-    /// <param name="mdnsServiceType">The mDNS service type to browse - the one the host gave the hub's UseHttp. Null for the default.</param>
-    public UniversalHubClientOptions UseHttp(string? mdnsServiceType = null)
+    /// <param name="create">Creates the transport - once per hub client</param>
+    /// <param name="services">Registrations the transport needs, if any</param>
+    public UniversalHubClientOptions UseTransport<TTransport>(Func<IServiceProvider, TTransport> create, Action<IServiceCollection>? services = null)
+        where TTransport : class, IHubClientTransport
     {
-        if (mdnsServiceType != null)
-            UniversalHubProtocol.ValidateServiceType(mdnsServiceType);
-        if (this.Enabled.HasFlag(HubTransports.Http))
-            throw new InvalidOperationException("HTTP is already set up for this hub client");
+        ArgumentNullException.ThrowIfNull(create);
+        if (this.transports.Any(x => x.Type == typeof(TTransport)))
+            throw new InvalidOperationException($"{typeof(TTransport).Name} is already set up for this hub client");
 
-        this.HttpServiceType = mdnsServiceType ?? UniversalHubProtocol.ServiceType;
-        this.Enabled |= HubTransports.Http;
-        this.ServiceActions.Add(services => services.AddHttpServerLocator());
+        this.transports.Add((typeof(TTransport), create));
+        if (services != null)
+            this.ServiceActions.Add(services);
         return this;
     }
+
+
+    /// <summary>
+    /// The order transports are tried in when a host is seen on several - by client transport type. Transports left out
+    /// follow in the order they were added.
+    /// </summary>
+    public UniversalHubClientOptions Priority(params Type[] transports)
+    {
+        ArgumentNullException.ThrowIfNull(transports);
+        var duplicate = transports.GroupBy(x => x).FirstOrDefault(x => x.Count() > 1);
+        if (duplicate != null)
+            throw new ArgumentException($"{duplicate.Key.Name} is in the priority more than once", nameof(transports));
+
+        this.priority.Clear();
+        this.priority.AddRange(transports);
+        return this;
+    }
+
+    /// <inheritdoc cref="Priority(Type[])"/>
+    public UniversalHubClientOptions Priority<T1, T2>()
+        where T1 : IHubClientTransport where T2 : IHubClientTransport
+        => this.Priority(typeof(T1), typeof(T2));
+
+    /// <inheritdoc cref="Priority(Type[])"/>
+    public UniversalHubClientOptions Priority<T1, T2, T3>()
+        where T1 : IHubClientTransport where T2 : IHubClientTransport where T3 : IHubClientTransport
+        => this.Priority(typeof(T1), typeof(T2), typeof(T3));
+
+    /// <inheritdoc cref="Priority(Type[])"/>
+    public UniversalHubClientOptions Priority<T1, T2, T3, T4>()
+        where T1 : IHubClientTransport where T2 : IHubClientTransport where T3 : IHubClientTransport where T4 : IHubClientTransport
+        => this.Priority(typeof(T1), typeof(T2), typeof(T3), typeof(T4));
 
 
     /// <summary>
@@ -159,97 +255,96 @@ public class UniversalHubClientOptions
         return this;
     }
 
-    /// <summary>
-    /// How long one Wi-Fi address gets to answer before the next address (or BLE) is tried
-    /// </summary>
-    public TimeSpan HttpConnectTimeout { get; set; } = TimeSpan.FromSeconds(6);
+
+    internal bool Has<TTransport>() where TTransport : IHubClientTransport => this.transports.Any(x => x.Type == typeof(TTransport));
+
+    internal int TransportCount => this.transports.Count;
 
     /// <summary>
-    /// When none of a discovered host's addresses answer, how long to spend looking it up again over mDNS - a host that
-    /// restarted (or was killed without a goodbye) is on a new port. Zero turns this off.
+    /// The transport types in the order they're tried: <see cref="Priority(Type[])"/>, then the rest as they were added.
+    /// Naming a transport that isn't set up is a mistake.
     /// </summary>
-    public TimeSpan HttpRediscoverTimeout { get; set; } = TimeSpan.FromSeconds(3);
-
-    /// <summary>
-    /// Resume after a dropped link instead of disconnecting - the host keeps the client, its groups and Items, and replays
-    /// missed pushes. Over Wi-Fi the line resumes on its own; over BLE, Multipeer and Nearby the client reconnects
-    /// (<see cref="BleHubClientStatus.Reconnecting"/>) within the host's resume window (UniversalServerOptions.ResumeWindow).
-    /// </summary>
-    public bool AutomaticReconnect { get; set; } = true;
-
-    /// <summary>
-    /// The HTTP stack for Wi-Fi connections - tests swap in an in-memory handler
-    /// </summary>
-    public Func<HttpMessageHandler>? HttpMessageHandlerFactory { get; set; }
-
-    /// <summary>
-    /// Transports beyond HTTP: BLE (<c>o.UseBluetoothLE(...)</c>), and from add-on packages (<c>o.UseMultipeer(...)</c>,
-    /// <c>o.UseNearby(...)</c>)
-    /// </summary>
-    internal List<Func<IServiceProvider, IUniversalHubClientTransport>> Transports { get; } = new();
-
-    /// <summary>
-    /// Adds a transport - each one once per hub client
-    /// </summary>
-    internal void AddTransport(HubTransports transport, string name, Func<IServiceProvider, IUniversalHubClientTransport> factory)
+    internal IReadOnlyList<Type> ResolvePriority()
     {
-        if (this.Enabled.HasFlag(transport))
-            throw new InvalidOperationException($"{name} is already set up for this hub client");
+        var unknown = this.priority.FirstOrDefault(t => !this.transports.Any(x => x.Type == t));
+        if (unknown != null)
+            throw new InvalidOperationException($"{unknown.Name} is in the priority but isn't set up for this hub client");
 
-        this.Enabled |= transport;
-        this.Transports.Add(factory);
+        return [.. this.priority, .. this.transports.Select(x => x.Type).Where(x => !this.priority.Contains(x))];
     }
 
     /// <summary>
-    /// Registrations those add-on transports need
+    /// Creates the transports, in priority order
     /// </summary>
-    internal List<Action<IServiceCollection>> ServiceActions { get; } = new();
+    internal IReadOnlyList<IHubClientTransport> CreateTransports(IServiceProvider services)
+        => this.ResolvePriority().Select(t => this.transports.First(x => x.Type == t).Factory(services)).ToList();
 }
 
 
 /// <summary>
-/// A host seen over MultipeerConnectivity. The peer itself stays inside Shiny.UniversalHubs.Multipeer.
+/// A transport a hub client finds hosts over and connects through - Bluetooth LE, HTTP, Multipeer, Nearby, or one of your
+/// own. Its type is its identity: <see cref="HubHostInfo.Endpoints"/>, <see cref="HubConnectOptions.Prefer{TTransport}"/>
+/// and <see cref="UniversalHubClientOptions.Priority(Type[])"/> all go by it.
 /// </summary>
-/// <param name="DisplayName">The host's Multipeer display name</param>
-/// <param name="Info">What it advertises - the same keys as its mDNS TXT record (<see cref="UniversalHubProtocol.TxtHubs"/>, ...)</param>
-public sealed record MultipeerHost(string DisplayName, IReadOnlyDictionary<string, string> Info)
+public interface IHubClientTransport
 {
     /// <summary>
-    /// The native peer (an MCPeerID) - only the Multipeer package knows what to do with it
+    /// The transport's name in logs, errors and UI - not its identity, which is its type
     /// </summary>
-    internal object? Peer { get; init; }
+    string DisplayName { get; }
+
+    /// <summary>
+    /// Whether this transport can run on this device at all (Multipeer is Apple only). One that can't is left out of
+    /// discovery and connecting, so one registration works in a cross-platform app.
+    /// </summary>
+    bool IsSupported { get; }
+
+    /// <summary>
+    /// Hosts of <paramref name="client"/>'s hub as they come and go on this transport. Errors end only this transport's
+    /// discovery.
+    /// </summary>
+    IObservable<HubHostSighting> Discover(HubClientContext client);
+
+    /// <summary>
+    /// Connects <paramref name="client"/> to <paramref name="host"/> (seen over this transport: its endpoint is in
+    /// <see cref="HubHostInfo.Endpoints"/>) through <see cref="HubClientContext.Connect"/>
+    /// </summary>
+    Task Connect(HubClientContext client, HubHostInfo host, CancellationToken cancellationToken);
 }
 
 
 /// <summary>
-/// A host seen over Nearby Connections. The endpoint itself stays inside Shiny.UniversalHubs.Nearby.
+/// The hub client a transport is discovering for or connecting
 /// </summary>
-/// <param name="EndpointName">The host's advertised name</param>
-public sealed record NearbyHost(string EndpointName)
+public sealed class HubClientContext
 {
-    /// <summary>
-    /// The native endpoint - only the Nearby package knows what to do with it
-    /// </summary>
-    internal object? Peer { get; init; }
-}
+    internal HubClientContext(BleHubClient client, BleHubConnectOptions connectOptions)
+    {
+        this.Client = client;
+        this.ConnectOptions = connectOptions;
+    }
 
-
-/// <summary>
-/// A transport beyond BLE and HTTP that a universal hub client can discover hosts over and connect through
-/// </summary>
-internal interface IUniversalHubClientTransport
-{
-    HubTransports Transport { get; }
+    internal BleHubClient Client { get; }
 
     /// <summary>
-    /// Hosts of <paramref name="client"/>'s hub as they come and go. Errors end only this transport's discovery.
+    /// The name of the hub - what hosts list and handshakes ask for
     /// </summary>
-    IObservable<HubHostSighting> Discover(BleHubClient client);
+    public string HubName => this.Client.HubName;
+
+    public ILogger? Logger => this.Client.Logger;
 
     /// <summary>
-    /// Connects <paramref name="client"/> to <paramref name="host"/> - through <see cref="BleHubClient.ConnectExternal"/>
+    /// What the client tells the host about itself, and whether it resumes after a dropped link
+    /// (<see cref="BleHubConnectOptions.AutomaticReconnect"/> - a transport that can, reopens its link to the same host)
     /// </summary>
-    Task Connect(BleHubClient client, HubHostInfo host, BleHubConnectOptions options, CancellationToken cancellationToken);
+    public BleHubConnectOptions ConnectOptions { get; }
+
+    /// <summary>
+    /// Connects through the link <paramref name="createTransport"/> returns: it is handed the callbacks for pushes and
+    /// closes, and carries this one connection
+    /// </summary>
+    public Task Connect(Func<IBleHubClientTransportEvents, IBleHubClientTransport> createTransport, CancellationToken cancellationToken)
+        => this.Client.ConnectExternal(createTransport, this.ConnectOptions, cancellationToken);
 }
 
 
@@ -258,14 +353,5 @@ internal interface IUniversalHubClientTransport
 /// </summary>
 /// <param name="Name">The host's name - how it is merged with what the other transports see</param>
 /// <param name="HostId">The host's id, when the transport knows it</param>
-/// <param name="Apply">Puts what this transport sees into the merged host: sets its endpoint when found, clears it when lost</param>
-internal sealed record HubHostSighting(string Name, string? HostId, Func<HubHostInfo, HubHostInfo> Apply);
-
-
-/// <summary>
-/// Implemented by each external client transport, so the client can say which one a connection is on
-/// </summary>
-internal interface IHubTransportKind
-{
-    HubTransports Transport { get; }
-}
+/// <param name="Endpoint">What the transport sees of the host - null when it no longer sees it</param>
+public sealed record HubHostSighting(string Name, string? HostId, HubEndpoint? Endpoint);

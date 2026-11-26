@@ -14,16 +14,15 @@ namespace Shiny.UniversalHubs;
 /// Carries one hub connection over a Switchboard line. Calls go through hub.invoke / hub.stream, pushes arrive as
 /// hub.push, and files use the host's plain HTTP routes.
 /// </summary>
-internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTransportKind
+internal sealed class SwitchboardTransport : IBleHubClientTransport
 {
-    public HubTransports Transport => HubTransports.Http;
 
     readonly IBleHubClientTransportEvents events;
     readonly HttpClient http;
     readonly SwitchboardLine line;
     readonly Uri filesUri;
     readonly Uri mediaUri;
-    readonly UniversalHubClientOptions options;
+    readonly HttpClientTransportOptions options;
     readonly ILogger? logger;
     readonly SemaphoreSlim mediaGate = new(1, 1);
     string? fileToken;
@@ -38,7 +37,8 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTranspo
         Uri filesUri,
         Uri mediaUri,
         IBleHubClientTransportEvents events,
-        UniversalHubClientOptions options,
+        HttpClientTransportOptions options,
+        bool automaticReconnect,
         ILoggerFactory? loggerFactory
     )
     {
@@ -50,7 +50,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTranspo
         this.http = CreateHttpClient(options);
 
         var builder = new SwitchboardLineBuilder().WithUrl(hubUri, o => o.HttpClient = this.http);
-        if (options.AutomaticReconnect)
+        if (automaticReconnect)
             builder.WithAutomaticReconnect();
         if (loggerFactory != null)
             builder.WithLoggerFactory(loggerFactory);
@@ -79,9 +79,9 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTranspo
     /// The line's event stream stays open for the whole connection, so no overall timeout - HttpClient's default 100
     /// seconds would cut it (and any slow file transfer) off. Calls and transfers time out through their cancellation tokens.
     /// </summary>
-    internal static HttpClient CreateHttpClient(UniversalHubClientOptions options)
+    internal static HttpClient CreateHttpClient(HttpClientTransportOptions options)
     {
-        var http = options.HttpMessageHandlerFactory is { } factory ? new HttpClient(factory()) : new HttpClient();
+        var http = options.MessageHandlerFactory is { } factory ? new HttpClient(factory()) : new HttpClient();
         http.Timeout = Timeout.InfiniteTimeSpan;
         return http;
     }
@@ -163,7 +163,7 @@ internal sealed class SwitchboardTransport : IBleHubClientTransport, IHubTranspo
                 this.mediaUri,
                 this.mediaToken!,
                 this.mediaMaxPacketSize,
-                this.options.HttpMessageHandlerFactory,
+                this.options.MessageHandlerFactory,
                 cancellationToken
             ).ConfigureAwait(false);
             return this.media;

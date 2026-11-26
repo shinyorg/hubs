@@ -97,9 +97,7 @@ public class DynamicHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(ServiceType);
-                o.HttpMessageHandlerFactory = () => server.Server.CreateInMemoryHandler();
-                o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
+                o.UseHttp(ServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
@@ -113,18 +111,16 @@ public class DynamicHubTests : IAsyncLifetime
     Task<IUniversalHubClient<IDynamicTestHub>> Connect(string name = "Alice") => this.Connect<IDynamicTestHub>(DynamicUuid, name);
 
 
-    static HubHostInfo Host(string characteristicUuid) => new(
-        "DynHost",
-        "DynHost",
-        "dyn-host",
-        null,
-        new DiscoveredHttpServer(
+    static HubHostInfo Host(string characteristicUuid) => new HubHostInfo("DynHost", "DynHost", "dyn-host").With(
+        typeof(HttpClientTransport),
+        new HttpHubEndpoint(new DiscoveredHttpServer(
             "DynHost",
             new Uri("http://localhost/hubs"),
             [],
             80,
             new Dictionary<string, string> { ["hubs"] = characteristicUuid, ["proto"] = UniversalHubProtocol.Version.ToString(), ["path"] = "/hubs" }
-        )
+        )),
+        []
     );
 
 
@@ -344,10 +340,10 @@ public class DynamicHubTests : IAsyncLifetime
     {
         var services = new ServiceCollection()
             .AddLogging()
-            .AddDynamicHubClients(o =>
+            .AddDynamicHubClients(http: h =>
             {
-                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
-                o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
+                h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
+                h.ConnectTimeout = TimeSpan.FromSeconds(5);
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
@@ -361,7 +357,7 @@ public class DynamicHubTests : IAsyncLifetime
     {
         var client = this.CreateDynamicClient(DynamicUuid);
         await client.Connect(Host(DynamicUuid), new HubConnectOptions("Dyna", "1.0"));
-        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.IsType<HttpClientTransport>(client.Transport);
 
         var pushes = new List<(string Name, string Args)>();
         client.Hub.Pushed += (name, args) => { lock (pushes) pushes.Add((name, String.Join(",", args.Select(x => Encoding.UTF8.GetString(x.Span))))); };

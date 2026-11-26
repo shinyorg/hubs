@@ -98,9 +98,7 @@ public class UniversalHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<TContract>(characteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid).UseHttp(MdnsServiceType);
-                o.HttpMessageHandlerFactory = () => server.Server.CreateInMemoryHandler();
-                o.HttpConnectTimeout = TimeSpan.FromSeconds(5);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => server.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(5); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, characteristicUuid);
             })
             .BuildServiceProvider();
 
@@ -109,18 +107,16 @@ public class UniversalHubTests : IAsyncLifetime
     }
 
 
-    static HubHostInfo HttpHost(string path = "/hubs") => new(
-        "TestHost",
-        "TestHost",
-        "host-1",
-        null,
-        new DiscoveredHttpServer(
+    static HubHostInfo HttpHost(string path = "/hubs") => new HubHostInfo("TestHost", "TestHost", "host-1").With(
+        typeof(HttpClientTransport),
+        new HttpHubEndpoint(new DiscoveredHttpServer(
             "TestHost",
             new Uri("http://localhost" + path),
             [],
             80,
             new Dictionary<string, string> { ["hubs"] = CharacteristicUuid, ["proto"] = UniversalHubProtocol.Version.ToString(), ["path"] = path }
-        )
+        )),
+        []
     );
 
 
@@ -164,9 +160,7 @@ public class UniversalHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o =>
             {
-                o.UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType);
-                o.HttpMessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler();
-                o.HttpConnectTimeout = TimeSpan.FromSeconds(2);
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler(); h.ConnectTimeout = TimeSpan.FromSeconds(2); }).UseBluetoothLE(BleHubProtocolOptions.DefaultServiceUuid, CharacteristicUuid);
             })
             .AddSingleton(locator)
             .BuildServiceProvider();
@@ -180,12 +174,12 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task AHostThatMovedIsLookedUpAgain()
     {
         // what the scan last saw (a host that has since restarted somewhere else), and where it is now
-        var locator = new FakeLocator(HttpHost().Http);
+        var locator = new FakeLocator(HttpHost().Endpoint<HttpHubEndpoint>()!.Server);
         var client = this.CreateClientWithLocator(locator);
 
-        await client.Connect(HttpHost("/moved-away"), new HubConnectOptions("Alice") { Allowed = HubTransports.Http });
+        await client.Connect(HttpHost("/moved-away"), new HubConnectOptions("Alice").Only<HttpClientTransport>());
 
-        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal(1, locator.Lookups);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
     }
@@ -195,10 +189,10 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task AHostStillAtItsStaleAddressIsNotRetried()
     {
         var stale = HttpHost("/moved-away");
-        var locator = new FakeLocator(stale.Http);   // mDNS still says the same thing
+        var locator = new FakeLocator(stale.Endpoint<HttpHubEndpoint>()!.Server);   // mDNS still says the same thing
         var client = this.CreateClientWithLocator(locator);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice") { Allowed = HubTransports.Http }));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice").Only<HttpClientTransport>()));
         Assert.Equal(1, locator.Lookups);
         Assert.Equal(BleHubClientStatus.Disconnected, client.Status);
     }
@@ -207,7 +201,7 @@ public class UniversalHubTests : IAsyncLifetime
     [Fact]
     public async Task AnAddressFromOutsideMdnsIsNotLookedUp()
     {
-        var locator = new FakeLocator(HttpHost().Http);
+        var locator = new FakeLocator(HttpHost().Endpoint<HttpHubEndpoint>()!.Server);
         var client = this.CreateClientWithLocator(locator);
 
         await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost"), "/moved-away"), new HubConnectOptions("Alice")));
@@ -220,7 +214,7 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var client = await this.Connect();
 
-        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal(BleHubClientStatus.Connected, client.Status);
         Assert.Equal("TestHost", client.HostName);
         Assert.Contains("connected:Alice", this.log.Entries);
@@ -329,15 +323,14 @@ public class UniversalHubTests : IAsyncLifetime
             .AddLogging()
             .AddUniversalHubClient<ITestHub>("chat-room", o =>
             {
-                o.UseHttp(MdnsServiceType);
-                o.HttpMessageHandlerFactory = () => app.Server.CreateInMemoryHandler();
+                o.UseHttp(MdnsServiceType, h => { h.MessageHandlerFactory = () => app.Server.CreateInMemoryHandler(); });
             })
             .BuildServiceProvider();
         this.clientContainers.Add(services);
 
         var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
         await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"));
-        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
         Assert.Equal("HttpOnly", client.HostName);
         await host.Stop();
@@ -470,9 +463,9 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var host = HubHostInfo.FromUrl(new Uri("https://abc.a.pinggy.link/ignored?x=1"), "game/");
 
-        Assert.Equal(HubTransports.Http, host.Transports);
+        Assert.Equal([typeof(HttpClientTransport)], host.Transports);
         Assert.Equal("abc.a.pinggy.link", host.Name);
-        Assert.Equal(new Uri("https://abc.a.pinggy.link/game"), host.Http!.BaseAddress);
+        Assert.Equal(new Uri("https://abc.a.pinggy.link/game"), host.Endpoint<HttpHubEndpoint>()!.Server.BaseAddress);
         Assert.Throws<ArgumentException>(() => HubHostInfo.FromUrl(new Uri("ftp://example.com")));
     }
 
@@ -483,8 +476,34 @@ public class UniversalHubTests : IAsyncLifetime
         var client = this.CreateClient();
         await client.Connect(HubHostInfo.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"));
 
-        Assert.Equal(HubTransports.Http, client.Transport);
+        Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
+    }
+
+
+    [Fact]
+    public async Task APreferredTransportThatFailsFallsBackToTheNext()
+    {
+        var attempts = new List<string>();
+        var services = new ServiceCollection()
+            .AddLogging()
+            .AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o
+                .UseHttp(MdnsServiceType, h => h.MessageHandlerFactory = () => this.app.Server.CreateInMemoryHandler())
+                .UseTransport(_ => new Alpha(attempts)))
+            .BuildServiceProvider();
+        this.clientContainers.Add(services);
+        var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
+        var host = HubHostInfo.FromUrl(new Uri("http://localhost")).With(typeof(Alpha), new FakeEndpoint("alpha"), client.Transports.Select(x => x.GetType()).ToList());
+
+        Assert.Equal([typeof(HttpClientTransport), typeof(Alpha)], host.Transports);
+        await client.Connect(host, new HubConnectOptions("Alice").Prefer<Alpha>());
+
+        Assert.Equal(["Alpha"], attempts);
+        Assert.IsType<HttpClientTransport>(client.Transport);
+        Assert.Equal("Alice", await client.Hub.WhoAmI());
+
+        await client.Disconnect();
+        Assert.Null(client.Transport);
     }
 
 
@@ -624,7 +643,7 @@ public class UniversalHubTests : IAsyncLifetime
 
         await WaitFor(() => disconnect != null);
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerDisconnect, "Removed by host"), disconnect);
-        Assert.Equal(HubTransports.None, client.Transport);
+        Assert.Null(client.Transport);
     }
 
 
@@ -763,7 +782,7 @@ public class UniversalHubTests : IAsyncLifetime
     public void TransportHttpClientHasNoOverallTimeout()
     {
         // the line's event stream is open for the whole connection - HttpClient's default 100s would cut it
-        using var http = SwitchboardTransport.CreateHttpClient(new UniversalHubClientOptions());
+        using var http = SwitchboardTransport.CreateHttpClient(new HttpClientTransportOptions());
         Assert.Equal(Timeout.InfiniteTimeSpan, http.Timeout);
     }
 
