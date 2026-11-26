@@ -26,7 +26,7 @@ internal interface IPeerHostTransport
     ILogger? Logger { get; }
 
     /// <summary>
-    /// The running hub a handshake asks for, by characteristic UUID
+    /// The running hub a handshake asks for, by name
     /// </summary>
     IHubBinding? FindRunning(string? key);
 

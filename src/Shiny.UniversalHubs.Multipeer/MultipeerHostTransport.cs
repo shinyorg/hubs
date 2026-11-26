@@ -117,7 +117,7 @@ public sealed class MultipeerHostTransport : IHubTransport, IPeerHostTransport
 
 
     /// <summary>
-    /// The running hub a handshake asks for, by characteristic UUID
+    /// The running hub a handshake asks for, by name
     /// </summary>
     IHubBinding? IPeerHostTransport.FindRunning(string? key)
     {
