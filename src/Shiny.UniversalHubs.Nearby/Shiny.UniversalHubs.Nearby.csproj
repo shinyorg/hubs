@@ -12,8 +12,7 @@
         <PackageTags>$(PackageTags) nearby nearbyconnections wifiaware wifidirect peer-to-peer offline</PackageTags>
     </PropertyGroup>
     <ItemGroup>
-        <ProjectReference Include="..\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
-        <ProjectReference Include="..\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+        <ProjectReference Include="..\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
     </ItemGroup>
 

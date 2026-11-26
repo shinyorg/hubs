@@ -12,8 +12,7 @@
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Host\Shiny.UniversalHubs.Host.csproj" />
-        <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Client\Shiny.UniversalHubs.Client.csproj" />
+        <ProjectReference Include="..\..\src\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Multipeer\Shiny.UniversalHubs.Multipeer.csproj" />
         <ProjectReference Include="..\..\src\Shiny.UniversalHubs.Nearby\Shiny.UniversalHubs.Nearby.csproj" />
         <!-- the hub proxies and dispatchers: a project reference doesn't carry the generator the way the package does -->

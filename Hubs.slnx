@@ -11,13 +11,8 @@
   </Folder>
   <Project Path="samples/Sample/Sample.csproj" />
   <Project Path="samples/Sample.MacOS/Sample.MacOS.csproj" />
-  <Project Path="src/Shiny.BluetoothLE.Hubs/Shiny.BluetoothLE.Hubs.csproj" />
-  <Project Path="src/Shiny.BluetoothLE.Hubs.Client/Shiny.BluetoothLE.Hubs.Client.csproj" />
-  <Project Path="src/Shiny.BluetoothLE.Hubs.Host/Shiny.BluetoothLE.Hubs.Host.csproj" />
   <Project Path="src/Shiny.BluetoothLE.Hubs.SourceGenerators/Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" />
   <Project Path="src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj" />
-  <Project Path="src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj" />
-  <Project Path="src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj" />
   <Project Path="src/Shiny.UniversalHubs.Nearby/Shiny.UniversalHubs.Nearby.csproj" />
   <Project Path="tests/Shiny.BluetoothLE.Hubs.Tests/Shiny.BluetoothLE.Hubs.Tests.csproj" />

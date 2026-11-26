@@ -307,7 +307,7 @@ static class ModelBuilder
 
         foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols)
         {
-            if (!assembly.Modules.Any(m => m.ReferencedAssemblies.Any(r => r.Name == "Shiny.BluetoothLE.Hubs")))
+            if (!assembly.Modules.Any(m => m.ReferencedAssemblies.Any(r => r.Name == "Shiny.UniversalHubs")))
                 continue;
 
             foreach (var type in GetTypes(assembly.GlobalNamespace))

@@ -1,16 +1,35 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>net11.0</TargetFramework>
+        <TargetFrameworks>$(PlatformTargetFrameworks)</TargetFrameworks>
         <IsAotCompatible>true</IsAotCompatible>
         <RootNamespace>Shiny.UniversalHubs</RootNamespace>
-        <Description>Shiny.UniversalHubs - Shiny.BluetoothLE.Hubs over Wi-Fi as well as Bluetooth LE. Shared wire protocol for the host and client packages.</Description>
+        <Description>Shiny.UniversalHubs - SignalR style hubs over any transport: hosts, clients, the wire protocols and the hub source generator</Description>
     </PropertyGroup>
     <ItemGroup>
-        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
-        <InternalsVisibleTo Include="Shiny.UniversalHubs.Host" />
-        <InternalsVisibleTo Include="Shiny.UniversalHubs.Client" />
+        <PackageReference Include="Shiny.Extensions.Serialization" />
+        <PackageReference Include="Shiny.BluetoothLE" />
+        <PackageReference Include="Shiny.BluetoothLE.Hosting" />
+        <PackageReference Include="Shiny.Net.HttpServer.Switchboard" />
+        <PackageReference Include="Shiny.Net.HttpServer.Switchboard.Client" />
+        <PackageReference Include="Shiny.Net.HttpServer.Discovery" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Multipeer" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Nearby" />
         <InternalsVisibleTo Include="Shiny.UniversalHubs.Tests" />
+        <InternalsVisibleTo Include="Shiny.BluetoothLE.Hubs.Tests" />
     </ItemGroup>
+    <ItemGroup>
+        <!-- ship the generator with the package so host and client apps both get it -->
+        <ProjectReference Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" ReferenceOutputAssembly="false" OutputItemType="None" PrivateAssets="all" />
+        <None Include="..\Shiny.BluetoothLE.Hubs.SourceGenerators\bin\$(Configuration)\netstandard2.0\Shiny.BluetoothLE.Hubs.SourceGenerators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+
+    <!--
+        HubBoard<THub> is dispatched by a hand-registered SwitchboardDescriptor (hub.* methods into the generated hub
+        dispatcher), so the Switchboard generator has nothing to do here - and it reports generic switchboards as an error.
+    -->
+    <Target Name="RemoveSwitchboardGenerator" BeforeTargets="CoreCompile">
+        <ItemGroup>
+            <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Shiny.Net.HttpServer.Switchboard.SourceGenerators'" />
+        </ItemGroup>
+    </Target>
 </Project>

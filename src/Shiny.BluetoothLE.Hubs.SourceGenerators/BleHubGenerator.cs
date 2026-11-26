@@ -16,7 +16,13 @@ public sealed class BleHubGenerator : IIncrementalGenerator
             c.GetTypeByMetadataName(ModelBuilder.HubBaseName) != null,
             c.GetTypeByMetadataName(ModelBuilder.ClientBaseName) == null
                 ? System.Array.Empty<ContractModel>()
-                : ModelBuilder.FindReferencedContracts(c).Select(x => ModelBuilder.BuildContract(x, false)).ToArray()
+                : ModelBuilder.FindReferencedContracts(c)
+                    .Select(x => (Symbol: x, Model: ModelBuilder.BuildContract(x, false)))
+                    // a contracts library gets its own proxies now that every project referencing the package can - use those
+                    .Where(x => x.Symbol.ContainingAssembly.GetTypeByMetadataName(
+                        (x.Model.Namespace == null ? "" : x.Model.Namespace + ".") + x.Model.ProxyName) == null)
+                    .Select(x => x.Model)
+                    .ToArray()
         ));
 
         var contracts = context.SyntaxProvider.ForAttributeWithMetadataName(

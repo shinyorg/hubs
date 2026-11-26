@@ -14,9 +14,7 @@
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs\Shiny.BluetoothLE.Hubs.csproj" />
-        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.Client\Shiny.BluetoothLE.Hubs.Client.csproj" />
-        <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.Host\Shiny.BluetoothLE.Hubs.Host.csproj" />
+        <ProjectReference Include="..\..\src\Shiny.UniversalHubs\Shiny.UniversalHubs.csproj" />
         <ProjectReference Include="..\..\src\Shiny.BluetoothLE.Hubs.SourceGenerators\Shiny.BluetoothLE.Hubs.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
     </ItemGroup>
     <ItemGroup>

@@ -2,13 +2,8 @@
   "solution": {
     "path": "Hubs.slnx",
     "projects": [
-      "src/Shiny.BluetoothLE.Hubs/Shiny.BluetoothLE.Hubs.csproj",
       "src/Shiny.BluetoothLE.Hubs.SourceGenerators/Shiny.BluetoothLE.Hubs.SourceGenerators.csproj",
-      "src/Shiny.BluetoothLE.Hubs.Host/Shiny.BluetoothLE.Hubs.Host.csproj",
-      "src/Shiny.BluetoothLE.Hubs.Client/Shiny.BluetoothLE.Hubs.Client.csproj",
       "src/Shiny.UniversalHubs/Shiny.UniversalHubs.csproj",
-      "src/Shiny.UniversalHubs.Host/Shiny.UniversalHubs.Host.csproj",
-      "src/Shiny.UniversalHubs.Client/Shiny.UniversalHubs.Client.csproj",
       "src/Shiny.UniversalHubs.Multipeer/Shiny.UniversalHubs.Multipeer.csproj",
       "src/Shiny.UniversalHubs.Nearby/Shiny.UniversalHubs.Nearby.csproj",
       "tests/Shiny.UniversalHubs.Tests/Shiny.UniversalHubs.Tests.csproj",
