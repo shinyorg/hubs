@@ -107,6 +107,11 @@ internal sealed class FrameHostSession
         }
         else if (message != null)
         {
+            // calls run in the background, so a Cancel right behind its call could otherwise be looked at first and lost -
+            // the call is known to the link from here, in arrival order
+            if (message.Kind is FrameKind.Invoke or FrameKind.StreamInvoke)
+                link.Expect(message.MessageId);
+
             _ = Task.Run(() => this.Dispatch(link, message));
         }
 
@@ -199,7 +204,15 @@ internal sealed class FrameHostSession
 
                 case FrameKind.Invoke:
                 case FrameKind.StreamInvoke:
-                    await this.OnInvoke(link, message).ConfigureAwait(false);
+                    try
+                    {
+                        await this.OnInvoke(link, message).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        // a call refused before it started never tracked itself
+                        link.Unexpect(message.MessageId);
+                    }
                     break;
 
                 case FrameKind.Rename:
@@ -239,6 +252,15 @@ internal sealed class FrameHostSession
             {
                 link.ConnectionId = link.LinkId;
 
+                // the link went (unsubscribed, dropped, swept) while the hub ran OnConnectedAsync - it was gone before it
+                // had a connection to end, so the hub lets the client go here, or the central's id stays taken
+                if (!this.IsCurrent(link))
+                {
+                    this.logger?.LogInformation("{Peer} went during its handshake", link.LinkId);
+                    this.endpoint.Disconnected(link.LinkId, link.Channel, new HubDisconnect(HubDisconnectReason.ClientTimeout, "The link went during the handshake"));
+                    return;
+                }
+
                 // only a client that can come back is held
                 if (info.Resumable)
                     link.ResumeToken = this.endpoint.EnableResume(link.LinkId);
@@ -253,6 +275,17 @@ internal sealed class FrameHostSession
             this.logger?.LogInformation("Rejected client {Peer}: {Reason}", link.LinkId, rejection);
             this.links.TryRemove(new KeyValuePair<string, FrameHostLink>(link.LinkId, link));
         }
+    }
+
+
+    /// <summary>
+    /// Whether the link is still the one frames from its central go to - OnPeerGone takes it out first, then looks at its
+    /// connection id, so a handshake that sets the id and then finds the link here is never missed by both
+    /// </summary>
+    bool IsCurrent(FrameHostLink link)
+    {
+        Interlocked.MemoryBarrier();
+        return this.links.TryGetValue(link.LinkId, out var current) && ReferenceEquals(current, link);
     }
 
 
@@ -325,12 +358,25 @@ internal sealed class FrameHostSession
                     link.ConnectionId = connectionId;
                     link.ResumeToken = info.Token;
 
+                    // gone already - there is nobody to tell; the connection is let go below
+                    if (!this.IsCurrent(link))
+                        return Task.CompletedTask;
+
                     return this.SendLocked(link, FrameKind.HandshakeAck, message.MessageId, null, ProtocolSerializer.Serialize(this.CreateAck(link, null)), this.lifetime.Token);
                 }
             ).ConfigureAwait(false);
 
             if (rejection == null)
+            {
+                // the link went while the connection moved onto it: the hub holds it again (or lets it go) like any
+                // dropped link
+                if (!this.IsCurrent(link))
+                {
+                    this.logger?.LogInformation("{Peer} went while resuming", link.LinkId);
+                    this.endpoint.Disconnected(link.ConnectionId!, link.Channel, new HubDisconnect(HubDisconnectReason.ClientTimeout, "The link went while resuming"));
+                }
                 return;
+            }
         }
 
         this.logger?.LogInformation("Could not resume {Peer}: {Reason}", link.LinkId, rejection);
@@ -388,6 +434,7 @@ internal sealed class FrameHostSession
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
         link.Track(message.MessageId, cts);
         HubInvocationResult? result = null;
+        HubStreamInvocation? stream = null;
         try
         {
             if (kind == HubMethodKind.Invoke)
@@ -397,7 +444,8 @@ internal sealed class FrameHostSession
             }
             else
             {
-                await foreach (var item in this.endpoint.Stream(connectionId, method, message.Payload, cts.Token).WithCancellation(cts.Token).ConfigureAwait(false))
+                stream = this.endpoint.StartStream(connectionId, method, message.Payload, cts.Token);
+                await foreach (var item in stream.Items.WithCancellation(cts.Token).ConfigureAwait(false))
                     await this.Send(link, FrameKind.StreamItem, message.MessageId, null, item, cts.Token).ConfigureAwait(false);
 
                 await this.Send(link, FrameKind.StreamEnd, message.MessageId, null, ReadOnlyMemory<byte>.Empty, cts.Token).ConfigureAwait(false);
@@ -417,9 +465,11 @@ internal sealed class FrameHostSession
             link.Untrack(message.MessageId);
         }
 
-        // deferred so the caller still gets this method's reply
+        // deferred so the caller still gets this method's reply - a stream's StreamEnd or error, however it ended
         if (result is { AbortRequested: true })
             await this.endpoint.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, result.AbortReason)).ConfigureAwait(false);
+        else if (stream is { AbortRequested: true })
+            await this.endpoint.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, stream.AbortReason)).ConfigureAwait(false);
     }
 
 
@@ -473,7 +523,10 @@ internal sealed class FrameHostSession
 /// </summary>
 internal sealed class FrameHostLink
 {
-    readonly ConcurrentDictionary<ushort, CancellationTokenSource> inFlight = new();
+    // under their own lock: a call is expected from the moment its message is complete, tracked once it runs, and a
+    // Cancel finds it in either state
+    readonly Dictionary<ushort, CancellationTokenSource> inFlight = new();
+    readonly Dictionary<ushort, bool> expected = new();
     int nextHostId;
 
 
@@ -519,14 +572,92 @@ internal sealed class FrameHostLink
     /// </summary>
     public ushort NextHostMessageId() => (ushort)(0x8000 | (Interlocked.Increment(ref this.nextHostId) & 0x7FFF));
 
-    public void Track(ushort id, CancellationTokenSource cts) => this.inFlight[id] = cts;
-    public void Untrack(ushort id) => this.inFlight.TryRemove(id, out _);
+    /// <summary>
+    /// Calls on this link that arrived and haven't finished - running, or on their way to
+    /// </summary>
+    public int InFlightCount
+    {
+        get
+        {
+            lock (this.inFlight)
+                return this.inFlight.Count + this.expected.Count;
+        }
+    }
+
+
+    /// <summary>
+    /// A call arrived and is on its way to run - a Cancel for it before it runs cancels it as it starts
+    /// </summary>
+    public void Expect(ushort id)
+    {
+        lock (this.inFlight)
+            this.expected[id] = false;
+    }
+
+
+    public void Unexpect(ushort id)
+    {
+        lock (this.inFlight)
+            this.expected.Remove(id);
+    }
+
+
+    public void Track(ushort id, CancellationTokenSource cts)
+    {
+        bool cancelled;
+        lock (this.inFlight)
+        {
+            cancelled = this.expected.Remove(id, out var c) && c;
+            if (!cancelled)
+                this.inFlight[id] = cts;
+        }
+
+        if (cancelled)
+            CancelQuietly(cts);
+    }
+
+
+    public void Untrack(ushort id)
+    {
+        lock (this.inFlight)
+            this.inFlight.Remove(id);
+    }
+
 
     public void Cancel(ushort id)
     {
-        if (!this.inFlight.TryRemove(id, out var cts))
-            return;
+        CancellationTokenSource? cts;
+        lock (this.inFlight)
+        {
+            if (!this.inFlight.Remove(id, out cts) && this.expected.ContainsKey(id))
+                this.expected[id] = true;
+        }
 
+        if (cts != null)
+            CancelQuietly(cts);
+    }
+
+
+    public void CancelCalls()
+    {
+        List<CancellationTokenSource> running;
+        lock (this.inFlight)
+        {
+            running = this.inFlight.Values.ToList();
+            this.inFlight.Clear();
+
+            // calls still on their way never get to run
+            foreach (var id in this.expected.Keys.ToList())
+                this.expected[id] = true;
+        }
+
+        foreach (var cts in running)
+            CancelQuietly(cts);
+    }
+
+
+    static void CancelQuietly(CancellationTokenSource cts)
+    {
         try
         {
             cts.Cancel();
@@ -534,12 +665,6 @@ internal sealed class FrameHostLink
         catch (ObjectDisposedException)
         {
         }
-    }
-
-    public void CancelCalls()
-    {
-        foreach (var id in this.inFlight.Keys.ToList())
-            this.Cancel(id);
     }
 
 

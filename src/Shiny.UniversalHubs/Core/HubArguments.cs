@@ -113,16 +113,17 @@ public sealed class HubArgumentReader
             throw new HubProtocolException("Read past the last argument");
 
         var span = this.data.Span;
-        if (this.offset + 4 > span.Length)
+        if (4 > span.Length - this.offset)
             throw new HubProtocolException("Argument header is truncated");
 
-        var length = (int)BinaryPrimitives.ReadUInt32LittleEndian(span[this.offset..]);
+        // compared as unsigned against what is left, so a huge length can't overflow past the check
+        var length = BinaryPrimitives.ReadUInt32LittleEndian(span[this.offset..]);
         this.offset += 4;
-        if (length < 0 || this.offset + length > span.Length)
+        if (length > (uint)(span.Length - this.offset))
             throw new HubProtocolException("Argument value is truncated");
 
-        var value = this.data.Slice(this.offset, length);
-        this.offset += length;
+        var value = this.data.Slice(this.offset, (int)length);
+        this.offset += (int)length;
         this.read++;
         return value;
     }

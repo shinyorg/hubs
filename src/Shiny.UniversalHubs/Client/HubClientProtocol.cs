@@ -79,7 +79,9 @@ internal sealed class HubClientProtocol(
     /// </summary>
     public void FailAll(Exception exception)
     {
-        foreach (var pair in this.pending.ToList())
+        // the dictionary's own enumerator - ToList copies by Count then CopyTo, and a call finishing in between leaves
+        // empty entries behind
+        foreach (var pair in this.pending)
             pair.Value.Writer.TryComplete(exception);
 
         lock (this.reassembler)
@@ -249,7 +251,11 @@ internal sealed class HubClientProtocol(
         HubMessage message;
         try
         {
-            message = await channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            // what already arrived first - a reply or StreamEnd that came just before a disconnect still counts, and
+            // ReadAsync checks the token before it looks at what is queued
+            message = channel.Reader.TryRead(out var queued)
+                ? queued
+                : await channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (ChannelClosedException ex) when (ex.InnerException != null)
         {

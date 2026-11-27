@@ -24,6 +24,25 @@ static class ModelBuilder
 
         var members = new[] { iface }.Concat(iface.AllInterfaces).SelectMany(x => x.GetMembers()).ToList();
 
+        if (IsGeneric(iface))
+        {
+            diagnostics.Add(DiagnosticInfo.Create(
+                Diagnostics.GenericContract,
+                location,
+                $"'{iface.ToDisplayString()}' is generic - hub contracts must be non-generic interfaces (declared outside generic types)"
+            ));
+        }
+
+        foreach (var property in members.OfType<IPropertySymbol>().Where(x => !x.IsStatic))
+        {
+            var kind = property.IsIndexer ? "an indexer" : "a property";
+            diagnostics.Add(DiagnosticInfo.Create(
+                Diagnostics.UnsupportedContractMember,
+                property.Locations.FirstOrDefault() ?? location,
+                $"'{iface.Name}.{property.Name}' is {kind} - hub contracts can only declare methods and Action events"
+            ));
+        }
+
         foreach (var method in members.OfType<IMethodSymbol>().Where(x => x.MethodKind == MethodKind.Ordinary && !x.IsStatic))
         {
             var model = BuildMethod(method, iface, diagnostics);
@@ -56,15 +75,40 @@ static class ModelBuilder
 
         var attr = iface.GetAttributes().FirstOrDefault(x => x.AttributeClass?.ToDisplayString() == AttributeName);
         var proxyName = attr?.NamedArguments.FirstOrDefault(x => x.Key == "ProxyName").Value.Value as string ?? baseName + "Client";
+        var pushExtensionsName = baseName + "PushExtensions";
+
+        // members the generated proxy declares or calls - a contract member with one of these names breaks the proxy
+        var reserved = new[] { proxyName }.Concat(ReservedProxyMembers).ToList();
+        foreach (var name in methods.Select(x => x.Name).Concat(events.Select(x => x.Name)).Distinct().Where(x => reserved.Contains(x)))
+        {
+            diagnostics.Add(DiagnosticInfo.Create(
+                Diagnostics.ReservedMemberName,
+                location,
+                $"'{iface.Name}.{name}' collides with a member of the generated proxy {proxyName} - rename it (reserved: {string.Join(", ", reserved)})"
+            ));
+        }
+
+        foreach (var name in methods.Select(x => x.Name).Distinct().Where(x => events.Any(e => e.Name == x)))
+        {
+            diagnostics.Add(DiagnosticInfo.Create(
+                Diagnostics.ReservedMemberName,
+                location,
+                $"'{iface.Name}.{name}' is declared as both a method and an event - each hub member name must be unique"
+            ));
+        }
+
+        var ns = iface.ContainingNamespace.IsGlobalNamespace ? null : iface.ContainingNamespace.ToDisplayString();
+        var pushExtensions = isLocal ? null : iface.ContainingAssembly?.GetTypeByMetadataName((ns == null ? "" : ns + ".") + pushExtensionsName);
 
         return new ContractModel(
             iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            iface.ContainingNamespace.IsGlobalNamespace ? null : iface.ContainingNamespace.ToDisplayString(),
+            ns,
             iface.Name,
             proxyName,
-            baseName + "PushExtensions",
+            pushExtensionsName,
             IsEffectivelyPublic(iface),
             isLocal,
+            pushExtensions?.DeclaredAccessibility == Accessibility.Public,
             methods.ToArray(),
             events.ToArray(),
             diagnostics.ToArray()
@@ -83,12 +127,22 @@ static class ModelBuilder
             return null;
         }
 
-        var returnType = (INamedTypeSymbol)method.ReturnType;
+        // arrays, pointers, dynamic and type parameters are not named types - and not supported either
+        var returnType = method.ReturnType as INamedTypeSymbol;
         ReturnKind kind;
         string? resultType = null;
-        var original = returnType.OriginalDefinition.ToDisplayString();
+        var original = returnType?.OriginalDefinition.ToDisplayString();
 
-        if (original == "System.Threading.Tasks.Task")
+        if (returnType == null)
+        {
+            diagnostics.Add(DiagnosticInfo.Create(
+                Diagnostics.UnsupportedReturnType,
+                location,
+                $"'{signature}' returns {method.ReturnType.ToDisplayString()} - hub methods must return Task, Task<T> or IAsyncEnumerable<T>"
+            ));
+            return null;
+        }
+        else if (original == "System.Threading.Tasks.Task")
         {
             kind = ReturnKind.Task;
         }
@@ -118,6 +172,11 @@ static class ModelBuilder
             if (p.RefKind != RefKind.None)
             {
                 diagnostics.Add(DiagnosticInfo.Create(Diagnostics.UnsupportedParameter, location, $"'{signature}' parameter '{p.Name}' is ref/out/in - hub parameters are passed by value"));
+                return null;
+            }
+            if (p.Type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer)
+            {
+                diagnostics.Add(DiagnosticInfo.Create(Diagnostics.UnsupportedParameter, location, $"'{signature}' parameter '{p.Name}' is a pointer - hub parameters must be serializable"));
                 return null;
             }
             parameters.Add(new ParameterModel(
@@ -215,7 +274,7 @@ static class ModelBuilder
             var wireParams = cm.Parameters.Where(x => !IsCancellationToken(x.Type)).Select(x => x.Type).ToList();
             var match = AllMembers(hub)
                 .OfType<IMethodSymbol>()
-                .Where(x => x.Name == cm.Name && x.MethodKind == MethodKind.Ordinary && !x.IsStatic && x.DeclaredAccessibility == Accessibility.Public)
+                .Where(x => x.Name == cm.Name && x.MethodKind == MethodKind.Ordinary && !x.IsStatic && !x.IsGenericMethod && x.DeclaredAccessibility == Accessibility.Public)
                 .Select(x => (Method: x, PassToken: Matches(x, wireParams, cm.ReturnType)))
                 .FirstOrDefault(x => x.PassToken != null);
 
@@ -277,6 +336,21 @@ static class ModelBuilder
         for (var t = type; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType)
             foreach (var m in t.GetMembers())
                 yield return m;
+    }
+
+
+    // declared by the generated proxy (Hub, OnPush, RegisterHubProxy) or called on HubProxy by its generated members
+    static readonly string[] ReservedProxyMembers = ["Hub", "OnPush", "RegisterHubProxy", "CreateArguments", "InvokeCore", "InvokeVoidCore", "StreamCore", "OnUnknownPush"];
+
+
+    static bool IsGeneric(INamedTypeSymbol type)
+    {
+        for (var t = type; t != null; t = t.ContainingType)
+        {
+            if (t.IsGenericType)
+                return true;
+        }
+        return false;
     }
 
 

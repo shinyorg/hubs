@@ -131,8 +131,24 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
         try
         {
             this.Send(PeerProtocol.Encode(PeerMessageKind.Stream, id, method, arguments));
-            await foreach (var message in items.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
+                // what already arrived first - a StreamEnd that came just before a disconnect still ends the stream, and
+                // ReadAsync checks the token before it looks at what is queued
+                PeerMessage message;
+                try
+                {
+                    message = items.Reader.TryRead(out var queued)
+                        ? queued
+                        : await items.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (ChannelClosedException ex) when (ex.InnerException != null)
+                {
+                    // the link went - the reason it was failed with, as before
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex.InnerException);
+                    throw;
+                }
+
                 if (message.Kind == PeerMessageKind.StreamEnd)
                 {
                     ended = true;
@@ -432,6 +448,10 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
         if (!ReferenceEquals(this.current, link))
             return;
 
+        // the connection already ended (the resume gave up and closed its last session) - nothing more to report
+        if (this.closed)
+            return;
+
         var disconnect = this.hostDisconnect ?? new HubDisconnect(HubDisconnectReason.ClientTimeout, $"The {this.Transport} session ended");
         this.FailPending(new HubDisconnectedException("The connection to the host was closed", disconnect));
 
@@ -452,6 +472,19 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
         // the app asked to leave (or the host refused us) - HubProxy already knows
         if (!this.leaving)
             this.events.Closed(disconnect);
+    }
+
+
+    void DisposeQuietly(IPeerConnection session)
+    {
+        try
+        {
+            session.Dispose();
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogDebug(ex, "Session did not close cleanly");
+        }
     }
 
 
@@ -488,6 +521,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
         var deadline = DateTimeOffset.UtcNow.AddSeconds(this.resumeWindowSeconds);
         var delay = TimeSpan.FromMilliseconds(250);
         string? refusal = null;
+        IPeerConnection? lastDisposed = null;
 
         while (refusal == null && !this.leaving && DateTimeOffset.UtcNow < deadline)
         {
@@ -495,9 +529,12 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
             attempt.CancelAfter(remaining < AttemptTimeout ? remaining : AttemptTimeout);
             var id = this.NextId();
+            // this attempt's session - disposed unless the host takes the connection back on it
+            IPeerConnection? session = null;
+            var accepted = false;
             try
             {
-                var session = await this.reopen!(attempt.Token).ConfigureAwait(false);
+                session = await this.reopen!(attempt.Token).ConfigureAwait(false);
                 var waiting = new TaskCompletionSource<PeerMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
                 this.replies[id] = waiting;
                 this.Attach(session);
@@ -511,6 +548,7 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
                 }
                 else
                 {
+                    accepted = true;
                     this.resumeToken = reply.ResumeToken ?? this.resumeToken;
                     this.files = reply.Files;
                     this.mediaMaxPacketSize = reply.MediaMaxPacketSize ?? 0;
@@ -539,19 +577,19 @@ internal sealed class PeerHubTransport : IHubConnectionTransport
             finally
             {
                 this.replies.TryRemove(id, out _);
+                if (!accepted && session != null)
+                {
+                    this.DisposeQuietly(session);
+                    lastDisposed = session;
+                }
             }
         }
 
         this.resuming = false;
         this.closed = true;
-        try
-        {
-            this.connection.Dispose();
-        }
-        catch (Exception ex)
-        {
-            this.logger?.LogDebug(ex, "Session did not close cleanly");
-        }
+        // the dropped session, when no attempt replaced it (a failed attempt's session is already disposed)
+        if (!ReferenceEquals(this.connection, lastDisposed))
+            this.DisposeQuietly(this.connection);
 
         if (!this.leaving)
         {

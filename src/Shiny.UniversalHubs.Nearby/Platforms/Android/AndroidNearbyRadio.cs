@@ -35,7 +35,7 @@ internal sealed class AndroidNearbyRadio(AndroidPlatform platform, ILogger<Andro
 
     readonly IConnectionsClient client = NearbyClass.GetConnectionsClient(Application.Context);
     readonly ConcurrentDictionary<long, Payload> incomingFiles = new();
-    readonly ConcurrentDictionary<long, string> outgoingFiles = new();
+    readonly ConcurrentDictionary<long, ParcelFileDescriptor> outgoingFiles = new();
     INearbyRadioListener listener = null!;
     Lifecycle lifecycle = null!;
     Discovery discovery = null!;
@@ -95,9 +95,29 @@ internal sealed class AndroidNearbyRadio(AndroidPlatform platform, ILogger<Andro
         var pfd = ParcelFileDescriptor.Open(new Java.IO.File(path), ParcelFileMode.ReadOnly)
             ?? throw new IOException($"Could not open {path}");
         var payload = Payload.FromFile(pfd);
-        this.outgoingFiles[payload.Id] = endpointId;
-        _ = this.Quietly(this.client.SendPayload(endpointId, payload), "send a file");
-        return payload.Id;
+        var id = payload.Id;
+        this.outgoingFiles[id] = pfd;
+        _ = this.SendFilePayload(endpointId, id, payload);
+        return id;
+    }
+
+
+    async Task SendFilePayload(string endpointId, long id, Payload payload)
+    {
+        try
+        {
+            await this.client.SendPayload(endpointId, payload).AsAsync();
+        }
+        catch (Exception ex)
+        {
+            // no transfer update follows a payload Nearby refused - say it failed, or the send waits forever
+            logger?.LogDebug(ex, "Nearby could not send a file");
+            if (this.outgoingFiles.TryRemove(id, out var pfd))
+            {
+                CloseQuietly(pfd);
+                this.listener.FileTransfer(endpointId, id, 0, 0, NearbyTransferStatus.Failure, null);
+            }
+        }
     }
 
 
@@ -155,18 +175,45 @@ internal sealed class AndroidNearbyRadio(AndroidPlatform platform, ILogger<Andro
             _ => NearbyTransferStatus.Canceled
         };
 
-        string? path = null;
-        if (status != NearbyTransferStatus.InProgress)
+        var transferred = update.BytesTransferred;
+        var total = update.TotalBytes;
+        if (status == NearbyTransferStatus.InProgress)
         {
-            if (outgoing)
-                this.outgoingFiles.TryRemove(id, out _);
-            else if (this.incomingFiles.TryRemove(id, out var payload) && status == NearbyTransferStatus.Success)
-                path = this.TakeFile(payload);
-
-            if (!outgoing && status == NearbyTransferStatus.Success && path == null)
-                status = NearbyTransferStatus.Failure;
+            this.listener.FileTransfer(endpointId, id, transferred, total, status, null);
         }
-        this.listener.FileTransfer(endpointId, id, update.BytesTransferred, update.TotalBytes, status, path);
+        else if (outgoing)
+        {
+            if (this.outgoingFiles.TryRemove(id, out var pfd))
+                CloseQuietly(pfd);
+            this.listener.FileTransfer(endpointId, id, transferred, total, status, null);
+        }
+        else if (this.incomingFiles.TryRemove(id, out var payload) && status == NearbyTransferStatus.Success)
+        {
+            // this runs on the main thread - copying a big file here would freeze the app. The link matches a file to its
+            // name by payload id, so the success landing after later messages changes nothing.
+            _ = Task.Run(() =>
+            {
+                var path = this.TakeFile(payload);
+                this.listener.FileTransfer(endpointId, id, transferred, total, path == null ? NearbyTransferStatus.Failure : NearbyTransferStatus.Success, path);
+            });
+        }
+        else
+        {
+            this.listener.FileTransfer(endpointId, id, transferred, total, status == NearbyTransferStatus.Success ? NearbyTransferStatus.Failure : status, null);
+        }
+    }
+
+
+    void CloseQuietly(ParcelFileDescriptor pfd)
+    {
+        try
+        {
+            pfd.Close();
+        }
+        catch (Exception ex)
+        {
+            logger?.LogDebug(ex, "Could not close a sent Nearby file");
+        }
     }
 
 

@@ -75,12 +75,12 @@ internal class HubClients<T>(HubRuntime runtime, Func<PushTarget, T> factory) : 
         return this.Create(() => runtime.ReadyPeers.Where(x => !excluded.Contains(x.Id)));
     }
 
-    public T Client(string connectionId) => this.Create(() => runtime.ReadyPeers.Where(x => Same(x.Id, connectionId)));
+    public T Client(string connectionId) => this.Create(() => runtime.ReadyPeer(connectionId));
 
     public T Clients(params IEnumerable<string> connectionIds)
     {
         var ids = ToSet(connectionIds);
-        return this.Create(() => runtime.ReadyPeers.Where(x => ids.Contains(x.Id)));
+        return this.Create(() => runtime.ReadyPeersById(ids));
     }
 
     public T Group(string groupName) => this.Create(() => runtime.PeersInGroups([groupName]));
@@ -98,7 +98,6 @@ internal class HubClients<T>(HubRuntime runtime, Func<PushTarget, T> factory) : 
     }
 
     protected static HashSet<string> ToSet(IEnumerable<string> ids) => new(ids, StringComparer.OrdinalIgnoreCase);
-    protected static bool Same(string a, string b) => String.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }
 
 

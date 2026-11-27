@@ -315,7 +315,8 @@ internal sealed class DynamicHubRegistry(
             throw new InvalidOperationException($"There is no dynamic hub named {name}");
 
         await host.RemoveDynamic(hub.Entry, reason).ConfigureAwait(false);
-        this.hubs.TryRemove(name, out _);
+        // only the hub removed here - one added again under the name meanwhile stays
+        this.hubs.TryRemove(new KeyValuePair<string, DynamicHub>(name, hub));
     }
 
 

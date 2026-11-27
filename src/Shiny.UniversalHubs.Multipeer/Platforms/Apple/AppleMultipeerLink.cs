@@ -128,7 +128,9 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
 
         var info = NSBundle.MainBundle.InfoDictionary;
         var declared = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (info?.ObjectForKey(new NSString("NSBonjourServices")) is NSArray services)
+        using var bonjourKey = new NSString("NSBonjourServices");
+        using var localNetworkKey = new NSString("NSLocalNetworkUsageDescription");
+        if (info?.ObjectForKey(bonjourKey) is NSArray services)
         {
             for (nuint i = 0; i < services.Count; i++)
                 declared.Add(services.GetItem<NSObject>(i)?.ToString() ?? String.Empty);
@@ -138,7 +140,7 @@ internal sealed class AppleMultipeerLink(ILogger<AppleMultipeerLink>? logger = n
         if (missing.Count > 0)
             logger.LogWarning("Info.plist NSBonjourServices is missing {Missing} - Multipeer discovery will find nothing", String.Join(" and ", missing));
 
-        if (info?.ObjectForKey(new NSString("NSLocalNetworkUsageDescription")) == null)
+        if (info?.ObjectForKey(localNetworkKey) == null)
             logger.LogWarning("Info.plist has no NSLocalNetworkUsageDescription - Multipeer needs local network access");
     }
 

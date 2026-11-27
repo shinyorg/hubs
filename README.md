@@ -181,8 +181,8 @@ public sealed class LoraHostTransport : IHubTransport
 server.AddHub<GameHub>("game", hub => hub.UseTransport<LoraHostTransport>(new LoraSettings(channel: 7)));
 ```
 
-It reaches each hub through `IHubBinding.Endpoint` (`IHubEndpoint`: `Connect`, `Invoke`, `Stream`, `Disconnected`,
-`Resume`), handing it an `IHubPeerChannel` per client. The client side is an `IHubClientTransport`
+It reaches each hub through `IHubBinding.Endpoint` (`IHubEndpoint`: `Connect`, `Invoke`, `StartStream`,
+`Disconnected`, `Resume`), handing it an `IHubPeerChannel` per client. The client side is an `IHubClientTransport`
 (`Discover`, `Connect` through `HubClientContext.Connect`), added with `o.UseTransport(sp => new LoraClientTransport(...))`.
 
 ### Serializers

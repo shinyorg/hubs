@@ -62,6 +62,13 @@ public sealed class HttpClientTransportOptions
     /// The HTTP stack - tests swap in an in-memory handler
     /// </summary>
     public Func<HttpMessageHandler>? MessageHandlerFactory { get; set; }
+
+    /// <summary>
+    /// The largest WebSocket message taken from a host - it must hold the host's largest payload (its MaxPayloadSize) and
+    /// media packet, with some framing. A larger message closes the connection. Never less than the client's own
+    /// MaxPayloadSize plus 64 KB.
+    /// </summary>
+    public int MaxMessageSize { get; set; } = 4 * 1024 * 1024;
 }
 
 
@@ -196,6 +203,7 @@ public sealed class HttpClientTransport : IHubClientTransport
     async Task ConnectHttp(HubClientContext client, DiscoveredHttpServer server, CancellationToken cancellationToken)
     {
         var errors = new List<Exception>();
+        var maxMessageSize = Math.Max(this.options.MaxMessageSize, client.Client.Services.Options.MaxPayloadSize + 64 * 1024);
         foreach (var address in Addresses(server))
         {
             var baseUri = address == null ? server.BaseAddress : server.BaseAddressFor(address);
@@ -206,7 +214,7 @@ public sealed class HttpClientTransport : IHubClientTransport
             IPeerConnection? connection = null;
             try
             {
-                connection = await this.Open(hubUri, timeout.Token).ConfigureAwait(false);
+                connection = await this.Open(hubUri, maxMessageSize, timeout.Token).ConfigureAwait(false);
                 var opened = connection;
                 await client.Connect(
                     events => new PeerHubTransport(
@@ -216,7 +224,7 @@ public sealed class HttpClientTransport : IHubClientTransport
                         client.HubName,
                         this.loggerFactory?.CreateLogger<PeerHubTransport>(),
                         // a resume opens a new WebSocket to the same address
-                        client.ConnectOptions.AutomaticReconnect ? ct => this.Open(hubUri, ct) : null
+                        client.ConnectOptions.AutomaticReconnect ? ct => this.Open(hubUri, maxMessageSize, ct) : null
                     ),
                     timeout.Token
                 ).ConfigureAwait(false);
@@ -238,7 +246,7 @@ public sealed class HttpClientTransport : IHubClientTransport
     }
 
 
-    async Task<IPeerConnection> Open(Uri uri, CancellationToken cancellationToken)
+    async Task<IPeerConnection> Open(Uri uri, int maxMessageSize, CancellationToken cancellationToken)
     {
         var socket = new ClientWebSocket();
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
@@ -254,7 +262,7 @@ public sealed class HttpClientTransport : IHubClientTransport
             invoker?.Dispose();
             throw new HubException($"Could not connect to {uri}: {ex.Message}", ex);
         }
-        return new WebSocketPeerConnection(uri.Authority, new ClientFrames(socket, invoker), this.logger);
+        return new WebSocketPeerConnection(uri.Authority, new ClientFrames(socket, invoker, maxMessageSize, this.logger), this.logger);
     }
 
 
@@ -297,39 +305,85 @@ public sealed class HttpClientTransport : IHubClientTransport
     }
 
 
-    sealed class ClientFrames(ClientWebSocket socket, HttpMessageInvoker? invoker) : IWebSocketFrames
+    /// <summary>
+    /// The client's WebSocket - one reader, so one receive buffer. A message over the limit closes the socket
+    /// (MessageTooBig) rather than piling up in memory.
+    /// </summary>
+    internal sealed class ClientFrames(WebSocket socket, HttpMessageInvoker? invoker, int maxMessageSize, ILogger? logger) : IWebSocketFrames
     {
+        readonly byte[] buffer = new byte[64 * 1024];
+
+
         public ValueTask Send(ReadOnlyMemory<byte> message, CancellationToken cancellationToken)
             => socket.SendAsync(message, WebSocketMessageType.Binary, true, cancellationToken);
 
+
         public async ValueTask<byte[]?> Receive(CancellationToken cancellationToken)
         {
-            var buffer = new byte[16 * 1024];
-            using var message = new MemoryStream();
-            while (true)
+            MemoryStream? message = null;
+            try
             {
-                var result = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-                if (result.MessageType == WebSocketMessageType.Close)
-                    return null;
-
-                message.Write(buffer, 0, result.Count);
-                if (result.EndOfMessage)
+                while (true)
                 {
-                    if (result.MessageType == WebSocketMessageType.Binary)
-                        return message.ToArray();
+                    var result = await socket.ReceiveAsync(this.buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        return null;
 
-                    // text isn't part of the protocol - skip it
-                    message.SetLength(0);
+                    if ((message?.Length ?? 0) + result.Count > maxMessageSize)
+                    {
+                        logger?.LogWarning("The host sent a WebSocket message over {Max} bytes - closing", maxMessageSize);
+                        await this.CloseTooBig().ConfigureAwait(false);
+                        return null;
+                    }
+
+                    if (result.EndOfMessage && message == null)
+                    {
+                        // the whole message in one read - the usual case; text isn't part of the protocol, so it's skipped
+                        if (result.MessageType == WebSocketMessageType.Binary)
+                            return this.buffer.AsSpan(0, result.Count).ToArray();
+                    }
+                    else
+                    {
+                        message ??= new MemoryStream();
+                        message.Write(this.buffer, 0, result.Count);
+                        if (result.EndOfMessage)
+                        {
+                            if (result.MessageType == WebSocketMessageType.Binary)
+                                return message.ToArray();
+
+                            message.SetLength(0);
+                        }
+                    }
                 }
+            }
+            finally
+            {
+                message?.Dispose();
             }
         }
 
-        public async ValueTask Close()
+
+        async Task CloseTooBig()
         {
             try
             {
-                if (socket.State == WebSocketState.Open)
-                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
+                using var timeout = new CancellationTokenSource(WebSocketPeerConnection.CloseTimeout);
+                await socket.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "Message too big", timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "Could not close the WebSocket");
+            }
+        }
+
+
+        public async ValueTask Close(CancellationToken cancellationToken)
+        {
+            try
+            {
+                // after the host's close too - that completes the closing handshake
+                if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", cancellationToken).ConfigureAwait(false);
             }
             catch
             {

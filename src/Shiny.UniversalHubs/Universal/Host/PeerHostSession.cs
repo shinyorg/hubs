@@ -109,7 +109,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
             case PeerMessageKind.Cancel:
                 if (this.calls.TryRemove(message.Id, out var cts))
-                    cts.Cancel();
+                    TryCancel(cts);
                 break;
 
             case PeerMessageKind.Rename:
@@ -117,8 +117,7 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
                 break;
 
             case PeerMessageKind.Disconnect:
-                var leaving = message.Read(PeerJsonContext.Default.HubHangUp);
-                this.ending ??= new HubDisconnect(HubDisconnectReason.ClientDisconnect, leaving.Message);
+                this.ending ??= new HubDisconnect(HubDisconnectReason.ClientDisconnect, this.ReadHangUp(message));
                 this.Close();
                 break;
 
@@ -141,6 +140,38 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             default:
                 this.Logger?.LogDebug("Ignoring {Kind} from {Peer}", message.Kind, connection.RemoteName);
                 break;
+        }
+    }
+
+
+    /// <summary>
+    /// The client's goodbye message - none when the payload can't be read (it is leaving either way)
+    /// </summary>
+    string? ReadHangUp(PeerMessage message)
+    {
+        try
+        {
+            return message.Read(PeerJsonContext.Default.HubHangUp).Message;
+        }
+        catch (Exception ex)
+        {
+            this.Logger?.LogDebug(ex, "Unreadable disconnect from {Peer}", connection.RemoteName);
+            return null;
+        }
+    }
+
+
+    /// <summary>
+    /// A finishing call disposes its token source - a cancel racing it has nothing left to cancel
+    /// </summary>
+    static void TryCancel(CancellationTokenSource cts)
+    {
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
@@ -168,9 +199,10 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         if (Interlocked.Exchange(ref this.closed, 1) == 1)
             return;
 
-        this.lifetime.Cancel();
+        // lifetime is never disposed, and cancels every call linked to it - the per-call ones may be disposed already
+        TryCancel(this.lifetime);
         foreach (var call in this.calls.Values)
-            call.Cancel();
+            TryCancel(call);
         Interlocked.Exchange(ref this.media, null)?.Closed();
         this.uploads.Clear();
 
@@ -344,6 +376,14 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             }
         }
 
+        if (rejection == null && Volatile.Read(ref this.closed) == 1)
+        {
+            // this session closed before the resume reached it, so Closed() had no hub to tell - the hub would keep the
+            // client on a dead session forever. Told now; a no-op when Closed() did see the binding.
+            hub!.Endpoint.Disconnected(this.ConnectionId, this, this.ending ?? new HubDisconnect(HubDisconnectReason.ClientTimeout));
+            return;
+        }
+
         if (rejection == null)
         {
             // the session the client dropped from, if the host hasn't seen it end yet - it no longer speaks for anyone
@@ -430,9 +470,11 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token);
         this.calls[message.Id] = cts;
+        HubStreamInvocation? stream = null;
         try
         {
-            await foreach (var item in endpoint.Stream(this.ConnectionId, message.Name!, message.Payload, cts.Token).ConfigureAwait(false))
+            stream = endpoint.StartStream(this.ConnectionId, message.Name!, message.Payload, cts.Token);
+            await foreach (var item in stream.Items.WithCancellation(cts.Token).ConfigureAwait(false))
                 this.Send(PeerMessageKind.StreamItem, message.Id, null, item);
 
             this.Send(PeerMessageKind.StreamEnd, message.Id, null, []);
@@ -449,6 +491,10 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
         {
             this.calls.TryRemove(message.Id, out _);
         }
+
+        // Context.Abort() takes effect once StreamEnd (or the error) is out, however the stream ended
+        if (stream?.AbortRequested == true)
+            await endpoint.Disconnect(this.ConnectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, stream.AbortReason)).ConfigureAwait(false);
     }
 
 
@@ -569,7 +615,8 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (413, $"Uploads are limited to {max} bytes");
         if (!ft.OverwriteExistingUploads && File.Exists(path))
             return (409, "The file already exists");
-        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(HubTransferDirection.Upload, request.Name, request.Size, client)) == false)
+        var upload = new UniversalHubFileRequest(HubTransferDirection.Upload, request.Name, request.Size, client);
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(upload) == false)
             return (403, "The host refused the transfer");
 
         return null;
@@ -582,7 +629,8 @@ internal sealed class PeerHostSession(IPeerHostTransport transport, IPeerConnect
             return (403, "Downloads are not allowed");
         if (!File.Exists(path))
             return (404, "No such file");
-        if (transport.ServerOptions.AuthorizeFile?.Invoke(new UniversalHubFileRequest(HubTransferDirection.Download, request.Name, null, client)) == false)
+        var download = new UniversalHubFileRequest(HubTransferDirection.Download, request.Name, null, client);
+        if (transport.ServerOptions.AuthorizeFile?.Invoke(download) == false)
             return (403, "The host refused the transfer");
 
         return null;

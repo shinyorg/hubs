@@ -23,15 +23,36 @@ internal sealed class NearbyLink : INearbyRadioListener
     readonly List<IObserver<NearbySighting>> discovering = new();
     readonly ConcurrentDictionary<long, OutgoingFile> outgoing = new();
     readonly ConcurrentDictionary<long, IncomingFile> incoming = new();
+    // held while a file starts sending and while a file update is matched, so an early update finds its outgoing file
+    readonly object fileGate = new();
+    readonly int maxMessageSize;
     Advertisement? advertisement;
     (string ServiceId, NearbyStrategy Strategy)? service;
     uint nextChannel;
 
 
-    public NearbyLink(INearbyRadio radio, ILogger<NearbyLink>? logger = null)
+    /// <summary>
+    /// Incoming files a remote may have announced or started without both halves (name and file) arriving yet
+    /// </summary>
+    internal const int MaxPendingFilesPerRemote = 32;
+
+    /// <summary>
+    /// Room for the peer-link framing around the largest payload or media packet
+    /// </summary>
+    internal const int MessageHeadroom = 64 * 1024;
+
+
+    public NearbyLink(INearbyRadio radio, ILogger<NearbyLink>? logger = null, HubProtocolOptions? protocol = null, UniversalServerOptions? server = null)
     {
         this.radio = radio;
         this.logger = logger;
+
+        // a message reassembled from Part frames is never bigger than a payload or media packet - past that it's an attack
+        this.maxMessageSize = Math.Max(
+            protocol?.MaxPayloadSize ?? new HubProtocolOptions().MaxPayloadSize,
+            server?.MediaChannels?.MaxPacketSize ?? 0
+        ) + MessageHeadroom;
+
         radio.Start(this);
 
         // the radio calls back on whatever thread it likes - everything happens here, one thing at a time, in order
@@ -191,12 +212,14 @@ internal sealed class NearbyLink : INearbyRadioListener
         }
         catch (TimeoutException)
         {
-            if (request)
-            {
-                this.radio.Disconnect(endpointId);
-                this.Forget(remote, null);
-            }
+            this.GiveUp(remote, request);
             throw new HubException("The host did not accept the Nearby connection in time");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // the request is still out - a connection it completes later is hung up in ConnectionResult
+            this.GiveUp(remote, request);
+            throw;
         }
 
         var channel = this.OpenChannel(remote, mine: true, Interlocked.Increment(ref this.nextChannel));
@@ -275,7 +298,15 @@ internal sealed class NearbyLink : INearbyRadioListener
         lock (this.gate)
             this.remotes.TryGetValue(endpointId, out remote);
         if (remote == null)
+        {
+            // a connection nobody wants any more (its Connect timed out or was canceled) - don't leave it open
+            if (connected)
+            {
+                this.logger?.LogDebug("Hanging up an abandoned Nearby connection to {Endpoint}", endpointId);
+                this.radio.Disconnect(endpointId);
+            }
             return;
+        }
 
         if (connected)
         {
@@ -323,7 +354,11 @@ internal sealed class NearbyLink : INearbyRadioListener
 
     public void FileTransfer(string endpointId, long payloadId, long transferred, long total, NearbyTransferStatus status, string? receivedPath) => this.Post(() =>
     {
-        if (this.outgoing.TryGetValue(payloadId, out var sending))
+        OutgoingFile? sending;
+        lock (this.fileGate)
+            this.outgoing.TryGetValue(payloadId, out sending);
+
+        if (sending != null)
         {
             switch (status)
             {
@@ -343,8 +378,30 @@ internal sealed class NearbyLink : INearbyRadioListener
             return;
         }
 
+        // an incoming file from a device this link has forgotten (or never knew) - nobody will ever name it
+        NearbyRemote? remote;
+        lock (this.gate)
+            this.remotes.TryGetValue(endpointId, out remote);
+        if (remote == null)
+        {
+            DeleteQuietly(receivedPath);
+            return;
+        }
+
         // an incoming file: the name frame may come before or after the payload - whichever is second delivers it
-        var file = this.incoming.GetOrAdd(payloadId, _ => new IncomingFile());
+        if (!this.incoming.TryGetValue(payloadId, out var file))
+        {
+            if (this.PendingFiles(remote) >= MaxPendingFilesPerRemote)
+            {
+                this.logger?.LogWarning("Dropping {Endpoint}: too many unfinished Nearby files", endpointId);
+                DeleteQuietly(receivedPath);
+                this.radio.CancelFile(payloadId);
+                this.radio.Disconnect(endpointId);
+                this.Forget(remote, new HubProtocolException("Too many unfinished files"));
+                return;
+            }
+            file = this.incoming.GetOrAdd(payloadId, _ => new IncomingFile());
+        }
         file.Endpoint = endpointId;
         switch (status)
         {
@@ -383,13 +440,33 @@ internal sealed class NearbyLink : INearbyRadioListener
 
     internal async Task SendFile(NearbyChannel channel, string path, string name, Action<double>? progress, CancellationToken cancellationToken)
     {
-        var file = new OutgoingFile(progress);
+        var file = new OutgoingFile(channel.Remote, progress);
         long id;
         lock (channel.SendLock)
         {
-            id = this.radio.SendFile(channel.Remote.EndpointId, path);
-            this.outgoing[id] = file;
-            this.Send(channel.Remote, NearbyProtocol.FileNameFrame(channel.Mine, channel.Id, id, name));
+            // registered before an update for it can be matched - the radio may report on it before SendFile returns
+            lock (this.fileGate)
+            {
+                id = this.radio.SendFile(channel.Remote.EndpointId, path);
+                this.outgoing[id] = file;
+            }
+            try
+            {
+                this.Send(channel.Remote, NearbyProtocol.FileNameFrame(channel.Mine, channel.Id, id, name));
+            }
+            catch
+            {
+                this.outgoing.TryRemove(id, out _);
+                this.radio.CancelFile(id);
+                throw;
+            }
+        }
+
+        // the connection may have gone just before the file was registered - Forget didn't see it then
+        lock (this.gate)
+        {
+            if (!this.remotes.TryGetValue(channel.Remote.EndpointId, out var current) || current != channel.Remote)
+                file.Done.TrySetException(new HubDisconnectedException("The Nearby connection has ended"));
         }
 
         try
@@ -462,6 +539,11 @@ internal sealed class NearbyLink : INearbyRadioListener
                     return;
 
                 channel.Assembling ??= new MemoryStream();
+                if (channel.Assembling.Length + body.Length > this.maxMessageSize)
+                {
+                    channel.Assembling = null;
+                    throw new HubProtocolException($"A Nearby message over {this.maxMessageSize} bytes");
+                }
                 channel.Assembling.Write(body.Span);
                 if (kind == NearbyFrameKind.Last)
                 {
@@ -481,13 +563,22 @@ internal sealed class NearbyLink : INearbyRadioListener
                 break;
 
             case NearbyFrameKind.FileName:
-                if (channel == null || body.Length < 8)
+                if (body.Length < 8)
                     return;
 
                 var payloadId = System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(body.Span);
-                var file = this.incoming.GetOrAdd(payloadId, _ => new IncomingFile());
-                file.Channel = channel;
+                if (!this.incoming.TryGetValue(payloadId, out var file))
+                {
+                    if (this.PendingFiles(remote) >= MaxPendingFilesPerRemote)
+                        throw new HubProtocolException("Too many unfinished files");
+                    file = this.incoming.GetOrAdd(payloadId, _ => new IncomingFile());
+                }
+                file.Endpoint = remote.EndpointId;
                 file.Name = System.Text.Encoding.UTF8.GetString(body.Span[8..]);
+
+                // a file for a channel that has already closed is deleted once it arrives
+                file.Channel = channel;
+                file.Discard = channel == null;
                 this.TryDeliver(payloadId, file);
                 break;
 
@@ -513,11 +604,46 @@ internal sealed class NearbyLink : INearbyRadioListener
 
     void TryDeliver(long payloadId, IncomingFile file)
     {
-        if (!file.Done || file.Channel == null || file.Name == null)
+        if (!file.Done || file.Name == null || (file.Channel == null && !file.Discard))
             return;
 
-        if (this.incoming.TryRemove(payloadId, out _))
+        if (!this.incoming.TryRemove(payloadId, out _))
+            return;
+
+        // nobody to hand it to - the file is this link's, so it goes
+        if (file.Channel == null || file.Channel.IsClosed)
+            DeleteQuietly(file.Path);
+        else
             file.Channel.FileReceived(file.Name, file.Path, file.Error);
+    }
+
+
+    int PendingFiles(NearbyRemote remote) => this.incoming.Values.Count(x => x.Endpoint == remote.EndpointId || x.Channel?.Remote == remote);
+
+
+    void GiveUp(NearbyRemote remote, bool requested)
+    {
+        if (!requested)
+            return;
+
+        this.radio.Disconnect(remote.EndpointId);
+        this.Forget(remote, null);
+    }
+
+
+    static void DeleteQuietly(string? path)
+    {
+        if (path == null)
+            return;
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // a temp file - nothing more to do
+        }
     }
 
 
@@ -572,10 +698,18 @@ internal sealed class NearbyLink : INearbyRadioListener
         foreach (var channel in channels)
             channel.Closed();
 
-        foreach (var (id, file) in this.incoming)
+        foreach (var (id, file) in this.incoming.Where(x => x.Value.Endpoint == remote.EndpointId || x.Value.Channel?.Remote == remote).ToList())
         {
-            if (file.Endpoint == remote.EndpointId || file.Channel?.Remote == remote)
-                this.incoming.TryRemove(id, out _);
+            if (this.incoming.TryRemove(id, out _))
+                DeleteQuietly(file.Path);
+        }
+
+        // files on their way out to it will never hear how they went
+        var ending = error ?? new HubDisconnectedException("The Nearby connection has ended");
+        foreach (var (id, file) in this.outgoing.Where(x => x.Value.Remote == remote).ToList())
+        {
+            this.outgoing.TryRemove(id, out _);
+            file.Done.TrySetException(ending);
         }
     }
 
@@ -620,8 +754,9 @@ internal sealed class NearbyLink : INearbyRadioListener
 
     sealed record Advertisement(Action<IPeerConnection> Accepted);
 
-    sealed class OutgoingFile(Action<double>? progress)
+    sealed class OutgoingFile(NearbyRemote remote, Action<double>? progress)
     {
+        public NearbyRemote Remote => remote;
         public Action<double>? Progress => progress;
         public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -634,6 +769,11 @@ internal sealed class NearbyLink : INearbyRadioListener
         public string? Path { get; set; }
         public Exception? Error { get; set; }
         public bool Done { get; set; }
+
+        /// <summary>
+        /// Named for a channel that had already closed - deleted when it arrives
+        /// </summary>
+        public bool Discard { get; set; }
     }
 }
 
@@ -702,4 +842,5 @@ internal sealed class NearbyChannel(NearbyLink link, NearbyRemote remote, bool m
     internal void FileProgress(string name, double fraction) => this.RaiseFileProgress(name, fraction);
     internal void FileReceived(string name, string? path, Exception? error) => this.RaiseFileReceived(name, path, error);
     internal void Closed() => this.RaiseClosed();
+    internal new bool IsClosed => base.IsClosed;
 }

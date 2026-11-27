@@ -78,7 +78,8 @@ public sealed class UniversalHubGenerator : IIncrementalGenerator
                 {
                     spc.AddSource(HintName("Shiny.UniversalHubs.Generated", hub.MetadataSafeName + "_HubDispatcher"), Emitter.HubDispatcher(hub));
 
-                    if (!hub.Contract.IsLocal && externalPushes.Add(hub.Contract.FullName))
+                    // a contracts library that references the core ships its own public push extensions - a second internal copy makes every call ambiguous
+                    if (!hub.Contract.IsLocal && !hub.Contract.HasReferencedPushExtensions && externalPushes.Add(hub.Contract.FullName))
                         spc.AddSource(HintName(hub.Contract.Namespace, hub.Contract.PushExtensionsName), Emitter.PushExtensions(hub.Contract));
                 }
             }

@@ -18,7 +18,11 @@ public abstract class HubProxy : IHubConnection, IDisposable
     readonly ILogger? logger;
     readonly SemaphoreSlim connectLock = new(1, 1);
     readonly SemaphoreSlim mediaLock = new(1, 1);
+    // guards the connection / status pair, so a teardown and a handshake reply can't interleave
+    readonly object stateGate = new();
     Connection? connection;
+    // the last connection's push pump - the next one starts after it, so pushes never run concurrently or out of order
+    Task pushPump = Task.CompletedTask;
 
 
     protected HubProxy(HubClientServices services, string hubName)
@@ -83,18 +87,30 @@ public abstract class HubProxy : IHubConnection, IDisposable
         await this.connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // outside the try below - a connect refused for being already connected must not tear down the live connection
             this.AssertDisconnected();
             var conn = this.Begin();
-            conn.External = createTransport(new ExternalEvents(this, conn));
+            try
+            {
+                conn.External = createTransport(new ExternalEvents(this, conn));
 
-            // the transport says whether it can resume - it knows whether it can reopen its link
-            var ack = await conn.External.Handshake(this.CreateHandshake(options, options?.AutomaticReconnect ?? true), cancellationToken).ConfigureAwait(false);
-            this.Accept(conn, ack, options);
-        }
-        catch (Exception ex)
-        {
-            await this.Teardown(new HubDisconnect(HubDisconnectReason.ConnectionFailed, ex.Message), true).ConfigureAwait(false);
-            throw;
+                // the transport says whether it can resume - it knows whether it can reopen its link
+                var ack = await conn.External.Handshake(this.CreateHandshake(options, options?.AutomaticReconnect ?? true), cancellationToken).ConfigureAwait(false);
+                this.Accept(conn, ack, options);
+            }
+            catch (Exception ex)
+            {
+                // only the connection this call began - it may already be gone (closed or disconnected mid-handshake), and
+                // then its teardown finishes before this call returns, so the client is Disconnected when it throws
+                await this.Teardown(new HubDisconnect(HubDisconnectReason.ConnectionFailed, ex.Message), true, conn).ConfigureAwait(false);
+                await conn.TornDown.Task.ConfigureAwait(false);
+
+                // the app disconnected while this was connecting - say so, rather than as a failure worth retrying elsewhere
+                if (conn.CloseReason is { Reason: HubDisconnectReason.ClientDisconnect } && ex is not HubDisconnectedException)
+                    throw new HubDisconnectedException("The client disconnected while connecting", conn.CloseReason);
+
+                throw;
+            }
         }
         finally
         {
@@ -357,9 +373,13 @@ public abstract class HubProxy : IHubConnection, IDisposable
     Connection Begin()
     {
         var conn = new Connection();
-        this.connection = conn;
-        this.SetStatus(HubClientStatus.Connecting, null);
-        _ = Task.Run(() => this.PumpPushes(conn));
+        lock (this.stateGate)
+        {
+            this.connection = conn;
+            this.SetStatus(HubClientStatus.Connecting, null);
+        }
+        var previous = this.pushPump;
+        this.pushPump = Task.Run(() => this.PumpPushes(previous, conn));
         return conn;
     }
 
@@ -379,20 +399,40 @@ public abstract class HubProxy : IHubConnection, IDisposable
         if (!ack.Accepted)
             throw new HubException($"Host refused the connection: {ack.Reason}");
 
-        conn.Ack = ack;
-        conn.HostName = ack.HostName;
-        conn.ClientName = options?.Name;
-        this.SetStatus(HubClientStatus.Connected, null);
-        this.Connected?.Invoke(this, EventArgs.Empty);
+        lock (this.stateGate)
+        {
+            // the link closed (or the app disconnected) while the reply was on its way - the connection is already torn
+            // down, so this connect failed rather than leaving a Connected client with no connection
+            if (!ReferenceEquals(this.connection, conn) || conn.Lifetime.IsCancellationRequested)
+                throw new HubDisconnectedException("The connection to the host closed during the handshake", conn.CloseReason);
+
+            conn.Ack = ack;
+            conn.HostName = ack.HostName;
+            conn.ClientName = options?.Name;
+            // raised under the gate, so a teardown that follows is seen after Connected, never before it
+            this.SetStatus(HubClientStatus.Connected, null);
+            this.Connected?.Invoke(this, EventArgs.Empty);
+        }
         this.logger?.LogInformation("Connected to '{Host}'", ack.HostName);
     }
 
 
     /// <summary>
-    /// Pushes (and host renames) are raised one at a time, in the order the host sent them
+    /// Pushes (and host renames) are raised one at a time, in the order the host sent them. A connection's pump waits for
+    /// the previous connection's to finish raising what that connection received, so a quick reconnect never runs two
+    /// connections' handlers at once.
     /// </summary>
-    async Task PumpPushes(Connection conn)
+    async Task PumpPushes(Task previous, Connection conn)
     {
+        try
+        {
+            await previous.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogDebug(ex, "Previous push pump failed");
+        }
+
         await foreach (var message in conn.Pushes.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             try
@@ -416,35 +456,51 @@ public abstract class HubProxy : IHubConnection, IDisposable
     }
 
 
-    async Task Teardown(HubDisconnect disconnect, bool cancelConnection)
+    /// <param name="expected">Tear down only this connection - null for whichever is current</param>
+    async Task Teardown(HubDisconnect disconnect, bool cancelConnection, Connection? expected = null)
     {
         // connection loss, host disconnect and app disconnect can race - only the first one tears down
-        var conn = Interlocked.Exchange(ref this.connection, null);
-        if (conn == null)
-            return;
-
-        var wasConnected = this.Status is HubClientStatus.Connected or HubClientStatus.Reconnecting;
-        this.SetStatus(HubClientStatus.Disconnecting, disconnect);
-
-        conn.Pushes.Writer.TryComplete();
-        conn.CloseReason = disconnect;
-        conn.Lifetime.Cancel();
-        await this.CloseMedia(conn).ConfigureAwait(false);
-
-        if (conn.External != null && cancelConnection)
+        Connection? conn;
+        bool wasConnected;
+        lock (this.stateGate)
         {
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                await conn.External.Close(cts.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogDebug(ex, "Transport did not close cleanly");
-            }
+            conn = this.connection;
+            if (conn == null || (expected != null && !ReferenceEquals(conn, expected)))
+                return;
+
+            // Accept checks the connection under the gate - once it is gone, a handshake reply can't connect
+            this.connection = null;
+            conn.CloseReason = disconnect;
+            wasConnected = this.Status is HubClientStatus.Connected or HubClientStatus.Reconnecting;
+            this.SetStatus(HubClientStatus.Disconnecting, disconnect);
         }
 
-        this.SetStatus(HubClientStatus.Disconnected, disconnect);
+        try
+        {
+            // pushes already received are still raised (in order); nothing more is queued
+            conn.Pushes.Writer.TryComplete();
+            conn.Lifetime.Cancel();
+            await this.CloseMedia(conn).ConfigureAwait(false);
+
+            if (conn.External != null && cancelConnection)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await conn.External.Close(cts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    this.logger?.LogDebug(ex, "Transport did not close cleanly");
+                }
+            }
+
+            this.SetStatus(HubClientStatus.Disconnected, disconnect);
+        }
+        finally
+        {
+            conn.TornDown.TrySetResult();
+        }
         if (wasConnected)
             this.Disconnected?.Invoke(this, disconnect);
     }
@@ -496,26 +552,31 @@ public abstract class HubProxy : IHubConnection, IDisposable
         public void Closed(HubDisconnect disconnect)
         {
             // only the connection this transport was created for - a late close from an old transport must not end a new one
-            if (ReferenceEquals(client.connection, conn))
-                _ = client.Teardown(disconnect, false);
+            _ = client.Teardown(disconnect, false, conn);
         }
 
         public void Reconnecting(HubDisconnect drop)
         {
-            if (!ReferenceEquals(client.connection, conn) || client.Status != HubClientStatus.Connected)
-                return;
+            lock (client.stateGate)
+            {
+                if (!ReferenceEquals(client.connection, conn) || client.Status != HubClientStatus.Connected)
+                    return;
 
+                client.SetStatus(HubClientStatus.Reconnecting, drop);
+            }
             client.logger?.LogInformation("Link to '{Host}' dropped ({Reason}) - resuming", conn.HostName, drop);
-            client.SetStatus(HubClientStatus.Reconnecting, drop);
             _ = client.CloseMedia(conn);
         }
 
         public void Reconnected()
         {
-            if (!ReferenceEquals(client.connection, conn) || client.Status != HubClientStatus.Reconnecting)
-                return;
+            lock (client.stateGate)
+            {
+                if (!ReferenceEquals(client.connection, conn) || client.Status != HubClientStatus.Reconnecting)
+                    return;
 
-            client.SetStatus(HubClientStatus.Connected, null);
+                client.SetStatus(HubClientStatus.Connected, null);
+            }
             client.logger?.LogInformation("Resumed on '{Host}'", conn.HostName);
         }
     }
@@ -537,6 +598,7 @@ public abstract class HubProxy : IHubConnection, IDisposable
         public IHubMediaChannel? TakeMedia() => Interlocked.Exchange(ref this.media, null);
         public CancellationTokenSource Lifetime { get; } = new();
         public HubDisconnect? CloseReason { get; set; }
+        public TaskCompletionSource TornDown { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Channel<HubMessage> Pushes { get; } = Channel.CreateUnbounded<HubMessage>(new UnboundedChannelOptions { SingleReader = true });
     }

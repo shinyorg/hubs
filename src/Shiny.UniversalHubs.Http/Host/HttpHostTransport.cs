@@ -254,8 +254,9 @@ public sealed class HttpHostTransport : IHubTransport, IDynamicHubTransport
         };
         await using var socket = await ctx.AcceptWebSocketAsync(accept);
         var remote = ctx.Connection.ConnectionId.ToString();
-        var connection = new WebSocketPeerConnection(remote, new ServerFrames(socket), this.logger);
-        var session = new PeerHostSession(new SessionTransport(this, hub, ctx), connection);
+        PeerHostSession? session = null;
+        var connection = new WebSocketPeerConnection(remote, new ServerFrames(socket), this.logger, this.CreateFileLimits(() => session));
+        session = new PeerHostSession(new SessionTransport(this, hub, ctx), connection);
         lock (this.sessions)
             this.sessions.Add(session);
 
@@ -271,6 +272,23 @@ public sealed class HttpHostTransport : IHubTransport, IDynamicHubTransport
         {
         }
         connection.Dispose();
+    }
+
+
+    /// <summary>
+    /// A client sends files only as uploads: once it has hand-shaken with a hub, to a host that takes uploads, under the
+    /// host's size limit. The session itself then matches each file to the upload it asked for.
+    /// </summary>
+    WebSocketFileLimits CreateFileLimits(Func<PeerHostSession?> session)
+    {
+        var ft = this.serverOptions.FileTransfers;
+        return new WebSocketFileLimits(
+            ft?.MaxUploadSize,
+            WebSocketFileLimits.DefaultMaxOpenFiles,
+            (name, _) => ft is { AllowUploads: true }
+                && session()?.Binding != null
+                && PeerProtocol.ReadFileResourceId(name) != null
+        );
     }
 
 
@@ -462,11 +480,11 @@ public sealed class HttpHostTransport : IHubTransport, IDynamicHubTransport
             }
         }
 
-        public async ValueTask Close()
+        public async ValueTask Close(CancellationToken cancellationToken)
         {
             try
             {
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed").ConfigureAwait(false);
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closed", cancellationToken).ConfigureAwait(false);
             }
             catch
             {

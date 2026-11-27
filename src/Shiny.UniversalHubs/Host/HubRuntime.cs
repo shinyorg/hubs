@@ -19,7 +19,11 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
     readonly ConcurrentDictionary<string, HostPeer> peers = new(StringComparer.OrdinalIgnoreCase);
     // by connection id: every admitted client, including one held for resume (it has no link until it comes back)
     readonly ConcurrentDictionary<string, HostPeer> connections = new(StringComparer.OrdinalIgnoreCase);
-    readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> groups = new(StringComparer.Ordinal);
+    // group name -> connection id -> the peer that joined: a client leaving takes out only its own entries, never a later
+    // connection's that reuses its id (BLE's central UUID)
+    readonly ConcurrentDictionary<string, ConcurrentDictionary<string, HostPeer>> groups = new(StringComparer.Ordinal);
+    // makes the MaxClients check and the add one step
+    readonly object admitGate = new();
     readonly HubDefinition registration;
     readonly IHubDispatcher dispatcher;
     readonly IServiceProvider services;
@@ -86,7 +90,22 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
     /// <summary>
     /// Admitted clients, held ones included - pushes to a held client are kept for its resume
     /// </summary>
-    public IEnumerable<HostPeer> ReadyPeers => this.connections.Values.Where(x => x.Client != null);
+    // the dictionary's own enumerator: lock-free and no snapshot copy, unlike Values, which matters once per push
+    public IEnumerable<HostPeer> ReadyPeers => this.connections.Select(x => x.Value).Where(x => x.Client != null);
+
+
+    /// <summary>
+    /// The admitted client with this connection id, held ones included - a lookup, not a scan
+    /// </summary>
+    public IEnumerable<HostPeer> ReadyPeer(string connectionId)
+        => this.connections.TryGetValue(connectionId, out var peer) && peer.Client != null ? [peer] : [];
+
+
+    /// <summary>
+    /// The admitted clients with these connection ids, held ones included
+    /// </summary>
+    public IEnumerable<HostPeer> ReadyPeersById(IEnumerable<string> connectionIds)
+        => connectionIds.SelectMany(this.ReadyPeer);
     public IReadOnlyList<HubConnectedClient> Clients => this.ReadyPeers.Select(x => x.Client!).ToList();
 
     public event EventHandler<HubConnectedClient>? ClientConnected;
@@ -176,15 +195,24 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
     /// </summary>
     void End(HostPeer peer, HubDisconnect disconnect)
     {
-        peer.MarkGone();
+        var announced = peer.MarkGone();
         this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
         peer.Abort();
         peer.CloseMedia();
-        if (peer.Client == null || !this.connections.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer)))
+        if (peer.Client == null || !this.RemoveConnection(peer))
             return;
 
         var client = peer.Client;
         this.logger?.LogInformation("Client {Client} left {Hub}: {Reason}", client, this.Name, disconnect);
+        this.Forget(peer, client, disconnect, announced);
+    }
+
+
+    /// <summary>
+    /// OnDisconnectedAsync, then the client leaves its groups - and ClientDisconnected when ClientConnected was raised for it
+    /// </summary>
+    void Forget(HostPeer peer, HubConnectedClient client, HubDisconnect disconnect, bool announced)
+    {
         _ = Task.Run(async () =>
         {
             try
@@ -193,19 +221,31 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
             }
             finally
             {
-                foreach (var group in this.groups.Values)
-                    group.TryRemove(client.Id, out _);
-
-                this.ClientDisconnected?.Invoke(this, new HubClientDisconnectedEventArgs(client, disconnect));
+                this.LeaveGroups(peer);
+                if (announced)
+                    this.ClientDisconnected?.Invoke(this, new HubClientDisconnectedEventArgs(client, disconnect));
             }
         });
+    }
+
+
+    /// <summary>
+    /// Takes out this peer's group entries - not those of a later connection with the same id
+    /// </summary>
+    void LeaveGroups(HostPeer peer)
+    {
+        var mine = new KeyValuePair<string, HostPeer>(peer.Id, peer);
+        foreach (var group in this.groups)
+            group.Value.TryRemove(mine);
     }
 
 
     public async Task Push(string eventName, byte[] payload, IEnumerable<HostPeer> recipients, CancellationToken cancellationToken)
     {
         var targets = recipients.Where(x => x.Client != null).Distinct().ToList();
-        await Task.WhenAll(targets.Select(peer => this.Deliver(peer, new QueuedSend(FrameKind.Push, eventName, payload), cancellationToken))).ConfigureAwait(false);
+        // immutable, so every recipient (and every held buffer) can share it
+        var item = new QueuedSend(FrameKind.Push, eventName, payload);
+        await Task.WhenAll(targets.Select(peer => this.Deliver(peer, item, cancellationToken))).ConfigureAwait(false);
     }
 
 
@@ -310,19 +350,29 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
 
     public IEnumerable<HostPeer> PeersInGroups(IEnumerable<string> groupNames)
     {
+        // the groups' members looked up, rather than every client scanned
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in groupNames)
         {
             if (this.groups.TryGetValue(name, out var members))
-                ids.UnionWith(members.Keys);
+                ids.UnionWith(members.Select(x => x.Key));
         }
-        return this.ReadyPeers.Where(x => ids.Contains(x.Id));
+        return this.ReadyPeersById(ids);
     }
 
 
     public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
     {
-        this.groups.GetOrAdd(groupName, _ => new(StringComparer.OrdinalIgnoreCase))[connectionId] = 0;
+        // a connection that isn't here (any more) joins nothing, as in SignalR - nothing would ever take it out again
+        if (this.Find(connectionId) is { } owner && !owner.IsGone)
+        {
+            var members = this.groups.GetOrAdd(groupName, _ => new(StringComparer.OrdinalIgnoreCase));
+            members[connectionId] = owner;
+
+            // the client left meanwhile (an OnConnectedAsync still running when it went) - its cleanup may have run already
+            if (owner.IsGone)
+                members.TryRemove(new KeyValuePair<string, HostPeer>(connectionId, owner));
+        }
         return Task.CompletedTask;
     }
 
@@ -337,7 +387,7 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
 
 
     public IReadOnlyList<string> GetMembers(string groupName)
-        => this.groups.TryGetValue(groupName, out var members) ? members.Keys.ToList() : [];
+        => this.groups.TryGetValue(groupName, out var members) ? members.Select(x => x.Key).ToList() : [];
 
 
     const string NotResumable = "The connection can't be resumed - connect again";
@@ -438,7 +488,7 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
         var serializer = info.Serializer ?? JsonHubSerializer.FormatName;
         if (!serializer.Equals(this.Serializer.Name, StringComparison.OrdinalIgnoreCase))
             rejection = $"Serializer mismatch - this hub uses {this.Serializer.Name}, the client {serializer}";
-        else if (peer.Client == null && hubOptions.MaxClients is { } max && this.Clients.Count >= max)
+        else if (peer.Client == null && hubOptions.MaxClients is { } max && this.ReadyPeers.Count() >= max)
             rejection = "Host is full";
         else
             rejection = hubOptions.ValidateClient?.Invoke(info);
@@ -449,27 +499,67 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
             // before the hub knows about it (and has had a chance to put it in groups)
             var client = new HubConnectedClient(peer.Id, info.Name, info.AppVersion, info.Properties ?? new(), 0);
             configure?.Invoke(client);
-            peer.Client = client;
-            this.connections[peer.Id] = peer;
-            try
-            {
-                await this.RunLifecycle(peer, client, hub => hub.OnConnectedAsync()).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                this.connections.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
-                peer.Client = null;
-                rejection = ex.Message;
-            }
-
+            rejection = this.Register(peer, client, hubOptions.MaxClients);
             if (rejection == null)
-            {
-                this.logger?.LogInformation("Client {Client} connected to {Hub}", client, this.Name);
-                this.ClientConnected?.Invoke(this, client);
-            }
+                rejection = await this.Connected(peer, client).ConfigureAwait(false);
         }
         return rejection;
     }
+
+
+    /// <summary>
+    /// Takes a MaxClients slot and registers the client in one step, so two handshakes can't both take the last slot
+    /// </summary>
+    string? Register(HostPeer peer, HubConnectedClient client, int? maxClients)
+    {
+        lock (this.admitGate)
+        {
+            if (peer.IsGone)
+                return ClientLeft;
+
+            if (maxClients is { } max && this.ReadyPeers.Count() >= max)
+                return "Host is full";
+
+            peer.Client = client;
+            this.connections[peer.Id] = peer;
+            return null;
+        }
+    }
+
+
+    /// <summary>
+    /// Runs OnConnectedAsync and raises ClientConnected - unless the client left while it ran, which counts as a rejection
+    /// </summary>
+    async Task<string?> Connected(HostPeer peer, HubConnectedClient client)
+    {
+        try
+        {
+            await this.RunLifecycle(peer, client, hub => hub.OnConnectedAsync()).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            this.connections.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
+            peer.Client = null;
+            return ex.Message;
+        }
+
+        if (!peer.TryAnnounce())
+        {
+            // the link closed during OnConnectedAsync. End usually did the cleanup (with no ClientDisconnected, as there
+            // was no ClientConnected); when it ran before the client was registered, it's done here.
+            if (this.RemoveConnection(peer))
+                this.Forget(peer, client, new HubDisconnect(HubDisconnectReason.ClientTimeout, ClientLeft), false);
+
+            return ClientLeft;
+        }
+
+        this.logger?.LogInformation("Client {Client} connected to {Hub}", client, this.Name);
+        this.ClientConnected?.Invoke(this, client);
+        return null;
+    }
+
+
+    const string ClientLeft = "The client left while connecting";
 
 
     /// <summary>
@@ -521,7 +611,8 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
         var payload = ProtocolSerializer.Serialize(new RenameInfo(hostName));
 
         // in order with pushes, and kept for a held client like one
-        await Task.WhenAll(this.ReadyPeers.ToList().Select(peer => this.Deliver(peer, new QueuedSend(FrameKind.HostRenamed, null, payload), cancellationToken))).ConfigureAwait(false);
+        var item = new QueuedSend(FrameKind.HostRenamed, null, payload);
+        await Task.WhenAll(this.ReadyPeers.ToList().Select(peer => this.Deliver(peer, item, cancellationToken))).ConfigureAwait(false);
     }
 
 
@@ -599,7 +690,8 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
         if (rejection != null)
         {
             this.logger?.LogInformation("Rejected client {Peer}: {Reason}", peer.Id, rejection);
-            this.peers.TryRemove(peer.Id, out _);
+            // only this attempt's peer - a newer link may already use the id
+            this.peers.TryRemove(new KeyValuePair<string, HostPeer>(peer.Id, peer));
         }
         return rejection;
     }
@@ -627,27 +719,51 @@ internal sealed class HubRuntime : IGroupManager, IHubEndpoint
     }
 
 
+    /// <summary>
+    /// For a transport that doesn't use <see cref="StartStream"/>: the abort takes effect once the stream is over, however
+    /// it ended - before the transport's StreamEnd, which only <see cref="StartStream"/> can avoid
+    /// </summary>
     public async IAsyncEnumerable<byte[]> Stream(string connectionId, string method, ReadOnlyMemory<byte> arguments, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var stream = this.StartStream(connectionId, method, arguments, cancellationToken);
+        try
+        {
+            await foreach (var item in stream.Items.WithCancellation(cancellationToken).ConfigureAwait(false))
+                yield return item;
+        }
+        finally
+        {
+            if (stream.AbortRequested)
+                await this.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, stream.AbortReason)).ConfigureAwait(false);
+        }
+    }
+
+
+    public HubStreamInvocation StartStream(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken)
+        => new(stream => this.RunStream(stream, connectionId, method, arguments, cancellationToken));
+
+
+    async IAsyncEnumerable<byte[]> RunStream(HubStreamInvocation stream, string connectionId, string method, ReadOnlyMemory<byte> arguments, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var (peer, client) = this.GetExternal(connectionId);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(this.lifetime.Token, peer.Aborted, cancellationToken);
-        string? abortReason = null;
-        var abortRequested = false;
 
-        await using (var scope = this.services.CreateAsyncScope())
-        {
-            var hub = this.CreateHub(scope.ServiceProvider, peer, client, reason =>
-            {
-                abortRequested = true;
-                abortReason = reason;
-            });
-            var items = this.dispatcher.Stream(hub, method, new HubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token);
-            await foreach (var item in items.WithCancellation(cts.Token).ConfigureAwait(false))
-                yield return item;
-        }
+        await using var scope = this.services.CreateAsyncScope();
+        // the transport sends StreamEnd (or the error) first, then disconnects
+        var hub = this.CreateHub(scope.ServiceProvider, peer, client, stream.RequestAbort);
+        var items = this.dispatcher.Stream(hub, method, new HubArgumentReader(this.Serializer, arguments), this.Serializer, cts.Token);
+        await foreach (var item in items.WithCancellation(cts.Token).ConfigureAwait(false))
+            yield return item;
+    }
 
-        if (abortRequested)
-            await this.Disconnect(connectionId, new HubDisconnect(HubDisconnectReason.ServerDisconnect, abortReason)).ConfigureAwait(false);
+
+    /// <summary>
+    /// Takes this peer out of the connections - only when it is still the one there, never a newer connection on its id
+    /// </summary>
+    bool RemoveConnection(HostPeer peer)
+    {
+        var entry = new KeyValuePair<string, HostPeer>(peer.Id, peer);
+        return this.connections.TryRemove(entry);
     }
 
 
@@ -776,6 +892,7 @@ internal sealed class HostPeer(string id)
     HubDisconnect? holdReason;
     HoldState state = HoldState.Attached;
     int generation;
+    bool announced;
 
     /// <summary>
     /// The connection id - stays the same when the client resumes on a new link
@@ -927,12 +1044,42 @@ internal sealed class HostPeer(string id)
     }
 
 
-    public void MarkGone()
+    /// <summary>
+    /// The client is gone for good - returns whether ClientConnected was raised for it
+    /// </summary>
+    public bool MarkGone()
     {
         lock (this.holdGate)
         {
             this.state = HoldState.Gone;
             this.held = null;
+            return this.announced;
+        }
+    }
+
+
+    public bool IsGone
+    {
+        get
+        {
+            lock (this.holdGate)
+                return this.state == HoldState.Gone;
+        }
+    }
+
+
+    /// <summary>
+    /// Marks the client as one ClientConnected is raised for - false when it is gone already
+    /// </summary>
+    public bool TryAnnounce()
+    {
+        lock (this.holdGate)
+        {
+            if (this.state == HoldState.Gone)
+                return false;
+
+            this.announced = true;
+            return true;
         }
     }
 

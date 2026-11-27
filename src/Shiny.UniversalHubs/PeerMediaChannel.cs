@@ -5,11 +5,26 @@ namespace Shiny.UniversalHubs;
 
 /// <summary>
 /// A media channel over the hub connection's own peer-link session (Multipeer, Nearby): one MediaPacket message is one packet. Reliable and
-/// ordered like L2CAP, so signalling can share the pipe. The same class serves both ends.
+/// ordered like L2CAP, so signalling can share the pipe. The same class serves both ends. Packets nobody reads fast enough
+/// are dropped oldest first - it is live media - and a packet over the size limit is dropped.
 /// </summary>
-internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<byte>> send, string? connectionId, int maxPacketSize) : IHubMediaChannel
+internal sealed class PeerMediaChannel(
+    Action<PeerMessageKind, ReadOnlyMemory<byte>> send,
+    string? connectionId,
+    int maxPacketSize,
+    int inboxCapacity = PeerMediaChannel.DefaultInboxCapacity
+) : IHubMediaChannel
 {
-    readonly Channel<ReadOnlyMemory<byte>> inbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
+    /// <summary>
+    /// Inbound packets kept for a slow reader before the oldest are dropped
+    /// </summary>
+    public const int DefaultInboxCapacity = 256;
+
+    readonly Channel<ReadOnlyMemory<byte>> inbox = Channel.CreateBounded<ReadOnlyMemory<byte>>(new BoundedChannelOptions(inboxCapacity)
+    {
+        SingleReader = true,
+        FullMode = BoundedChannelFullMode.DropOldest
+    });
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     int receiving;
 
@@ -56,7 +71,7 @@ internal sealed class PeerMediaChannel(Action<PeerMessageKind, ReadOnlyMemory<by
     /// </summary>
     public void Deliver(ReadOnlyMemory<byte> packet)
     {
-        if (this.IsOpen)
+        if (this.IsOpen && packet.Length <= maxPacketSize)
             this.inbox.Writer.TryWrite(packet);
     }
 

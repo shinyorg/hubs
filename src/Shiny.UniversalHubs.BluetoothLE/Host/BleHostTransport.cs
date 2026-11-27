@@ -101,7 +101,8 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
     readonly SemaphoreSlim startLock = new(1, 1);
     readonly ConcurrentDictionary<IHubBinding, FrameHostSession> sessions = new();
     readonly ConcurrentDictionary<IHubBinding, byte> running = new();
-    readonly Dictionary<IHubBinding, IGattCharacteristic> characteristics = new();
+    // written under startLock, read from any push thread (Notify) and the sweep timer
+    readonly ConcurrentDictionary<IHubBinding, IGattCharacteristic> characteristics = new();
     // each GATT service up, with the hubs whose characteristics are in it
     readonly Dictionary<string, List<IHubBinding>> gattServices = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<IHubBinding> warnedUnadvertised = new();
@@ -372,7 +373,7 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
 
         this.hosting.RemoveService(serviceUuid);
         foreach (var hub in hubs)
-            this.characteristics.Remove(hub);
+            this.characteristics.TryRemove(hub, out _);
     }
 
 
@@ -496,21 +497,33 @@ public sealed class BleHostTransport : IDynamicHubTransport, IDisposable
 
     void Sweep()
     {
-        // not every platform reports an unsubscribe when a central simply drops - reap anyone no longer subscribed
-        foreach (var (hub, ch) in this.characteristics.ToList())
+        // a timer callback - nothing may escape it
+        try
         {
-            try
-            {
-                var subscribed = ch.SubscribedCentrals.Select(x => x.Uuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                // links, not connection ids: a client that resumed is on a different central than it first connected through
-                var session = this.GetSession(hub);
-                foreach (var link in session.Links.Where(x => !subscribed.Contains(x.LinkId)).ToList())
-                    session.OnPeerGone(link.LinkId, new HubDisconnect(HubDisconnectReason.ClientTimeout));
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogWarning(ex, "Client sweep failed");
-            }
+            // not every platform reports an unsubscribe when a central simply drops - reap anyone no longer subscribed
+            foreach (var (hub, ch) in this.characteristics.ToArray())
+                this.Sweep(hub, ch);
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogWarning(ex, "Client sweep failed");
+        }
+    }
+
+
+    void Sweep(IHubBinding hub, IGattCharacteristic ch)
+    {
+        try
+        {
+            var subscribed = ch.SubscribedCentrals.Select(x => x.Uuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // links, not connection ids: a client that resumed is on a different central than it first connected through
+            var session = this.GetSession(hub);
+            foreach (var link in session.Links.Where(x => !subscribed.Contains(x.LinkId)).ToList())
+                session.OnPeerGone(link.LinkId, new HubDisconnect(HubDisconnectReason.ClientTimeout));
+        }
+        catch (Exception ex)
+        {
+            this.logger?.LogWarning(ex, "Client sweep of {Hub} failed", hub.Name);
         }
     }
 

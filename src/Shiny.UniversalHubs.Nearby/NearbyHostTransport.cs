@@ -152,22 +152,33 @@ public sealed class NearbyHostTransport : IHubTransport, IPeerHostTransport
     // under the gate
     async Task Readvertise()
     {
-        this.advertisement?.Dispose();
-        this.advertisement = null;
-
         List<uint> hubs;
         lock (this.running)
             hubs = this.running.Select(x => NearbyProtocol.HubTag(x.Key)).ToList();
 
         if (hubs.Count == 0)
+        {
+            this.advertisement?.Dispose();
+            this.advertisement = null;
             return;
+        }
 
-        this.advertisement = await link.Advertise(
-            options.ServiceId,
-            options.Strategy,
-            new NearbyEndpointInfo(serverOptions.HostId, this.EndpointName, hubs),
-            this.Accepted
-        ).ConfigureAwait(false);
+        // the link swaps the advertisement in one step - disposing the old one first would leave a moment with none,
+        // where clients' channels get closed and their connections refused. The old handle is spent once replaced.
+        try
+        {
+            this.advertisement = await link.Advertise(
+                options.ServiceId,
+                options.Strategy,
+                new NearbyEndpointInfo(serverOptions.HostId, this.EndpointName, hubs),
+                this.Accepted
+            ).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.advertisement = null;
+            throw;
+        }
     }
 
 

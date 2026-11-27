@@ -52,12 +52,18 @@ internal interface IPeerConnectionHandler
 /// Holds what a session reports until <see cref="IPeerConnection.Start"/>, then passes it on in order. The radio links
 /// (Apple Multipeer, Nearby) and the in-memory test networks build on it.
 /// </summary>
+/// <remarks>
+/// The handler never runs under the gate: whoever raises while nobody is delivering delivers everything queued, in order,
+/// outside the lock. A handler that sends to another connection (a hub pushing to its other clients) can't deadlock with
+/// that connection's handler sending back, and <see cref="IsClosed"/> never waits on a handler.
+/// </remarks>
 internal abstract class PeerConnectionBase : IPeerConnection
 {
     readonly object gate = new();
-    readonly List<Action<IPeerConnectionHandler>> pending = new();
+    readonly Queue<Action<IPeerConnectionHandler>> pending = new();
     IPeerConnectionHandler? handler;
-    bool closed;
+    bool delivering;
+    int closed;
 
 
     public abstract string RemoteName { get; }
@@ -74,10 +80,8 @@ internal abstract class PeerConnectionBase : IPeerConnection
                 throw new InvalidOperationException("A peer-link connection has one handler");
 
             this.handler = handler;
-            foreach (var action in this.pending)
-                action(handler);
-            this.pending.Clear();
         }
+        this.Deliver();
     }
 
 
@@ -87,37 +91,76 @@ internal abstract class PeerConnectionBase : IPeerConnection
 
     protected void RaiseClosed()
     {
-        lock (this.gate)
-        {
-            if (this.closed)
-                return;
+        if (Interlocked.Exchange(ref this.closed, 1) == 1)
+            return;
 
-            this.closed = true;
-        }
+        // queued after everything raised before it, and nothing is queued after it
         this.Raise(x => x.Closed(), force: true);
     }
 
-    protected bool IsClosed
-    {
-        get
-        {
-            lock (this.gate)
-                return this.closed;
-        }
-    }
+    protected bool IsClosed => Volatile.Read(ref this.closed) == 1;
 
 
     void Raise(Action<IPeerConnectionHandler> action, bool force = false)
     {
         lock (this.gate)
         {
-            if (this.closed && !force)
+            if (this.IsClosed && !force)
                 return;
 
-            if (this.handler == null)
-                this.pending.Add(action);
-            else
-                action(this.handler);
+            this.pending.Enqueue(action);
         }
+        this.Deliver();
+    }
+
+
+    /// <summary>
+    /// Runs what is queued, in order, outside the gate - unless another thread is delivering already (it runs this too) or
+    /// there's no handler yet
+    /// </summary>
+    void Deliver()
+    {
+        IPeerConnectionHandler target;
+        lock (this.gate)
+        {
+            if (this.delivering || this.handler == null)
+                return;
+
+            this.delivering = true;
+            target = this.handler;
+        }
+
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? failure = null;
+        var more = true;
+        while (more)
+        {
+            Action<IPeerConnectionHandler>? next = null;
+            lock (this.gate)
+            {
+                if (this.pending.Count == 0)
+                {
+                    this.delivering = false;
+                    more = false;
+                }
+                else
+                {
+                    next = this.pending.Dequeue();
+                }
+            }
+
+            if (next != null)
+            {
+                try
+                {
+                    next(target);
+                }
+                catch (Exception ex)
+                {
+                    // the rest still goes out (Closed above all) - the raiser sees the first failure, as it did before
+                    failure ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+                }
+            }
+        }
+        failure?.Throw();
     }
 }

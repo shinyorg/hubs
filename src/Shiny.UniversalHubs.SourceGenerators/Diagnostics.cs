@@ -25,6 +25,15 @@ static class Diagnostics
     public static readonly DiagnosticDescriptor UnsupportedParameter = new(
         "SUH006", "Unsupported hub method signature", "{0}", Category, DiagnosticSeverity.Error, true);
 
+    public static readonly DiagnosticDescriptor UnsupportedContractMember = new(
+        "SUH007", "Unsupported hub contract member", "{0}", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor GenericContract = new(
+        "SUH008", "Hub contracts cannot be generic", "{0}", Category, DiagnosticSeverity.Error, true);
+
+    public static readonly DiagnosticDescriptor ReservedMemberName = new(
+        "SUH009", "Hub contract member name collides with the generated proxy", "{0}", Category, DiagnosticSeverity.Error, true);
+
 
     public static DiagnosticDescriptor ById(string id) => id switch
     {
@@ -33,6 +42,9 @@ static class Diagnostics
         "SUH003" => OverloadedMethod,
         "SUH004" => UnsupportedEvent,
         "SUH005" => ContractNotMarked,
+        "SUH007" => UnsupportedContractMember,
+        "SUH008" => GenericContract,
+        "SUH009" => ReservedMemberName,
         _ => UnsupportedParameter
     };
 }

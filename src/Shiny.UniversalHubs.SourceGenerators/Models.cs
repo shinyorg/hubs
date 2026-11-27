@@ -37,6 +37,7 @@ sealed record ContractModel(
     string PushExtensionsName,// GameHubPushExtensions
     bool IsPublic,
     bool IsLocal,
+    bool HasReferencedPushExtensions, // an external contract whose own assembly already ships its public push extensions
     EquatableArray<MethodModel> Methods,
     EquatableArray<EventModel> Events,
     EquatableArray<DiagnosticInfo> Diagnostics

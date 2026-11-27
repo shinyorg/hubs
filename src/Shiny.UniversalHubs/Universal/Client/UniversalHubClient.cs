@@ -96,6 +96,10 @@ internal static class UniversalHubClientErrors
     // HubProxy reports a refusal (full, ValidateClient, not running) this way on every transport
     public static bool IsRefusal(Exception ex)
         => ex is HubException && ex.Message.StartsWith("Host refused", StringComparison.Ordinal);
+
+    // the app disconnected (or disposed the client) while connecting - not a reason to try the next transport
+    public static bool IsAppDisconnect(Exception ex)
+        => ex is HubDisconnectedException { Disconnect.Reason: HubDisconnectReason.ClientDisconnect };
 }
 
 
@@ -283,6 +287,10 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         ArgumentNullException.ThrowIfNull(host);
         options ??= new HubConnectOptions();
 
+        // already connected (or connecting) - say so, rather than trying every transport and failing each the same way
+        if (this.inner.Status != HubClientStatus.Disconnected)
+            throw new InvalidOperationException($"Client is already {this.inner.Status}");
+
         var context = new HubClientContext(this.client, options.ToHandshake() with { AutomaticReconnect = this.options.AutomaticReconnect });
         var order = options
             .Order(this.Transports)
@@ -292,19 +300,23 @@ internal sealed class UniversalHubClient<TContract> : IUniversalHubClient<TContr
         var errors = new List<Exception>();
         foreach (var transport in order)
         {
+            // set before the attempt, so the proxy's Connected handlers already see it - and put back when it fails, so
+            // Transport never names a transport that isn't carrying the connection
+            var previous = Interlocked.Exchange(ref this.connectedThrough, transport);
             try
             {
-                this.connectedThrough = transport;
                 await transport.Connect(context, host, cancellationToken).ConfigureAwait(false);
                 this.logger?.LogInformation("Connected to {Host} over {Transport}", host.Name, transport.DisplayName);
                 return;
             }
-            catch (Exception ex) when (UniversalHubClientErrors.IsRefusal(ex) || cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (UniversalHubClientErrors.IsRefusal(ex) || UniversalHubClientErrors.IsAppDisconnect(ex) || cancellationToken.IsCancellationRequested)
             {
+                Interlocked.CompareExchange(ref this.connectedThrough, previous, transport);
                 throw;
             }
             catch (Exception ex)
             {
+                Interlocked.CompareExchange(ref this.connectedThrough, previous, transport);
                 this.logger?.LogInformation(ex, "Could not reach {Host} over {Transport}", host.Name, transport.DisplayName);
                 errors.Add(ex);
             }

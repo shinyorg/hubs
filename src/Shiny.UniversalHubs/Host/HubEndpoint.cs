@@ -50,6 +50,49 @@ public sealed record HubInvocationResult(byte[]? Result, bool AbortRequested, st
 
 
 /// <summary>
+/// A streaming hub method called through another transport (<see cref="IHubEndpoint.StartStream"/>)
+/// </summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public sealed class HubStreamInvocation
+{
+    int abortRequested;
+    string? abortReason;
+
+
+    /// <summary>
+    /// A stream that handles Context.Abort itself - <see cref="AbortRequested"/> stays false
+    /// </summary>
+    public HubStreamInvocation(IAsyncEnumerable<byte[]> items) => this.Items = items;
+
+    internal HubStreamInvocation(Func<HubStreamInvocation, IAsyncEnumerable<byte[]>> items) => this.Items = items(this);
+
+
+    /// <summary>
+    /// The serialized items - the method runs as they are enumerated
+    /// </summary>
+    public IAsyncEnumerable<byte[]> Items { get; }
+
+    /// <summary>
+    /// The method called Context.Abort - once the stream is over (ended, failed or cancelled), send the end of stream or
+    /// the error, then call <see cref="IHubEndpoint.Disconnect"/>
+    /// </summary>
+    public bool AbortRequested => Volatile.Read(ref this.abortRequested) == 1;
+
+    /// <summary>
+    /// The reason passed to Context.Abort
+    /// </summary>
+    public string? AbortReason => Volatile.Read(ref this.abortReason);
+
+
+    internal void RequestAbort(string? reason)
+    {
+        Volatile.Write(ref this.abortReason, reason);
+        Volatile.Write(ref this.abortRequested, 1);
+    }
+}
+
+
+/// <summary>
 /// Serves a hub over a transport other than BLE. Clients connected this way share Clients, Groups, MaxClients,
 /// ValidateClient and IHubContext with BLE clients - the hub can't tell them apart.
 /// Get one from <see cref="IHubContext{THub}.TransportEndpoint"/>.
@@ -76,9 +119,19 @@ public interface IHubEndpoint
     Task<HubInvocationResult> Invoke(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Runs a streaming hub method. A Context.Abort inside it disconnects the client once the stream completes.
+    /// Runs a streaming hub method. A Context.Abort inside it disconnects the client once the stream is over - before the
+    /// transport sends its end of stream. Prefer <see cref="StartStream"/>, which lets the transport send that first.
     /// </summary>
     IAsyncEnumerable<byte[]> Stream(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs a streaming hub method. Send each of <see cref="HubStreamInvocation.Items"/>, then the end of stream (or the
+    /// error); then, when <see cref="HubStreamInvocation.AbortRequested"/> - the method called Context.Abort, whether the
+    /// stream completed, failed or was cancelled - call <see cref="Disconnect"/>, as after an <see cref="Invoke"/> reply.
+    /// </summary>
+    HubStreamInvocation StartStream(string connectionId, string method, ReadOnlyMemory<byte> arguments, CancellationToken cancellationToken)
+        // an endpoint without it disconnects inside the stream itself
+        => new(this.Stream(connectionId, method, arguments, cancellationToken));
 
     /// <summary>
     /// The client is gone (it left, or its connection was lost) - runs OnDisconnectedAsync and removes it from its groups

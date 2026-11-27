@@ -16,7 +16,17 @@ internal sealed class FramedMediaChannel : IHubMediaChannel
     readonly MediaFrameCodec decoder;
     readonly int maxWriteSize;
     readonly ILogger? logger;
-    readonly Channel<ReadOnlyMemory<byte>> inbound = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new UnboundedChannelOptions { SingleReader = true });
+    /// <summary>
+    /// Packets held for a slow (or absent) reader - past this the oldest are dropped: live media wants the newest packets,
+    /// and an unread channel must not grow without bound
+    /// </summary>
+    internal const int InboundCapacity = 256;
+
+    readonly Channel<ReadOnlyMemory<byte>> inbound = Channel.CreateBounded<ReadOnlyMemory<byte>>(new BoundedChannelOptions(InboundCapacity)
+    {
+        SingleReader = true,
+        FullMode = BoundedChannelFullMode.DropOldest
+    });
     readonly SemaphoreSlim sendLock = new(1, 1);
     readonly CancellationTokenSource lifetime = new();
     readonly TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
