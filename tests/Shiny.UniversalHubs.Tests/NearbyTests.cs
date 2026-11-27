@@ -181,7 +181,7 @@ public class NearbyTests : IAsyncLifetime
         await this.host.Stop();
         Assert.Null(this.hostRadio.AdvertisingService);
 
-        await this.host.StartHub<TestHub>([typeof(NearbyHostTransport)]);
+        await this.host.StartHub<TestHub>([typeof(NearbyHostTransport)], TestContext.Current.CancellationToken);
         TransportAssert.Equal([typeof(NearbyHostTransport)], this.host.GetRunningTransports<TestHub>());
         Assert.Equal([NearbyProtocol.HubTag(CharacteristicUuid)], NearbyProtocol.DecodeEndpointInfo(this.hostRadio.AdvertisedInfo!)!.Hubs);
 
@@ -193,12 +193,12 @@ public class NearbyTests : IAsyncLifetime
             lock (seen)
                 seen.Add(x);
         });
-        await Task.Delay(200);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
         lock (seen)
             Assert.DoesNotContain(seen, x => x.IsSeenOver<NearbyClientTransport>());
 
         // ...until it starts
-        await this.host.StartHub<OtherHub>([typeof(NearbyHostTransport)]);
+        await this.host.StartHub<OtherHub>([typeof(NearbyHostTransport)], TestContext.Current.CancellationToken);
         await WaitFor(() =>
         {
             lock (seen)
@@ -208,7 +208,7 @@ public class NearbyTests : IAsyncLifetime
         HubHostInfo found;
         lock (seen)
             found = seen.Last(x => x.IsSeenOver<NearbyClientTransport>());
-        await other.Connect(found, new HubConnectOptions("Bob"));
+        await other.Connect(found, new HubConnectOptions("Bob"), TestContext.Current.CancellationToken);
         Assert.Equal("pong", await other.Hub.Ping());
     }
 
@@ -246,8 +246,8 @@ public class NearbyTests : IAsyncLifetime
         await using var server = this.BuildHost(null);
         var plain = server.Services.GetRequiredService<IUniversalHubHost>();
 
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(NearbyHostTransport)]));
-        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start());
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(NearbyHostTransport)], TestContext.Current.CancellationToken));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start(TestContext.Current.CancellationToken));
     }
 
 
@@ -392,9 +392,9 @@ public class NearbyTests : IAsyncLifetime
         this.clientContainers.Add(services);
 
         var test = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await test.Connect(await Find(test), new HubConnectOptions("Alice").Only<NearbyClientTransport>());
+        await test.Connect(await Find(test), new HubConnectOptions("Alice").Only<NearbyClientTransport>(), TestContext.Current.CancellationToken);
         var other = services.GetRequiredService<IUniversalHubClient<IOtherHub>>();
-        await other.Connect(await Find(other), new HubConnectOptions("Alice").Only<NearbyClientTransport>());
+        await other.Connect(await Find(other), new HubConnectOptions("Alice").Only<NearbyClientTransport>(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Alice", await test.Hub.WhoAmI());
         Assert.Equal("pong", await other.Hub.Ping());
@@ -402,7 +402,7 @@ public class NearbyTests : IAsyncLifetime
 
         // one hub leaving keeps the other's session
         await other.Disconnect();
-        await Task.Delay(100);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
         Assert.Equal("Alice", await test.Hub.WhoAmI());
         Assert.Single(this.network.Connections);
     }
@@ -425,15 +425,15 @@ public class NearbyTests : IAsyncLifetime
         // the chat sample: both phones host, and each visits the other
         var otherRadio = this.network.CreateDevice();
         await using var otherApp = this.BuildHost(otherRadio, alsoOnThisDevice: s => s.AddUniversalHubClient<ITestHub>(CharacteristicUuid, o => o.UseBluetoothLE(HubProtocolOptions.DefaultServiceUuid, CharacteristicUuid).UseHttp(MdnsServiceType).UseNearby(ServiceId)));
-        await otherApp.Services.GetRequiredService<IUniversalHubHost>().Start();
+        await otherApp.Services.GetRequiredService<IUniversalHubHost>().Start(TestContext.Current.CancellationToken);
 
         // the other phone visits TestHost...
         var visitor = otherApp.Services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await visitor.Connect(await Find(visitor), new HubConnectOptions("Visiting").Only<NearbyClientTransport>());
+        await visitor.Connect(await Find(visitor), new HubConnectOptions("Visiting").Only<NearbyClientTransport>(), TestContext.Current.CancellationToken);
 
         // ...and TestHost visits it back, over the same connection
         var back = await this.FindFrom(otherRadio.EndpointId, otherApp);
-        await back.Client.Connect(back.Host, new HubConnectOptions("Visiting back").Only<NearbyClientTransport>());
+        await back.Client.Connect(back.Host, new HubConnectOptions("Visiting back").Only<NearbyClientTransport>(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Visiting", await visitor.Hub.WhoAmI());
         Assert.Equal("Visiting back", await back.Client.Hub.WhoAmI());
@@ -528,7 +528,7 @@ public class NearbyTests : IAsyncLifetime
         this.hostRadio.DropAll();
         await WaitFor(() => client.Status == HubClientStatus.Reconnecting);
         await WaitFor(() => this.network.Connections.Count == 0);
-        await context.Clients.All.Message("while away");
+        await context.Clients.All.Message("while away", cancellationToken: TestContext.Current.CancellationToken);
 
         this.network.Partitioned = false;
         await WaitFor(() => client.Status == HubClientStatus.Connected && messages.Count == 1);
@@ -566,7 +566,7 @@ public class NearbyTests : IAsyncLifetime
 
         // the advertisement is still up for OtherHub, so the channel opens - the handshake is refused
         await this.host.StopHub<TestHub>();
-        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<NearbyClientTransport>()));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<NearbyClientTransport>(), TestContext.Current.CancellationToken));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -586,14 +586,14 @@ public class NearbyTests : IAsyncLifetime
             // bigger than one BYTES payload - files are file payloads, not messages
             var bytes = new byte[100_000];
             Random.Shared.NextBytes(bytes);
-            await File.WriteAllBytesAsync(local, bytes);
+            await File.WriteAllBytesAsync(local, bytes, TestContext.Current.CancellationToken);
 
-            var up = await client.UploadFile(local, "avatar.jpg");
+            var up = await client.UploadFile(local, "avatar.jpg", cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(bytes.Length, up.BytesTransferred);
-            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(this.filesDirectory, "avatar.jpg")));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(Path.Combine(this.filesDirectory, "avatar.jpg"), TestContext.Current.CancellationToken));
 
-            await client.DownloadFile("avatar.jpg", back);
-            Assert.Equal(bytes, await File.ReadAllBytesAsync(back));
+            await client.DownloadFile("avatar.jpg", back, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(back, TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -609,13 +609,13 @@ public class NearbyTests : IAsyncLifetime
         var client = await this.Connect();
 
         using var secret = new MemoryStream("x"u8.ToArray());
-        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("403", refused.Message);
 
         var local = Path.GetTempFileName();
         try
         {
-            var missing = await Assert.ThrowsAsync<HubException>(() => client.DownloadFile("nope.jpg", local));
+            var missing = await Assert.ThrowsAsync<HubException>(() => client.DownloadFile("nope.jpg", local, cancellationToken: TestContext.Current.CancellationToken));
             Assert.Contains("404", missing.Message);
         }
         finally
@@ -633,26 +633,26 @@ public class NearbyTests : IAsyncLifetime
         var client = await this.Connect();
         Assert.True(client.CanOpenMediaChannel);
 
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.mediaOpened.IsEmpty);
         Assert.True(this.mediaOpened.TryDequeue(out var opened));
         Assert.StartsWith("nb:", opened.Channel.ConnectionId);
 
-        await using var hostReader = opened.Channel.Receive().GetAsyncEnumerator();
-        await channel.Send(new byte[] { 1, 2, 3 });
-        Assert.True(await hostReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        await using var hostReader = opened.Channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await channel.Send(new byte[] { 1, 2, 3 }, TestContext.Current.CancellationToken);
+        Assert.True(await hostReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Equal(new byte[] { 1, 2, 3 }, hostReader.Current.ToArray());
 
         // a packet over Nearby's payload limit
         var big = new byte[60 * 1024];
         Random.Shared.NextBytes(big);
-        await using var clientReader = channel.Receive().GetAsyncEnumerator();
-        await opened.Channel.Send(big);
-        Assert.True(await clientReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        await using var clientReader = channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await opened.Channel.Send(big, TestContext.Current.CancellationToken);
+        Assert.True(await clientReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Equal(big, clientReader.Current.ToArray());
 
         await channel.DisposeAsync();
-        await opened.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await opened.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
 

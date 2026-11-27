@@ -53,7 +53,7 @@ public class CustomTransportTests : IAsyncLifetime
     [Fact]
     public async Task ACustomTransportStartsEveryHubSetUpWithIt()
     {
-        TransportAssert.Equal([typeof(LoopTransport), typeof(OtherLoopTransport)], await this.host.Start());
+        TransportAssert.Equal([typeof(LoopTransport), typeof(OtherLoopTransport)], await this.host.Start(TestContext.Current.CancellationToken));
 
         var loop = this.host.GetTransport<LoopTransport>()!;
         Assert.Equal(["other-room", "test-room"], loop.Running.Select(x => x.GetSettings<LoopSettings>()!.Room).Order());
@@ -66,7 +66,7 @@ public class CustomTransportTests : IAsyncLifetime
     [Fact]
     public async Task HubsSeeTheCustomTransportTheirClientIsOn()
     {
-        await this.host.Start();
+        await this.host.Start(TestContext.Current.CancellationToken);
         var loop = this.host.GetTransport<LoopTransport>()!;
         var hub = loop.Running.Single(x => x.HubType == typeof(TestHub));
 
@@ -81,7 +81,7 @@ public class CustomTransportTests : IAsyncLifetime
     [Fact]
     public async Task StoppingOneTransportLeavesTheOthersRunning()
     {
-        await this.host.Start();
+        await this.host.Start(TestContext.Current.CancellationToken);
         var loop = this.host.GetTransport<LoopTransport>()!;
         var changed = 0;
         this.host.RunningChanged += (_, _) => changed++;
@@ -97,7 +97,7 @@ public class CustomTransportTests : IAsyncLifetime
         Assert.Equal(1, changed);
 
         // and back on, for just that transport
-        TransportAssert.Equal([typeof(LoopTransport)], await this.host.Start<LoopTransport>());
+        TransportAssert.Equal([typeof(LoopTransport)], await this.host.Start<LoopTransport>(cancellationToken: TestContext.Current.CancellationToken));
         TransportAssert.Equal([typeof(LoopTransport)], this.host.GetRunningTransports<OtherHub>());
     }
 
@@ -105,10 +105,10 @@ public class CustomTransportTests : IAsyncLifetime
     [Fact]
     public async Task OneHubStartsAndStopsOnOneTransport()
     {
-        TransportAssert.Equal([typeof(OtherLoopTransport)], await this.host.StartHub<TestHub, OtherLoopTransport>());
+        TransportAssert.Equal([typeof(OtherLoopTransport)], await this.host.StartHub<TestHub, OtherLoopTransport>(cancellationToken: TestContext.Current.CancellationToken));
         Assert.Empty(this.host.GetRunningTransports<OtherHub>());
 
-        await this.host.StartHub<TestHub>();
+        await this.host.StartHub<TestHub>(TestContext.Current.CancellationToken);
         await this.host.StopHub<TestHub, OtherLoopTransport>();
         TransportAssert.Equal([typeof(LoopTransport)], this.host.GetRunningTransports<TestHub>());
     }
@@ -117,8 +117,8 @@ public class CustomTransportTests : IAsyncLifetime
     [Fact]
     public async Task AskingForATransportTheServerDoesNotHaveIsAMistake()
     {
-        await Assert.ThrowsAsync<ArgumentException>(() => this.host.Start([typeof(UnsupportedTransport)]));
-        await Assert.ThrowsAsync<ArgumentException>(() => this.host.Start([]));
+        await Assert.ThrowsAsync<ArgumentException>(() => this.host.Start([typeof(UnsupportedTransport)], TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ArgumentException>(() => this.host.Start([], TestContext.Current.CancellationToken));
     }
 
 
@@ -129,9 +129,9 @@ public class CustomTransportTests : IAsyncLifetime
             .AddHub<TestHub>("test", h => h.UseTransport<LoopTransport>().UseTransport<UnsupportedTransport>()));
         var host = sp.GetRequiredService<IUniversalHubHost>();
 
-        TransportAssert.Equal([typeof(LoopTransport)], await host.Start());
+        TransportAssert.Equal([typeof(LoopTransport)], await host.Start(TestContext.Current.CancellationToken));
         Assert.Equal(0, host.GetTransport<UnsupportedTransport>()!.Starts);
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => host.Start<UnsupportedTransport>());
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => host.Start<UnsupportedTransport>(cancellationToken: TestContext.Current.CancellationToken));
     }
 
 

@@ -127,10 +127,10 @@ public class MultipeerTests : IAsyncLifetime
         const string dynamicUuid = "6e400010-b5a3-f393-e0a9-e50e24dcca9e";
         var handler = new DynamicHubTests.ScriptedHandler();
         var hub = this.app.Services.GetRequiredService<IDynamicHubs>().Add(new DynamicHubDefinition("game").UseHttp(MdnsServiceType), handler);
-        TransportAssert.Equal([typeof(MultipeerHostTransport)], await hub.Start([typeof(MultipeerHostTransport)]));
+        TransportAssert.Equal([typeof(MultipeerHostTransport)], await hub.Start([typeof(MultipeerHostTransport)], TestContext.Current.CancellationToken));
 
         var client = this.CreateClient<IDynamicTestHub>(dynamicUuid, hubName: "game");
-        await client.Connect(await Find(client), new HubConnectOptions("Mia").Only<MultipeerClientTransport>());
+        await client.Connect(await Find(client), new HubConnectOptions("Mia").Only<MultipeerClientTransport>(), TestContext.Current.CancellationToken);
 
         Assert.IsType<MultipeerClientTransport>(client.Transport);
         Assert.Equal(new Payload("mc", 7), await client.Hub.Echo(new Payload("mc", 7)));
@@ -138,9 +138,9 @@ public class MultipeerTests : IAsyncLifetime
 
         var messages = new List<string>();
         client.Hub.Message += m => { lock (messages) messages.Add(m); };
-        await hub.Clients.All.Send("Message", ["\"over the air\""u8.ToArray()]);
+        await hub.Clients.All.Send("Message", ["\"over the air\""u8.ToArray()], TestContext.Current.CancellationToken);
         for (var i = 0; i < 100 && messages.Count == 0; i++)
-            await Task.Delay(20);
+            await Task.Delay(20, TestContext.Current.CancellationToken);
         Assert.Equal(["over the air"], messages);
     }
 
@@ -204,7 +204,7 @@ public class MultipeerTests : IAsyncLifetime
         await this.host.Stop();
         Assert.Empty(this.network.Advertisements);
 
-        await this.host.StartHub<TestHub>([typeof(MultipeerHostTransport)]);
+        await this.host.StartHub<TestHub>([typeof(MultipeerHostTransport)], TestContext.Current.CancellationToken);
         TransportAssert.Equal([typeof(MultipeerHostTransport)], this.host.GetRunningTransports<TestHub>());
         Assert.Empty(this.host.GetRunningTransports<OtherHub>());
         Assert.Equal(CharacteristicUuid, Assert.Single(this.network.Advertisements).Info[MultipeerProtocol.InfoHubs]);
@@ -213,15 +213,15 @@ public class MultipeerTests : IAsyncLifetime
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
         var seen = new List<HubHostInfo>();
         using var watch = other.DiscoverAll([typeof(MultipeerClientTransport)]).Subscribe(seen.Add);
-        await Task.Delay(200);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
         Assert.DoesNotContain(seen, x => x.IsSeenOver<MultipeerClientTransport>());
 
         // ...until it starts
-        await this.host.StartHub<OtherHub>([typeof(MultipeerHostTransport)]);
+        await this.host.StartHub<OtherHub>([typeof(MultipeerHostTransport)], TestContext.Current.CancellationToken);
         await WaitFor(() => seen.Any(x => x.IsSeenOver<MultipeerClientTransport>()));
 
         var found = seen.Last(x => x.IsSeenOver<MultipeerClientTransport>());
-        await other.Connect(found, new HubConnectOptions("Bob"));
+        await other.Connect(found, new HubConnectOptions("Bob"), TestContext.Current.CancellationToken);
         Assert.Equal("pong", await other.Hub.Ping());
     }
 
@@ -258,8 +258,8 @@ public class MultipeerTests : IAsyncLifetime
         await using var server = this.BuildHost(null);
         var plain = server.Services.GetRequiredService<IUniversalHubHost>();
 
-        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(MultipeerHostTransport)]));
-        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start());
+        await Assert.ThrowsAsync<PlatformNotSupportedException>(() => plain.Start([typeof(MultipeerHostTransport)], TestContext.Current.CancellationToken));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await plain.Start(TestContext.Current.CancellationToken));
     }
 
 
@@ -374,7 +374,7 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Empty(bobMessages);
 
         var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
-        await context.Clients.All.Message("everyone");
+        await context.Clients.All.Message("everyone", cancellationToken: TestContext.Current.CancellationToken);
         await WaitFor(() => aliceMessages.Count == 2 && bobMessages.Count == 1);
     }
 
@@ -396,7 +396,7 @@ public class MultipeerTests : IAsyncLifetime
     {
         // something the Wi-Fi transport can't do yet
         var client = await this.Connect();
-        await client.Rename("Alicia");
+        await client.Rename("Alicia", TestContext.Current.CancellationToken);
 
         Assert.Equal("Alicia", await client.Hub.WhoAmI());
         Assert.Equal("Alicia", client.ClientName);
@@ -487,8 +487,8 @@ public class MultipeerTests : IAsyncLifetime
         await WaitFor(() => client.Status == HubClientStatus.Reconnecting);
         Assert.IsType<MultipeerClientTransport>(client.Transport);
         await WaitFor(() => this.network.Sessions.Count == 1);
-        await context.Clients.Group("team").Message("missed one");
-        await context.Clients.All.Message("missed two");
+        await context.Clients.Group("team").Message("missed one", cancellationToken: TestContext.Current.CancellationToken);
+        await context.Clients.All.Message("missed two", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Single(context.ConnectedClients);
 
         this.network.Partitioned = false;
@@ -524,7 +524,7 @@ public class MultipeerTests : IAsyncLifetime
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerDisconnect"));
 
         this.network.Partitioned = false;
-        var disconnect = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var disconnect = await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.Equal(HubDisconnectReason.ClientTimeout, disconnect.Reason);
         Assert.Contains("can't be resumed", disconnect.Message);
         Assert.Equal(HubClientStatus.Disconnected, client.Status);
@@ -550,7 +550,7 @@ public class MultipeerTests : IAsyncLifetime
         Assert.Equal(new HubDisconnect(HubDisconnectReason.ServerShutdown, "Game over"), disconnect);
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerShutdown"));
 
-        await Assert.ThrowsAnyAsync<Exception>(() => late.Connect(stale, new HubConnectOptions("Late").Only<MultipeerClientTransport>()));
+        await Assert.ThrowsAnyAsync<Exception>(() => late.Connect(stale, new HubConnectOptions("Late").Only<MultipeerClientTransport>(), TestContext.Current.CancellationToken));
         Assert.Equal(HubClientStatus.Disconnected, late.Status);
     }
 
@@ -563,7 +563,7 @@ public class MultipeerTests : IAsyncLifetime
 
         // the advertisement is still up for OtherHub, so the invitation is accepted - the handshake is refused
         await this.host.StopHub<TestHub>();
-        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<MultipeerClientTransport>()));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(found, new HubConnectOptions("Alice").Only<MultipeerClientTransport>(), TestContext.Current.CancellationToken));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -587,15 +587,15 @@ public class MultipeerTests : IAsyncLifetime
         var back = local + ".back";
         try
         {
-            await File.WriteAllTextAsync(local, "avatar bytes");
+            await File.WriteAllTextAsync(local, "avatar bytes", TestContext.Current.CancellationToken);
             var progress = new List<HubTransferProgress>();
-            var up = await client.UploadFile(local, "avatar.jpg", new SyncProgress(progress));
+            var up = await client.UploadFile(local, "avatar.jpg", new SyncProgress(progress), TestContext.Current.CancellationToken);
             Assert.Equal(12, up.BytesTransferred);
             Assert.Equal(12, progress.Last().BytesTransferred);
-            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(Path.Combine(this.filesDirectory, "avatar.jpg")));
+            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(Path.Combine(this.filesDirectory, "avatar.jpg"), TestContext.Current.CancellationToken));
 
-            await client.DownloadFile("avatar.jpg", back);
-            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(back));
+            await client.DownloadFile("avatar.jpg", back, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(back, TestContext.Current.CancellationToken));
 
             await WaitFor(() =>
             {
@@ -619,24 +619,24 @@ public class MultipeerTests : IAsyncLifetime
 
         // AuthorizeFile
         using var secret = new MemoryStream("x"u8.ToArray());
-        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("403", refused.Message);
 
         // MaxUploadSize
         using var big = new MemoryStream(new byte[2048]);
-        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin"));
+        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("413", tooBig.Message);
 
         // path traversal never reaches the disk
         using var sneaky = new MemoryStream("x"u8.ToArray());
-        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
+        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt", cancellationToken: TestContext.Current.CancellationToken));
         Assert.False(File.Exists(Path.Combine(this.filesDirectory, "..", "escape.txt")));
 
         // missing files
         var local = Path.GetTempFileName();
         try
         {
-            var missing = await Assert.ThrowsAsync<HubException>(() => client.DownloadFile("nope.jpg", local));
+            var missing = await Assert.ThrowsAsync<HubException>(() => client.DownloadFile("nope.jpg", local, cancellationToken: TestContext.Current.CancellationToken));
             Assert.Contains("404", missing.Message);
         }
         finally
@@ -654,25 +654,25 @@ public class MultipeerTests : IAsyncLifetime
         var client = await this.Connect();
         Assert.True(client.CanOpenMediaChannel);
 
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.mediaOpened.IsEmpty);
         Assert.True(this.mediaOpened.TryDequeue(out var opened));
         Assert.Equal("Alice", opened.Client.Name);
         Assert.StartsWith("mc:", opened.Channel.ConnectionId);
 
-        await using var hostReader = opened.Channel.Receive().GetAsyncEnumerator();
-        await channel.Send(new byte[] { 1, 2, 3 });
-        Assert.True(await hostReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        await using var hostReader = opened.Channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await channel.Send(new byte[] { 1, 2, 3 }, TestContext.Current.CancellationToken);
+        Assert.True(await hostReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Equal(new byte[] { 1, 2, 3 }, hostReader.Current.ToArray());
 
-        await using var clientReader = channel.Receive().GetAsyncEnumerator();
-        await opened.Channel.Send(new byte[] { 9, 8 });
-        Assert.True(await clientReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        await using var clientReader = channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await opened.Channel.Send(new byte[] { 9, 8 }, TestContext.Current.CancellationToken);
+        Assert.True(await clientReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Equal(new byte[] { 9, 8 }, clientReader.Current.ToArray());
 
         // closing one end closes the other
         await channel.DisposeAsync();
-        await opened.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await opened.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
 
@@ -680,13 +680,13 @@ public class MultipeerTests : IAsyncLifetime
     public async Task MediaChannelsCloseWithTheConnection()
     {
         var client = await this.Connect();
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.mediaOpened.IsEmpty);
         this.mediaOpened.TryDequeue(out var opened);
 
         await client.Disconnect();
-        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-        await opened!.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await opened!.Channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }
 
 

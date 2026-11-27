@@ -151,7 +151,7 @@ public class DynamicHubTests : IAsyncLifetime
     [Fact]
     public async Task CompiledHubsKeepTheirOwnRoutes()
     {
-        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)]);
+        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)], TestContext.Current.CancellationToken);
         var compiled = await this.Connect<ITestHub>(CompiledUuid);
         Assert.Equal(new Payload("compiled", 1), await compiled.Hub.Echo(new Payload("compiled", 1)));
         Assert.DoesNotContain(this.handler.Calls, x => x.Method == "Echo");
@@ -192,11 +192,11 @@ public class DynamicHubTests : IAsyncLifetime
         alice.Hub.Message += m => { lock (aliceMessages) aliceMessages.Add(m); };
         bob.Hub.Message += m => { lock (bobMessages) bobMessages.Add(m); };
 
-        await this.hub.Clients.All.Send("Message", [Utf8("\"everyone\"")]);
+        await this.hub.Clients.All.Send("Message", [Utf8("\"everyone\"")], TestContext.Current.CancellationToken);
 
         var aliceId = this.hub.Connections.Single(x => x.Client.Name == "Alice").Id;
-        await this.hub.Groups.AddToGroupAsync(aliceId, "red");
-        await this.hub.Clients.Group("red").Send("Message", [Utf8("\"red team\"")]);
+        await this.hub.Groups.AddToGroupAsync(aliceId, "red", TestContext.Current.CancellationToken);
+        await this.hub.Clients.Group("red").Send("Message", [Utf8("\"red team\"")], TestContext.Current.CancellationToken);
 
         await WaitFor(() => aliceMessages.Count == 2 && bobMessages.Count == 1);
         Assert.Equal(["everyone", "red team"], aliceMessages);
@@ -260,7 +260,7 @@ public class DynamicHubTests : IAsyncLifetime
 
         // the same definition can come back - after a web app update, say
         var again = this.dynamicHubs.Add(new DynamicHubDefinition("game").UseHttp(ServiceType).UseBluetoothLE(DynamicUuid), this.handler);
-        await again.Start([typeof(HttpHostTransport)]);
+        await again.Start([typeof(HttpHostTransport)], TestContext.Current.CancellationToken);
         var returning = await this.Connect("Again");
         Assert.Equal(new Payload("back", 2), await returning.Hub.Echo(new Payload("back", 2)));
     }
@@ -303,7 +303,7 @@ public class DynamicHubTests : IAsyncLifetime
         var hubs = server.Services.GetRequiredService<IDynamicHubs>();
         var handler = new ScriptedHandler();
         var added = hubs.Add(new DynamicHubDefinition("solo").UseHttp(ServiceType), handler);
-        TransportAssert.Equal([typeof(HttpHostTransport)], added.RunningTransports.Count == 0 ? await added.Start() : added.RunningTransports);
+        TransportAssert.Equal([typeof(HttpHostTransport)], added.RunningTransports.Count == 0 ? await added.Start(TestContext.Current.CancellationToken) : added.RunningTransports);
 
         var client = await this.Connect<IDynamicTestHub>("solo", server: server);
         Assert.Equal(new Payload("solo", 3), await client.Hub.Echo(new Payload("solo", 3)));
@@ -358,24 +358,24 @@ public class DynamicHubTests : IAsyncLifetime
     public async Task ADynamicClientCallsADynamicHubByName()
     {
         var client = this.CreateDynamicClient("game");
-        await client.Connect(Host("game"), new HubConnectOptions("Dyna", "1.0"));
+        await client.Connect(Host("game"), new HubConnectOptions("Dyna", "1.0"), TestContext.Current.CancellationToken);
         Assert.IsType<HttpClientTransport>(client.Transport);
 
         var pushes = new List<(string Name, string Args)>();
         client.Hub.Pushed += (name, args) => { lock (pushes) pushes.Add((name, String.Join(",", args.Select(x => Encoding.UTF8.GetString(x.Span))))); };
 
-        var echoed = await client.Hub.Invoke("Echo", [Utf8("""{"Text":"raw","Number":9}""")]);
+        var echoed = await client.Hub.Invoke("Echo", [Utf8("""{"Text":"raw","Number":9}""")], TestContext.Current.CancellationToken);
         Assert.Equal(new Payload("raw", 9), JsonSerializer.Deserialize(echoed.Span, TestJsonContext.Default.Payload));
 
         var items = new List<string>();
-        await foreach (var item in client.Hub.Stream("Count", [Utf8("2")]))
+        await foreach (var item in client.Hub.Stream("Count", [Utf8("2")], TestContext.Current.CancellationToken))
             items.Add(Encoding.UTF8.GetString(item.Span));
         Assert.Equal(["1", "2"], items);
 
-        var failed = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Invoke("Rule", []));
+        var failed = await Assert.ThrowsAsync<HubRemoteException>(() => client.Hub.Invoke("Rule", [], TestContext.Current.CancellationToken));
         Assert.Equal("GameRule", failed.RemoteErrorType);
 
-        await this.hub.Clients.All.Send("Message", [Utf8("\"hey\"")]);
+        await this.hub.Clients.All.Send("Message", [Utf8("\"hey\"")], TestContext.Current.CancellationToken);
         await WaitFor(() => { lock (pushes) return pushes.Count == 1; });
         Assert.Equal(("Message", "\"hey\""), pushes[0]);
     }
@@ -384,15 +384,15 @@ public class DynamicHubTests : IAsyncLifetime
     [Fact]
     public async Task ADynamicClientCallsACompiledHubToo()
     {
-        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)]);
+        await this.app.Services.GetRequiredService<IUniversalHubHost>().StartHub<TestHub>([typeof(HttpHostTransport)], TestContext.Current.CancellationToken);
         var client = this.CreateDynamicClient(CompiledUuid);
-        await client.Connect(Host(CompiledUuid), new HubConnectOptions("Dyna", "1.0"));
+        await client.Connect(Host(CompiledUuid), new HubConnectOptions("Dyna", "1.0"), TestContext.Current.CancellationToken);
 
-        var echoed = await client.Hub.Invoke("Echo", [JsonSerializer.SerializeToUtf8Bytes(new Payload("typed", 3), TestJsonContext.Default.Payload)]);
+        var echoed = await client.Hub.Invoke("Echo", [JsonSerializer.SerializeToUtf8Bytes(new Payload("typed", 3), TestJsonContext.Default.Payload)], TestContext.Current.CancellationToken);
         Assert.Equal(new Payload("typed", 3), JsonSerializer.Deserialize(echoed.Span, TestJsonContext.Default.Payload));
 
         // a method returning Task: nothing comes back
-        Assert.True((await client.Hub.Invoke("Record", [Utf8("\"x\"")])).IsEmpty);
+        Assert.True((await client.Hub.Invoke("Record", [Utf8("\"x\"")], TestContext.Current.CancellationToken)).IsEmpty);
     }
 
 

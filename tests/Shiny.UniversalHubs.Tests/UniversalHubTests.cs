@@ -175,7 +175,7 @@ public class UniversalHubTests : IAsyncLifetime
         var locator = new FakeLocator(HttpHost().Endpoint<HttpHubEndpoint>()!.Server);
         var client = this.CreateClientWithLocator(locator);
 
-        await client.Connect(HttpHost("/moved-away"), new HubConnectOptions("Alice").Only<HttpClientTransport>());
+        await client.Connect(HttpHost("/moved-away"), new HubConnectOptions("Alice").Only<HttpClientTransport>(), TestContext.Current.CancellationToken);
 
         Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal(1, locator.Lookups);
@@ -190,7 +190,7 @@ public class UniversalHubTests : IAsyncLifetime
         var locator = new FakeLocator(stale.Endpoint<HttpHubEndpoint>()!.Server);   // mDNS still says the same thing
         var client = this.CreateClientWithLocator(locator);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice").Only<HttpClientTransport>()));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(stale, new HubConnectOptions("Alice").Only<HttpClientTransport>(), TestContext.Current.CancellationToken));
         Assert.Equal(1, locator.Lookups);
         Assert.Equal(HubClientStatus.Disconnected, client.Status);
     }
@@ -202,7 +202,7 @@ public class UniversalHubTests : IAsyncLifetime
         var locator = new FakeLocator(HttpHost().Endpoint<HttpHubEndpoint>()!.Server);
         var client = this.CreateClientWithLocator(locator);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost"), "/moved-away"), new HubConnectOptions("Alice")));
+        await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost"), "/moved-away"), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken));
         Assert.Equal(0, locator.Lookups);
     }
 
@@ -273,10 +273,10 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task UniversalServerServesHubsAtItsEndpoint()
     {
         await using var server = this.BuildHost("/game");
-        await server.Services.GetRequiredService<IUniversalHubHost>().Start([typeof(HttpHostTransport)]);
+        await server.Services.GetRequiredService<IUniversalHubHost>().Start([typeof(HttpHostTransport)], TestContext.Current.CancellationToken);
 
         var client = this.CreateClient(server);
-        await client.Connect(HttpHost("/game"), new HubConnectOptions("Alice", "1.0"));
+        await client.Connect(HttpHost("/game"), new HubConnectOptions("Alice", "1.0"), TestContext.Current.CancellationToken);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
     }
 
@@ -314,7 +314,7 @@ public class UniversalHubTests : IAsyncLifetime
 
         // no BLE anywhere - the hub is served over HTTP alone
         var host = app.Services.GetRequiredService<IUniversalHubHost>();
-        TransportAssert.Equal([typeof(HttpHostTransport)], await host.Start());
+        TransportAssert.Equal([typeof(HttpHostTransport)], await host.Start(TestContext.Current.CancellationToken));
         TransportAssert.Equal([typeof(HttpHostTransport)], host.GetRunningTransports<TestHub>());
 
         var services = new ServiceCollection()
@@ -327,7 +327,7 @@ public class UniversalHubTests : IAsyncLifetime
         this.clientContainers.Add(services);
 
         var client = services.GetRequiredService<IUniversalHubClient<ITestHub>>();
-        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"));
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"), TestContext.Current.CancellationToken);
         Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
         Assert.Equal("HttpOnly", client.HostName);
@@ -398,7 +398,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task StartingOneHubLeavesTheOtherRefusingClients()
     {
         await this.host.Stop();
-        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<TestHub>([typeof(HttpHostTransport)]));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<TestHub>([typeof(HttpHostTransport)], TestContext.Current.CancellationToken));
 
         TransportAssert.Equal([typeof(HttpHostTransport)], this.host.GetRunningTransports<TestHub>());
         Assert.Empty(this.host.GetRunningTransports<OtherHub>());
@@ -408,7 +408,7 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Equal("Alice", await test.Hub.WhoAmI());
 
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
-        var ex = await Assert.ThrowsAsync<HubException>(() => other.Connect(HttpHost(), new HubConnectOptions("Bob")));
+        var ex = await Assert.ThrowsAsync<HubException>(() => other.Connect(HttpHost(), new HubConnectOptions("Bob"), TestContext.Current.CancellationToken));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -418,7 +418,7 @@ public class UniversalHubTests : IAsyncLifetime
     {
         var test = await this.Connect();
         var other = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
-        await other.Connect(HttpHost(), new HubConnectOptions("Bob"));
+        await other.Connect(HttpHost(), new HubConnectOptions("Bob"), TestContext.Current.CancellationToken);
         HubDisconnect? otherLeft = null;
         other.Disconnected += (_, d) => otherLeft = d;
 
@@ -431,9 +431,9 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Equal(new Payload("still", 1), await test.Hub.Echo(new Payload("still", 1)));
 
         // and back again
-        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<OtherHub>([typeof(HttpHostTransport)]));
+        TransportAssert.Equal([typeof(HttpHostTransport)], await this.host.StartHub<OtherHub>([typeof(HttpHostTransport)], TestContext.Current.CancellationToken));
         var again = this.CreateClient<IOtherHub>(OtherCharacteristicUuid);
-        await again.Connect(HttpHost(), new HubConnectOptions("Bob"));
+        await again.Connect(HttpHost(), new HubConnectOptions("Bob"), TestContext.Current.CancellationToken);
         Assert.Equal("pong", await again.Hub.Ping());
     }
 
@@ -454,7 +454,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task ConnectsToAHostByAddress()
     {
         var client = this.CreateClient();
-        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"));
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice", "1.0"), TestContext.Current.CancellationToken);
 
         Assert.IsType<HttpClientTransport>(client.Transport);
         Assert.Equal("Alice", await client.Hub.WhoAmI());
@@ -476,7 +476,7 @@ public class UniversalHubTests : IAsyncLifetime
         var host = HttpHubHost.FromUrl(new Uri("http://localhost")).With(typeof(Alpha), new FakeEndpoint("alpha"), client.Transports.Select(x => x.GetType()).ToList());
 
         Assert.Equal([typeof(HttpClientTransport), typeof(Alpha)], host.Transports);
-        await client.Connect(host, new HubConnectOptions("Alice").Prefer<Alpha>());
+        await client.Connect(host, new HubConnectOptions("Alice").Prefer<Alpha>(), TestContext.Current.CancellationToken);
 
         Assert.Equal(["Alpha"], attempts);
         Assert.IsType<HttpClientTransport>(client.Transport);
@@ -497,10 +497,10 @@ public class UniversalHubTests : IAsyncLifetime
 
         Assert.Equal(HubClientStatus.Disconnected, client.Status);
         Assert.Null(client.Transport);
-        await Assert.ThrowsAsync<HubException>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice")));
+        await Assert.ThrowsAsync<HubException>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken));
 
         await client.Enable<HttpClientTransport>();
-        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"));
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken);
         Assert.Equal(HubClientStatus.Connected, client.Status);
     }
 
@@ -608,7 +608,7 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.Empty(bobMessages);
 
         var context = this.app.Services.GetRequiredService<IHubContext<TestHub>>();
-        await context.Clients.All.Message("everyone");
+        await context.Clients.All.Message("everyone", cancellationToken: TestContext.Current.CancellationToken);
         await WaitFor(() => aliceMessages.Count == 2 && bobMessages.Count == 1);
     }
 
@@ -681,7 +681,7 @@ public class UniversalHubTests : IAsyncLifetime
         await WaitFor(() => this.log.Entries.Contains("reason:Alice:ServerShutdown"));
 
         var late = this.CreateClient();
-        var ex = await Assert.ThrowsAsync<HubException>(() => late.Connect(HttpHost(), new HubConnectOptions("Late")));
+        var ex = await Assert.ThrowsAsync<HubException>(() => late.Connect(HttpHost(), new HubConnectOptions("Late"), TestContext.Current.CancellationToken));
         Assert.Contains("Hub is not running", ex.Message);
     }
 
@@ -702,7 +702,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task UnreachableHostFailsCleanly()
     {
         var client = this.CreateClient();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HttpHost("/nowhere"), new HubConnectOptions("Alice")));
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => client.Connect(HttpHost("/nowhere"), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken));
         Assert.IsNotType<HubRemoteException>(ex);
         Assert.Equal(HubClientStatus.Disconnected, client.Status);
     }
@@ -721,13 +721,13 @@ public class UniversalHubTests : IAsyncLifetime
         var back = local + ".back";
         try
         {
-            await File.WriteAllTextAsync(local, "avatar bytes");
-            var up = await client.UploadFile(local, "avatar.jpg");
+            await File.WriteAllTextAsync(local, "avatar bytes", TestContext.Current.CancellationToken);
+            var up = await client.UploadFile(local, "avatar.jpg", cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(12, up.BytesTransferred);
-            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(Path.Combine(this.filesDirectory, "avatar.jpg")));
+            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(Path.Combine(this.filesDirectory, "avatar.jpg"), TestContext.Current.CancellationToken));
 
-            await client.DownloadFile("avatar.jpg", back);
-            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(back));
+            await client.DownloadFile("avatar.jpg", back, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal("avatar bytes", await File.ReadAllTextAsync(back, TestContext.Current.CancellationToken));
 
             Assert.Equal(2, transferred.Count);
             Assert.All(transferred, x => Assert.Equal("Alice", x.Client?.Name));
@@ -747,17 +747,17 @@ public class UniversalHubTests : IAsyncLifetime
 
         // AuthorizeFile
         using var secret = new MemoryStream("x"u8.ToArray());
-        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt"));
+        var refused = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(secret, 1, "secret.txt", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("403", refused.Message);
 
         // MaxUploadSize
         using var big = new MemoryStream(new byte[2048]);
-        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin"));
+        var tooBig = await Assert.ThrowsAsync<HubException>(() => client.UploadStream(big, 2048, "big.bin", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("413", tooBig.Message);
 
         // path traversal never reaches the disk
         using var sneaky = new MemoryStream("x"u8.ToArray());
-        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt"));
+        await Assert.ThrowsAsync<HubException>(() => client.UploadStream(sneaky, 1, "../escape.txt", cancellationToken: TestContext.Current.CancellationToken));
         Assert.False(File.Exists(Path.Combine(this.filesDirectory, "..", "escape.txt")));
     }
 
@@ -766,7 +766,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task AHubThatIsNotRunningOverHttpIsNotFound()
     {
         using var http = new HttpClient(this.app.Server.CreateInMemoryHandler());
-        Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("http://localhost/hubs/no-such-hub")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("http://localhost/hubs/no-such-hub", TestContext.Current.CancellationToken)).StatusCode);
     }
 
 
@@ -774,7 +774,7 @@ public class UniversalHubTests : IAsyncLifetime
     public async Task AHubIsOnlyReachedOverAWebSocket()
     {
         using var http = new HttpClient(this.app.Server.CreateInMemoryHandler());
-        Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync($"http://localhost/hubs/{CharacteristicUuid}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync($"http://localhost/hubs/{CharacteristicUuid}", TestContext.Current.CancellationToken)).StatusCode);
     }
 
 

@@ -64,7 +64,7 @@ public class SerializerTests : IAsyncLifetime
     {
         var serializer = new NamedSerializer("json-v2");
         var client = this.Client<ITestHub>("own", serializer);
-        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"));
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken);
 
         Assert.Equal(new Payload("hi", 1), await client.Hub.Echo(new Payload("hi", 1)));
         Assert.True(serializer.Used > 0);
@@ -75,7 +75,7 @@ public class SerializerTests : IAsyncLifetime
     public async Task AClientWithAnotherSerializerIsRefused()
     {
         var client = this.Client<ITestHub>("own", null);
-        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice")));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken));
 
         Assert.Contains("Serializer mismatch", ex.Message);
         Assert.Contains("json-v2", ex.Message);
@@ -87,11 +87,11 @@ public class SerializerTests : IAsyncLifetime
     public async Task HubsWithoutTheirOwnUseTheAppsSerializer()
     {
         var client = this.Client<IOtherHub>("default", null);
-        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"));
+        await client.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Alice"), TestContext.Current.CancellationToken);
         Assert.Equal("pong", await client.Hub.Ping());
 
         var mismatched = this.Client<IOtherHub>("default", new NamedSerializer("json-v2"));
-        await Assert.ThrowsAsync<HubException>(() => mismatched.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Bob")));
+        await Assert.ThrowsAsync<HubException>(() => mismatched.Connect(HttpHubHost.FromUrl(new Uri("http://localhost")), new HubConnectOptions("Bob"), TestContext.Current.CancellationToken));
     }
 
 

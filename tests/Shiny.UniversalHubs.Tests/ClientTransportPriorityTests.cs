@@ -98,7 +98,7 @@ public class ClientTransportPriorityTests : IDisposable
             .UseTransport(_ => new Alpha(this.attempts))
             .UseTransport(_ => new Beta(this.attempts)));
 
-        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(SeenOn(typeof(Beta)), new HubConnectOptions().Only<Alpha>()));
+        var ex = await Assert.ThrowsAsync<HubException>(() => client.Connect(SeenOn(typeof(Beta)), new HubConnectOptions().Only<Alpha>(), TestContext.Current.CancellationToken));
         Assert.Contains("seen over Beta", ex.Message);
         Assert.Empty(this.attempts);
     }
@@ -131,7 +131,7 @@ public class ClientTransportPriorityTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => this.Client(_ => { }));
 
         var client = this.Client(o => o.UseTransport(_ => new Alpha(this.attempts)));
-        await Assert.ThrowsAsync<ArgumentException>(() => client.Connect(SeenOn(typeof(Alpha)), new HubConnectOptions().Prefer<Beta>()));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Connect(SeenOn(typeof(Alpha)), new HubConnectOptions().Prefer<Beta>(), TestContext.Current.CancellationToken));
         Assert.Throws<ArgumentException>(() => client.DiscoverAll([typeof(Beta)]));
     }
 

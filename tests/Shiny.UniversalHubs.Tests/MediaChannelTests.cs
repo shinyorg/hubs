@@ -113,7 +113,7 @@ public class MediaChannelTests : IAsyncLifetime
         var (client, connectionId) = await this.Connect();
         Assert.True(client.CanOpenMediaChannel);
 
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         Assert.Null(channel.ConnectionId);
         Assert.Equal(256 * 1024, channel.MaxPacketSize);
         await WaitFor(() => !this.opened.IsEmpty);
@@ -123,15 +123,15 @@ public class MediaChannelTests : IAsyncLifetime
         Assert.Equal(connectionId, e.Channel.ConnectionId);
         Assert.Same(e.Channel, this.app.Services.GetRequiredService<IHubContext<TestHub>>().GetMediaChannel(connectionId));
 
-        await using var hostReader = e.Channel.Receive().GetAsyncEnumerator();
-        await using var clientReader = channel.Receive().GetAsyncEnumerator();
+        await using var hostReader = e.Channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await using var clientReader = channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
         for (byte i = 0; i < 20; i++)
-            await channel.Send(new[] { i });
+            await channel.Send(new[] { i }, TestContext.Current.CancellationToken);
         for (byte i = 0; i < 20; i++)
             Assert.Equal(new[] { i }, await Next(hostReader));   // whole and in order
 
-        await e.Channel.Send(new byte[] { 9, 8, 7 });
+        await e.Channel.Send(new byte[] { 9, 8, 7 }, TestContext.Current.CancellationToken);
         Assert.Equal(new byte[] { 9, 8, 7 }, await Next(clientReader));
     }
 
@@ -140,25 +140,25 @@ public class MediaChannelTests : IAsyncLifetime
     public async Task PacketsLargerThanOneSocketReadArriveWhole()
     {
         var (client, _) = await this.Connect();
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.opened.IsEmpty);
         var host = this.opened.Single().Channel;
 
         var big = new byte[200_000];
         Random.Shared.NextBytes(big);
-        await using var clientReader = channel.Receive().GetAsyncEnumerator();
-        await using var hostReader = host.Receive().GetAsyncEnumerator();
+        await using var clientReader = channel.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        await using var hostReader = host.Receive(TestContext.Current.CancellationToken).GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
         // read while sending - a socket only takes so much before its reader drains it
         var received = Next(clientReader);
-        await host.Send(big).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await host.Send(big, TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(big, await received);
 
         received = Next(hostReader);
-        await channel.Send(big).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await channel.Send(big, TestContext.Current.CancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(big, await received);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => channel.Send(new byte[256 * 1024 + 1]).AsTask());
+        await Assert.ThrowsAsync<ArgumentException>(() => channel.Send(new byte[256 * 1024 + 1], TestContext.Current.CancellationToken).AsTask());
         Assert.True(channel.IsOpen);
     }
 
@@ -167,8 +167,8 @@ public class MediaChannelTests : IAsyncLifetime
     public async Task OpeningAgainReturnsTheOpenChannel()
     {
         var (client, _) = await this.Connect();
-        var first = await client.OpenMediaChannel();
-        Assert.Same(first, await client.OpenMediaChannel());
+        var first = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
+        Assert.Same(first, await client.OpenMediaChannel(TestContext.Current.CancellationToken));
     }
 
 
@@ -176,13 +176,13 @@ public class MediaChannelTests : IAsyncLifetime
     public async Task TheChannelClosesWhenTheClientLeaves()
     {
         var (client, connectionId) = await this.Connect();
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.opened.IsEmpty);
         var host = this.opened.Single().Channel;
 
         await client.Disconnect();
-        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-        await host.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await host.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.False(host.IsOpen);
         Assert.Null(this.app.Services.GetRequiredService<IHubContext<TestHub>>().GetMediaChannel(connectionId));
     }
@@ -192,14 +192,14 @@ public class MediaChannelTests : IAsyncLifetime
     public async Task TheHostClosingTheChannelEndsTheClientsReceive()
     {
         var (client, _) = await this.Connect();
-        var channel = await client.OpenMediaChannel();
+        var channel = await client.OpenMediaChannel(TestContext.Current.CancellationToken);
         await WaitFor(() => !this.opened.IsEmpty);
 
         await this.opened.Single().Channel.DisposeAsync();
-        await foreach (var _ in channel.Receive().WithCancellation(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token))
+        await foreach (var _ in channel.Receive(TestContext.Current.CancellationToken).WithCancellation(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token))
         {
         }
-        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await channel.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(HubClientStatus.Connected, client.Status);   // the hub connection is untouched
     }
 
@@ -213,6 +213,6 @@ public class MediaChannelTests : IAsyncLifetime
 
         var (client, _) = await this.Connect();
         Assert.False(client.CanOpenMediaChannel);
-        await Assert.ThrowsAsync<NotSupportedException>(() => client.OpenMediaChannel());
+        await Assert.ThrowsAsync<NotSupportedException>(() => client.OpenMediaChannel(TestContext.Current.CancellationToken));
     }
 }
