@@ -30,9 +30,12 @@ body:
       label: Transport
       description: How the client reached the host
       options:
-        - Wi-Fi (Switchboard / mDNS)
         - Bluetooth LE
-        - Both
+        - HTTP (WebSocket / mDNS)
+        - Multipeer
+        - Nearby
+        - Custom transport
+        - More than one
         - Not sure
     validations:
       required: true
