@@ -168,7 +168,8 @@ Connect) to separate "the OS can't" from "the library doesn't".
   `-p:Version=<tag>`, runs both test suites, pushes every package to NuGet (trusted publishing through OIDC) and creates
   a GitHub release with generated notes. A `-suffix` makes it a prerelease. nuget.org's trusted-publishing policy must
   list this repo for every package, including the new `Shiny.UniversalHubs.BluetoothLE` and `Shiny.UniversalHubs.Http`.
-  When you tag, promote the `### <version> - TBD` heading in the release notes to the release date.
+  When you tag a stable version, promote the `### <version> - TBD` heading in the release notes to the release date.
+  Betas never appear in the release notes: a beta tag leaves the heading at `### X.Y.Z - TBD`.
 - **Retired packages**: `Shiny.BluetoothLE.Hubs`, `.Host`, `.Client` and `Shiny.UniversalHubs.Host`, `.Client` are no
   longer built. Deprecate them on nuget.org, pointing at `Shiny.UniversalHubs` (a manual step).
 - **CI**: `ci.yml` builds and tests every push / PR to `main` the way a release does (macOS runner, Nearby bridge
