@@ -1,11 +1,11 @@
 <Project>
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <HttpServerVersion>3.0.0</HttpServerVersion>
-        <ShinyVersion>7.0.0</ShinyVersion>
+        <HttpServerVersion>3.1.1</HttpServerVersion>
+        <ShinyVersion>7.1.0</ShinyVersion>
         <!-- pinned rather than taken from the installed MAUI workload, so the AppKit backend (Microsoft.Maui.Platforms.MacOS) matches it -->
         <MauiVersion>11.0.10</MauiVersion>
-        <MauiLabsVersion>0.1.0-preview.14.26567.2</MauiLabsVersion>
+        <MauiLabsVersion>0.1.0-preview.16.26575.3</MauiLabsVersion>
         <MsftExtensionVersion>11.0.0</MsftExtensionVersion>
         <ActorsVersion>1.0.0-beta.12</ActorsVersion>
     </PropertyGroup>
@@ -17,20 +17,20 @@
         <PackageVersion Include="Shiny.BluetoothLE" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.BluetoothLE.Hosting" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Xamarin.GooglePlayServices.Nearby" Version="119.5.0"/>
-        <PackageVersion Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.0"/>
+        <PackageVersion Include="Xamarin.AndroidX.Fragment.Ktx" Version="1.9.1"/>
         <PackageVersion Include="Shiny.Hosting.Maui" Version="$(ShinyVersion)"/>
-        <PackageVersion Include="Shiny.Maui.Shell" Version="8.0.0"/>
-        <PackageVersion Include="Shiny.Maui.Controls" Version="2.5.0"/>
+        <PackageVersion Include="Shiny.Maui.Shell" Version="8.0.1"/>
+        <PackageVersion Include="Shiny.Maui.Controls" Version="3.0.0"/>
         <!-- the sample's calls: IAudioDuplex (Shiny.Audio) and VideoEncoder / RemoteVideoView (camera) -->
-        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="2.5.0"/>
+        <PackageVersion Include="Shiny.Maui.Controls.Camera" Version="3.0.0"/>
         <PackageVersion Include="Shiny.Audio" Version="3.0.0"/>
         <PackageVersion Include="Shiny.Actors" Version="$(ActorsVersion)"/>
         <PackageVersion Include="Shiny.Notifications" Version="$(ShinyVersion)"/>
         <PackageVersion Include="Shiny.Net.HttpServer.Ssh" Version="$(HttpServerVersion)"/>
     </ItemGroup>
     <ItemGroup>
-        <!-- Shiny.BluetoothLE.Hubs: the argument codec, and the source generator -->
-        <PackageVersion Include="Shiny.Extensions.Serialization" Version="6.0.0"/>
+        <!-- the core: the argument codec, and the source generator -->
+        <PackageVersion Include="Shiny.Extensions.Serialization" Version="6.0.2"/>
         <PackageVersion Include="System.Reactive" Version="7.0.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0"/>
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0"/>
@@ -43,7 +43,7 @@
         <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="$(MsftExtensionVersion)"/>
         <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="$(MsftExtensionVersion)"/>
         <PackageVersion Include="Microsoft.Maui.Controls" Version="$(MauiVersion)"/>
-        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1"/>
+        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0"/>
         <PackageVersion Include="xunit.v3" Version="3.2.2"/>
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5"/>
     </ItemGroup>
