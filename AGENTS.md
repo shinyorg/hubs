@@ -139,9 +139,12 @@ A change is not "done" until these are in sync:
 Both must stay green, and run without hardware or a network:
 
 ```
-dotnet test tests/Shiny.UniversalHubs.BluetoothLE.Tests
-dotnet test tests/Shiny.UniversalHubs.Tests
+dotnet test --project tests/Shiny.UniversalHubs.BluetoothLE.Tests
+dotnet test --project tests/Shiny.UniversalHubs.Tests
 ```
+
+xunit v3 4.x runs on Microsoft.Testing.Platform: `global.json` opts `dotnet test` into it, so a project is named with
+`--project` (a bare path is refused), and options go straight after it (`-c Release --no-build`).
 
 Run timing-sensitive tests a few times before calling them done (`--no-build` loop). Use `WaitFor` polling, never
 fixed sleeps.
