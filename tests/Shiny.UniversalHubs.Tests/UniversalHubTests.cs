@@ -715,7 +715,11 @@ public class UniversalHubTests : IAsyncLifetime
         Assert.True(client.CanTransferFiles);
 
         var transferred = new List<HubFileTransferredEventArgs>();
-        this.host.FileTransferred += (_, e) => transferred.Add(e);
+        this.host.FileTransferred += (_, e) =>
+        {
+            lock (transferred)
+                transferred.Add(e);
+        };
 
         var local = Path.GetTempFileName();
         var back = local + ".back";
@@ -729,7 +733,12 @@ public class UniversalHubTests : IAsyncLifetime
             await client.DownloadFile("avatar.jpg", back, cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal("avatar bytes", await File.ReadAllTextAsync(back, TestContext.Current.CancellationToken));
 
-            Assert.Equal(2, transferred.Count);
+            // the host raises the download's event after its last chunk is sent, so the client can finish first
+            await WaitFor(() =>
+            {
+                lock (transferred)
+                    return transferred.Count == 2;
+            });
             Assert.All(transferred, x => Assert.Equal("Alice", x.Client?.Name));
         }
         finally
